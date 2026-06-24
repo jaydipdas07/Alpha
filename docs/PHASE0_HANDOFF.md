@@ -11,6 +11,11 @@ The build runs on the **Mac `lemma` CLI session**: it has the `lemma` CLI, the V
 the Vega references, the `.env` keys, and SSH to the AWS box. A cloud/container session canNOT reach
 the Vega repo, its `.env`, or the AWS machine — anything touching those is Mac-CLI-only.
 
+> **Vega is the operator's own code** (`Proprietary`, authored by you — verified this session): the
+> Mac CLI may **lift Vega source wholesale** into `alpha-core`, not merely port patterns. This makes
+> "lift Vega" (Track B) a first-class option in the Phase-0 engine bake-off (`docs/DESIGN_v4.md` E1),
+> not a fallback.
+
 ## Decisions locked
 
 | # | Item | Decision |
@@ -52,6 +57,9 @@ native numbers; reserve integer-minor-units for any single column needing in-SQL
 3. Data: Kite ₹500 historical sub + key; Binance data key; NSE bhavcopy + Dukascopy (free).
    Crypto live = Delta ✔ (B4). 4. Money-column type: verify on CLI, then apply B5.
 5. Verify `lemma` resolves to Vault (`019ef606-7b77-76f1-853a-978ddf819415`).
+6. **Engine bake-off prerequisites (DESIGN_v4 E1):** Vega repo present on the Mac (Track B = lift
+   wholesale, owned) **and** NautilusTrader installable (Track A = shell) — both needed to run the
+   Phase-0 A/B. *Do the bake-off before scaffolding `alpha-core` in earnest.*
 
 **Tier 2 — gates Phase 1a calibration:** DSR search-cell taxonomy (R4); holdout roll-forward cadence
 + size (R5); synthetic-population defs + Phase-1b error-rate thresholds (R14); CPCV embargo + DSR
@@ -67,8 +75,15 @@ process (R1/D1); capital-staging tolerance + session count; CA sign-off.
 
 ## First moves on the Mac CLI (when Tier 1 is green)
 1. `cd` into the Alpha repo on the Mac; `git pull` (v3 `BUILD_PLAN.md` + this doc).
-2. Run **`/ultraplan`** against `BUILD_PLAN.md` to generate the execution plan (lemma-builder skill there).
+2. Run **`/ultraplan`** against `BUILD_PLAN.md` + `docs/DESIGN_v4.md` to generate the execution plan
+   (lemma-builder skill there).
 3. **Phase-0 verification:** inspect Lemma numeric column types → lock B5; confirm `lemma` → Vault;
    verify table/RLS/FK primitives.
-4. **AWS prep:** SSH in, preserve `.env`, wipe Vega, set up the research/backtest host.
-5. Scaffold `alpha-core/` + `worker/` + `pod/` (pod.json + table DDL + folders + seed) + `docs/`.
+4. **AWS prep:** SSH in, preserve `.env`, **then** wipe the AWS box's Vega deployment (B2). The Vega
+   **source repo** stays on the Mac (`/Users/jaydipdas/Code/Vega`) and is the Track-B lift source —
+   don't delete it. Set up the research/backtest host.
+5. **Engine bake-off (decision gate, DESIGN_v4 E1):** stand up Track A (Nautilus-shell) and Track B
+   (lift Vega wholesale) on Delta-testnet; run the portable `(bars,params)->signals` contract + an
+   E5 backtest both ways; assert backtest≡paper parity; pick on parity + integration friction + TTM
+   (evidence favors Track B). Lock the engine choice before heavy scaffolding.
+6. Scaffold `alpha-core/` + `worker/` + `pod/` (pod.json + table DDL + folders + seed) + `docs/`.
