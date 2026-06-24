@@ -1,0 +1,54 @@
+# Alpha — uv workspace root (coordinator only; the installable packages are the
+# members below). Tooling config is centralised here so a tunable lives in ONE
+# place (CLAUDE.md: single source of truth). `pod/` is a Lemma pod bundle deployed
+# via the `lemma` CLI — not a pip package — so it is intentionally not a member.
+[project]
+name = "alpha"
+version = "0.0.0"
+description = "Alpha — AI-driven multi-asset algorithmic auto-trading platform (workspace root)."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [{ name = "Jaydip Das" }]
+
+[tool.uv]
+package = false  # the root coordinates the workspace; it is not itself a package.
+
+[tool.uv.workspace]
+members = ["alpha-core", "worker"]
+
+# Dev tooling shared by the whole workspace, pinned to the same versions Vega's
+# CI proves (B0.2 mirrors the rest of Vega's gates). Lives at the root so ruff /
+# mypy / pytest run identically over every member.
+[dependency-groups]
+dev = [
+    "ruff>=0.15.17",
+    "mypy>=2.1.0",
+    "pytest>=9.1.0",
+    "hypothesis>=6.155.3",
+    "pre-commit>=4.6.0",
+    "pytest-cov>=7.1.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["alpha-core/src", "alpha-core/tests", "worker/src", "worker/tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["alpha_core", "worker"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["alpha-core/src", "alpha-core/tests", "worker/src", "worker/tests"]
+mypy_path = ["alpha-core/src", "worker/src"]
+namespace_packages = true
+explicit_package_bases = true
+
+[tool.pytest.ini_options]
+testpaths = ["alpha-core/tests", "worker/tests"]
+addopts = "-q"
