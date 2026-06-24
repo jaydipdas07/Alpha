@@ -4,7 +4,10 @@
 > `/Users/jaydipdas/.claude/plans/recursive-marinating-kurzweil.md`. It supersedes that doc
 > where they differ. It is self-contained so the cloud **Ultraplan** session can read it by
 > absolute path. **Build has NOT started — finalize first.**
-> Reference repo (read-only, port patterns not code): Vega at `/Users/jaydipdas/Code/Vega`.
+> Reference repo: Vega at `/Users/jaydipdas/Code/Vega`. **You own Vega outright** (`Proprietary`,
+> authored by you) — verified this session, so code may be **lifted wholesale**, not just patterned.
+> **`docs/DESIGN_v4.md` E1 supersedes Q1 below**: the engine is decided by a Phase-0 co-equal A/B
+> bake-off (NautilusTrader-shell vs lift-Vega), not pre-locked to hand-rolled.
 > Lemma pod: **Vault** (id `019ef606-7b77-76f1-853a-978ddf819415`), the active pod in the CLI.
 >
 > **v3 (this pass)** adds an adversarial-pressure-test hardening layer on top of v2 — see
@@ -20,36 +23,53 @@ direct read of Vega's source. The plan was strong; this refinement closes the ga
 otherwise bite — chiefly **backtest≡live parity across the pod/worker split**, **statistical
 rigor under AI-rate strategy generation**, and **a clean single source of truth for execution**.
 
-**Vega code audit (the basis for the engine decision).** ~13k LOC src vs ~13.5k LOC tests
-(>1:1), `fail_under=94`, `mypy --strict`, property + replay + chaos tests, 18 ADRs. Read in full:
-`core/interfaces.py` (venue-agnostic `Strategy`/`BrokerAdapter` ABCs; idempotent `place_order`
-with dedup-by-query), `risk/manager.py` (non-bypassable 10-step gate, latching kill-switch that
-survives restart via `restore()`, in-flight working-exposure reservation), `execution/reconcile.py`
-(broker-truth adopt-vs-halt with explained/unexplained drift separation + phantom-position
-zeroing), `execution/costs.py` (itemized Indian cost stack + crypto TDS, price-taker, 2× stress),
-`core/order_fsm.py` (complete 48-cell table, fill dedup, over-fill detection, caller-supplied
-`now` for parity), `backtest/rigor.py` (look-ahead audit + walk-forward + 2× stress). **Verdict:
-the engine is production-grade and de-risked.** Alpha's risk is NOT the engine — it is the AI
-discovery brain and the statistics riding on top.
+**Vega code audit (VERIFIED this session against the real code; basis for the engine decision).**
+src **12,981 LOC** vs tests **13,506 LOC** (>1:1), `fail_under=94`, `mypy --strict`, hypothesis
+property + replay (`test_paper_loop`) + chaos tests, **17 numbered ADRs** (0001–0015, 0017, 0018;
+0016 missing; 0000 is a template — "18 ADRs" counted files). Verified exact:
+`core/interfaces.py` (venue-agnostic `Strategy`/`BrokerAdapter` ABCs; idempotent `place_order` with
+`find_order_id` dedup-by-query), `risk/manager.py` (non-bypassable **10-step** gate, halt always
+first, latching kill-switch surviving restart via `restore()`, in-flight working-exposure
+reservation; `update_pnl(realized,unrealized)` is the kill hook → R13 funding is an additive feed),
+`execution/reconcile.py` (broker-truth adopt-vs-halt with explained/unexplained drift separation +
+phantom-position zeroing → `trip(RECONCILIATION_MISMATCH)`), `execution/costs.py` (itemized Indian
+cost stack + crypto TDS, price-taker, 2× stress — **no perp funding, Alpha adds**),
+`core/order_fsm.py` (complete **8×6 = 48-cell** table, every cell named, fill dedup, over-fill
+detection, caller-supplied `now`), `backtest/rigor.py` (look-ahead + walk-forward + 2× stress **+ a
+bonus cross-instrument portfolio-rigor suite**), `backtest/runner.py` (**event-driven backtester
+that reuses the exact live kernel with `FakeClock` — parity without Nautilus**), `execution/state.py`
+(event-sourced, append-only + **SHA-256 hash-chained audit log**). **Gems v3 under-used:** ~7
+tradeable example strategies (template library for the constrained strategist), options/Greeks,
+F&O roll scheduler, paper adapter, the property/replay suite (reusable as a differential oracle).
+**Gaps Alpha must add:** perp funding into P&L+gate; Greeks wired into the pre-trade gate (calc
+exists, not gated); multi-venue/multi-strategy (Vega = one `active_adapter`/process); market
+calendar + live instrument master; shared multi-process state store. **Verdict: the engine is
+production-grade, de-risked, AND yours to lift wholesale.** Alpha's risk is NOT the engine — it is
+the AI discovery brain and the statistics riding on top.
 
 ## Decisions locked this session
 
 | # | Decision | Choice |
 |---|---|---|
-| Q1 | Worker engine | **Hand-rolled, port Vega patterns** into a shared `alpha-core` kernel. (NautilusTrader reconsidered only at Phase 5 if latency/scale demands change.) |
+| Q1 | Worker engine | **Superseded by `docs/DESIGN_v4.md` E1** — engine decided by a Phase-0 **co-equal A/B bake-off**: Track A NautilusTrader-shell + Vega-pattern overlays; Track B **lift Vega wholesale** (your own tested code). No preordained primary/fallback; evidence favors Track B (≈6–8 wk vs ≈14–16, ~80% lower risk). The shared `alpha-core` kernel + the backtest≡live parity guarantee are unchanged either way. |
 | Q2 | Where Phase-1 backtests run | **Single engine on a research box** (Mac-local first, cheap cloud later). Pod orchestrates; no money/keys/static-IP. Guarantees one engine = parity. |
 | Q3 | Strategist code-gen freedom | **Both** — constrained (parameterize vetted templates + whitelisted primitives) as the default track from Phase 1b; **sandboxed free-form code-gen** as an additive track (Phase 1c), both feeding the *same* rigor gate and the *same* `alpha-core` execution path. |
 | D1 | Emergency-flatten when the worker process is dead | **Deadman + exchange-side.** An independent "deadman" process (separate supervisor, same VPS) watches `worker_status` + a pod `commands.emergency_flatten` row and calls broker REST cancel-all/flatten **directly** — it does NOT depend on the main worker. PLUS exchange-side protections that survive client death: Binance/Delta cancel-on-disconnect WS deadman timers + broker-side reduce-only stops persisted per open position. The pod *trips* the deadman; it never places orders. (See R1.) |
 | D2 | Phase-1c free-form code-gen | **Keep, hard-gated on true OS-level isolation** (not "no-I/O"). The constrained track (1b) ships first regardless; 1c is gated behind the isolation work in R3, not merely "1b stability." |
 
-**Why Q1 = hand-rolled (evidence-based).** (1) The hard, risky part of Alpha is the AI brain +
-statistics, which Nautilus does nothing to solve. (2) Vega's `Strategy` ABC + `StrategyEngine` +
-`CostModel` + `RiskManager` + `order_fsm.step` are *already* the exact shape of the shared kernel
-Q2 needs (identical code in backtest and live, `now` injected for parity) — a ready-made blueprint.
-(3) Nautilus would impose its strategy format on the strategist agent (fighting both Q3 tracks),
-add a heavy learning curve, and buy speed Alpha doesn't need (SEBI ≤10 OPS, ~1s equity tick,
-sub-second crypto are all well within a Python event engine). Nautilus only wins for microsecond
-HFT, a large out-of-the-box venue/indicator library, or a from-zero build — none apply here.
+**Why a measured bake-off, not a presumption (refined by the Vega review; see `docs/DESIGN_v4.md`
+E1).** The original v3 instinct — don't presume Nautilus; the hard, risky part of Alpha is the AI
+brain + statistics, which Nautilus does nothing to solve — is **largely vindicated**. The deep Vega
+read-through confirmed Vega's `Strategy` ABC + `StrategyEngine` + `CostModel` + `RiskManager` +
+`order_fsm.step` + its **parity-proven backtester** are *already* the exact shared kernel Q2 needs
+(identical code in backtest and live, `now` injected) — and, crucially, **it is your own proprietary
+code, liftable wholesale**, so "Q1 = hand-rolled" is more accurately **"lift Vega."** Nautilus still
+imposes its strategy format/learning curve on the strategist agent and buys speed Alpha doesn't need
+(SEBI ≤10 OPS, ~1s equity tick, seconds-to-minutes crypto are well within a Python event engine);
+its only wins (microsecond HFT, a big out-of-the-box venue/indicator library) don't apply. But
+rather than pre-decide, **DESIGN_v4 E1 runs both as a time-boxed Phase-0 A/B** (Nautilus-shell vs
+Vega-lift) and picks on parity + integration friction + time-to-market. Current evidence favors the
+lift (≈6–8 wk, ~80% lower risk).
 
 **Open items resolved (recommendations; say the word to override):**
 - Notification surface → **Telegram**. Pod name → **keep `Vault`** (repo=Alpha, pod=Vault).
@@ -197,18 +217,27 @@ broker → reconcile (broker=truth). Reports to Vault via `Pod.from_env()` (batc
 **Add perp funding-rate accrual** (Vega's per-order `CostModel` doesn't carry it) into both the
 backtest and live P&L. ClickHouse (warm) + Parquet/DuckDB (cold).
 
-## Vega-lift matrix (port-heavy vs clean-sheet)
+## Vega-lift matrix (VERIFIED this session; you own Vega → lift, don't just pattern)
 
-| Subsystem | Action | Vega reference |
-|---|---|---|
-| Strategy contract, engine, parity discipline (`now` injection) | **Port-heavy** | `core/interfaces.py`, `strategy/engine.py`, `core/order_fsm.py` |
-| Risk gate + latching kill-switch + restart-safety + in-flight reservation | **Port-heavy** | `risk/manager.py`, `risk/limits.py` |
-| Reconcile (adopt/halt, drift separation, phantom zeroing) + re-arm-on-clean | **Port-heavy** | `execution/reconcile.py` |
-| Cost model (Indian stack + TDS, price-taker, 2× stress) | **Port-heavy**, + add funding accrual | `execution/costs.py` |
-| OMS idempotency + audit | **Port-heavy** | `execution/oms.py`, `execution/state.py` |
-| Look-ahead/walk-forward/stress | **Port** then **extend** with CPCV/DSR/holdout | `backtest/rigor.py` |
-| Venue adapters (kite/ccxt) | **Port patterns** (token flow, normalization) | `adapters/kite.py`, `adapters/crypto_ccxt.py` |
-| Lemma brain (tables/agents/workflows/app), pod↔worker SDK integration, ClickHouse data plane, AI rigor (CPCV/DSR/trial ledger/holdout) | **Clean-sheet** | n/a (Vega has none) |
+| Subsystem | Action | Effort | Vega reference |
+|---|---|---|---|
+| Core models/enums/errors/interfaces (ABCs; Decimal/tz/immutable) | **lift-wholesale** | trivial | `core/{interfaces,models,enums,errors}.py` |
+| Order FSM (48-cell, dedup, over-fill, `now`) | **lift-wholesale** | trivial | `core/order_fsm.py` (+ tests) |
+| Risk gate (10-step, latching kill+`restore`, working-exposure) | **lift-wholesale** | low | `risk/manager.py`, `risk/limits.py` |
+| Reconcile (adopt/halt, drift separation, phantom zeroing, re-arm-on-clean) | **lift-wholesale** | low | `execution/reconcile.py` |
+| Cost model (Indian stack + TDS, price-taker, 2× stress) **+ add funding** | **lift + extend** | low (+med funding) | `execution/costs.py`, `config/costs.yaml` |
+| OMS + positions + state-store (event-sourced, SHA-256 audit, restore) | **lift-wholesale** | low | `execution/{oms,positions,state}.py` |
+| Backtester + rigor (lookahead/WF/stress + portfolio rigor) **+ extend** CPCV/PBO/DSR/holdout/keyed-ledger | **lift + extend** | low lift / **high extend** | `backtest/{runner,rigor}.py` |
+| Strategy engine + registry + ~7 example templates | **lift / port-pattern** | low | `strategy/engine.py`, `registry.py`, `strategy/examples/*` |
+| Options Greeks (calc exists; **wire into pre-trade gate = net-new**) | **port + extend** | medium | `options/{risk,greeks,chain}.py` |
+| Adapters: Delta/Binance (ccxt) + Kite (token flow) | **port-pattern** | medium | `adapters/{crypto_ccxt,kite,factory,paper}.py`, `helpers/kite_auth.py` |
+| **Dhan + Upstox adapters** | **clean-sheet** | medium | n/a (build to `BrokerAdapter` ABC) |
+| **Multi-venue + multi-strategy orchestration** (Vega = single-adapter/process) | **clean-sheet** | high | `portfolio/loop.py` as pattern only |
+| **Indian market calendar + live instrument master** | **clean-sheet** | low–med | n/a |
+| **Perp funding accrual → P&L + risk gate** (R13) | **clean-sheet** | medium | `costs.py` ext + `risk.update_pnl` feed |
+| **AI rigor** (CPCV/PBO, Deflated Sharpe, keyed global trial ledger, roll-forward holdout, population calibration) | **clean-sheet** | high | n/a — the crown jewel |
+| **Lemma brain** (tables/agents/workflows/app), pod↔worker SDK, deadman, ClickHouse data plane | **clean-sheet** | high | n/a (Vega has none) |
+| Live event loop | **spike-decided** (Nautilus-owns *or* lift `live.py`) | depends | `live.py`, `app.py` |
 
 ## Sharpened phased roadmap
 
@@ -409,6 +438,9 @@ worker; daily Kite token relay (Mac 2FA → RLS row); Telegram bot token + surfa
 (incl. a rejected candidate + a passing one); CA consult on crypto-derivative + algo-income tax.
 
 ## Remaining items to confirm
+- **Vega licensing — RESOLVED:** you own Vega (`Proprietary`, authored by you; no copyleft, no
+  vendored third-party source, deps all permissive). Lift code wholesale, not just patterns
+  (see `docs/DESIGN_v4.md` E1 / open item #1).
 - Lemma money column type (decide in Phase 0 verification).
 - CPCV embargo size + DSR significance threshold + control-strategy definitions (decide in Phase 1a).
 - **DSR search-cell taxonomy** (R4) + **holdout roll-forward cadence** (R5) + **synthetic-population

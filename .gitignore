@@ -1,0 +1,32 @@
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+*.egg-info/
+
+# Secrets / env — live secrets are NEVER committed (B3; CLAUDE.md never-do)
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+
+# Data / build artifacts
+*.duckdb
+*.parquet
+*.sqlite
+*.db
+dist/
+build/
+
+# Local Claude overrides (the shared harness is .claude/settings.json)
+.claude/settings.local.json
