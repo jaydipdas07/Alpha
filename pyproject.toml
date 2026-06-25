@@ -86,9 +86,15 @@ omit = [
     # lot/tick rounding is used only by instruments.py (the instrument universe), so it
     # rides with instruments; its matching test_helpers lands with the full helpers lift.
     "alpha-core/src/alpha_core/helpers/decimal_utils.py",
-    # the data feed (ReplayFeed) is the backtest/data layer (B0.9d); pulled forward only
-    # so test_paper can drive the PaperBroker. Its full test_feed lands with B0.9d.
+    # the data feed (ReplayFeed) is the data layer; pulled forward so test_paper +
+    # the backtest tests can drive it. Its dedicated test_feed lands with the data
+    # ingest layer (B1a.1); it's exercised here but not exhaustively covered.
     "alpha-core/src/alpha_core/data/feed.py",
+    # the portfolio risk overlay is a P3/scaling feature: the lifted backtest tests run
+    # the allocator with overlay=None, and its dedicated test (test_portfolio_risk_overlay)
+    # needs the universe-config layer (data.universe -> SelectionToken/UniverseConfig),
+    # deferred. Rejoins measurement when the universe config + that test land.
+    "alpha-core/src/alpha_core/portfolio/risk_overlay.py",
 ]
 
 [tool.coverage.report]
