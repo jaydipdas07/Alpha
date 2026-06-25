@@ -46,7 +46,7 @@ def chart_to_bars(payload: dict[str, Any], *, symbol: str) -> list[Bar]:
                 high=Decimal(str(h)),
                 low=Decimal(str(low)),
                 close=Decimal(str(c)),
-                volume=Decimal(str(int(v))),
+                volume=Decimal(str(int(v))),  # NSE daily volume is whole shares (Yahoo gives ints)
             )
         )
     return bars

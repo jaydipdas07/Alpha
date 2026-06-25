@@ -66,7 +66,7 @@ def ingest_nse(store: BarStore) -> int:
     print(
         f"[nse]     NSE:RELIANCE 1d {start.date()}..{end.date()}: fetched {len(bars)} -> {on_disk}"
     )
-    return store.write_bars(bars)  # idempotent re-write
+    return store.write_bars(bars)  # deliberate re-write -> idempotent (count unchanged)
 
 
 def main() -> None:

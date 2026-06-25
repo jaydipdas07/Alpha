@@ -35,6 +35,6 @@ def kline_to_bar(kline: Sequence[Any], *, symbol: str, interval_seconds: int) ->
 def klines_to_bars(
     klines: Sequence[Sequence[Any]], *, symbol: str, interval_seconds: int
 ) -> list[Bar]:
-    """A page of Binance klines -> ``Bar``s (skips the final, still-forming candle is
-    the caller's job — here every row is taken as a closed bar)."""
+    """A page of Binance klines -> ``Bar``s. Every row is taken as a closed bar; the
+    caller fetches only past windows, so there is no still-forming final candle to drop."""
     return [kline_to_bar(k, symbol=symbol, interval_seconds=interval_seconds) for k in klines]
