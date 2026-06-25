@@ -32,7 +32,7 @@ Goal: a correct `alpha-core`/`worker`/`pod` skeleton that lints/types/tests gree
 |---|---|---|---|
 | B0.1 | Scaffold `alpha-core/` + `worker/` + `pod/` + `docs/`; `pyproject.toml` (uv, py≥3.12; pydantic/pydantic-settings/structlog + dev ruff/mypy/pytest/hypothesis/pre-commit); ruff + `mypy --strict` + pytest config; CI (uv→ruff→mypy→pytest) | [CC] | ✅ green in CI; ruff + mypy clean; merged (#5) |
 | B0.2 | Mirror Vega quality gates into `alpha-core`: `fail_under=94`, `mypy strict`, pre-commit hooks | [CC] | ✅ gates enforced locally + in CI (#7) |
-| B0.3 | Lemma Phase-0 verification (B5): inspect money-column types → lock native DECIMAL vs string-Decimal; confirm `lemma` → Vault; verify table/RLS/FK primitives | [You]+[CC] | ⏳ B5 locked; a `Decimal` round-trips through a test table |
+| B0.3 | Lemma Phase-0 verification (B5): inspect money-column types → lock native DECIMAL vs string-Decimal; confirm `lemma` → Vault; verify table/RLS/FK primitives | [You]+[CC] | ✅ B5 = **TEXT string-Decimal** (Lemma has no native DECIMAL; FLOAT lossy + INTEGER is int32 — both proven); `Decimal` round-trips; `lemma`→Vault ok |
 | B0.4 | Pod skeleton: `pod.json` + table DDL (deployments, strategies, backtests, discovery_runs, paper_runs, orders, fills, positions, pnl_snapshots, risk_events, **commands**(+`emergency_flatten`), **worker_status**, **research_status**, **research_ledger** keyed by (market,family,window), broker_credentials RLS) + seed | [CC] | ⏳ `lemma records create` + `query run` confirm columns/FKs/RLS + money type |
 | B0.5 | AWS prep: SSH; preserve `.env` keys → Alpha gitignored secrets; wipe the AWS box's Vega **deployment** (keep the Mac Vega repo as the lift source); set up the research host | [You]+[CC] | ⏳ research host reachable; keys copied; nothing live |
 | B0.6 | `research_status` heartbeat table + `request_backtest` lease/timeout scaffolding (R8) | [CC] | ⏳ a stale research box alerts / times out, never hangs |
@@ -130,15 +130,15 @@ Goal: additive, last — the riskiest discovery track, hard-gated on isolation.
 > Every open item appears here exactly once. When it lands, mark ✅ in its phase table above and remove
 > it here. Update via `/session-wrap` at the end of every session.
 
-### 🟢 Unblocked — ready to start now
-- *(none that aren't human-gated — the next Phase-0 work is the **engine bake-off**, which is stop-and-ask; see Next action.)*
+### 🟢 Unblocked — ready to start now ([You] resolved all Phase-0 blockers 2026-06-25)
+- **B0.4** — Pod skeleton: author the table DDL + seed in the Vault; **money columns = `TEXT` string-Decimal (B5 ✅)**. *(B0.3 done; `lemma`→Vault ok.)*
+- **B0.9** — Track B: lift Vega `core`/`execution`/`risk`/`backtest` → `alpha_core`; run the B0.7 contract through it (backtest + Delta-**testnet** live-paper). *(Vega present + B0.7 ✅ + testnet keys lifted.)*
+- **B0.8** — Track A: install NautilusTrader, wrap the contract, Vega-pattern cost model, Delta-testnet live-paper. *(Full A/B bake-off authorized.)*
+- **B0.5** — AWS prep: **[CC] drives via [You]'s SSH access**; preserve `.env` keys (✅ lifted from Vega), **wipe the AWS Vega *deployment* — confirm with [You] first**, set up the research host.
 
-### 🟡 Blocked / human-gated — needs a prerequisite or a [You] step
-- **B0.8 / B0.9 — engine bake-off** — **stop-and-ask [You] before starting.** B0.8 (Nautilus shell) needs NautilusTrader installed; B0.9 (lift Vega) is otherwise ready (Vega repo present + the B0.7 contract ✅). Both need [You]'s go-ahead + AWS/Delta-testnet for live-paper.
-- **B0.10 → 0.GATE** — parity bake-off + engine decision — needs B0.8 **and** B0.9.
-- **B0.3 / B0.4** — Lemma verification + pod skeleton (tables/RLS/money-type + seed) — needs the Mac `lemma` CLI session (Vault pod). *([You]+[CC]; B0.1 scaffolded the empty `pod/` bundle. When B0.9 lifts the config loader, restore Vega's `_scan_for_secrets` guard.)*
-- **B0.5** — AWS prep (preserve `.env`, wipe Vega deployment, set up research host) — needs [You] SSH/AWS access.
+### 🟡 Blocked — needs a prerequisite
 - **B0.6** — `research_status` heartbeat + `request_backtest` lease/timeout scaffolding (R8) — needs B0.4 (pod tables).
+- **B0.10 → 0.GATE** — parity bake-off + engine decision (→ `docs/adr/0001`) — needs B0.8 **and** B0.9.
 
 ### ▶️ Next action for a cold session
-**B0.1, B0.2, B0.7 all ✅ merged (#5, #7, #8); the PR-merge norm is codified (#6).** The remaining Phase-0 work is the **engine bake-off** (B0.8/B0.9 → B0.10 → 0.GATE) plus the human-gated rails (B0.3/B0.4 Lemma, B0.5 AWS). **STOP and ask [You]** before B0.8/B0.9 (needs NautilusTrader install + AWS/Lemma/Delta-testnet prep) and any `[You]`/`[You]+[CC]` step. **PR norm:** build → CI green → spawn a review sub-agent → apply fixes → **CC merges** (squash); edits to the safety gates (never-do list / cardinal invariants / money-live-secrets) go to **[You]** to merge.
+**[You] resolved every Phase-0 blocker (2026-06-25): full A/B bake-off (B0.8 + B0.9), Lemma verify + author tables, AWS via [You]'s SSH, keys lifted from Vega `.env`.** Done: B0.1/B0.2/B0.3/B0.7 ✅; PR-merge norm codified (#6); B5 locked = `TEXT` string-Decimal. Drive the unblocked queue task-by-task under the **PR norm** (build → CI green → sub-agent review → **CC merges** squash): **B0.4** (pod tables, money=`TEXT`), **B0.9** (lift Vega), **B0.8** (Nautilus + install NautilusTrader), **B0.5** (AWS — **confirm the destructive wipe with [You]** before running) → then **B0.10 → 0.GATE** (engine choice → ADR 0001). Build note: when B0.9 lifts the config loader, restore Vega's `_scan_for_secrets`. **Safety-gate edits** (never-do / cardinal invariants / money-live-secrets) → **[You]** merges.

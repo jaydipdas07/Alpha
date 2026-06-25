@@ -23,12 +23,14 @@ the Lemma CLI — `lemma schema <resource>` / `lemma <resource> init` print the 
 
 - **B0.1 (this PR):** bundle scaffolded (manifest + this README). No tables/agents yet; nothing
   imported to the Vault.
-- **B0.3 `[You]+[CC]`:** verify the Vault — money-column type (native DECIMAL vs string-`Decimal`,
-  B5), `lemma` reaches the Vault, table/RLS/FK primitives. *Human-gated; not done here.*
+- **B0.3 `[You]+[CC]`: ✅ done.** `lemma` 0.5.0 reaches the active Vault; **B5 locked** (see money note
+  below); a `Decimal` round-trips exactly through a `TEXT` column.
 - **B0.4 `[CC]`:** author all tables (deployments, strategies, backtests, discovery_runs, paper_runs,
   orders, fills, positions, pnl_snapshots, risk_events, `commands` (+ `emergency_flatten`),
   `worker_status`, `research_status`, keyed `research_ledger`, `broker_credentials` RLS) + seed, then
-  import.
+  import. **Every money/price/qty column is `TEXT`** (B5).
 
-> Money is **never a float** at the Lemma boundary — store as native DECIMAL (else a string-encoded
-> `Decimal`), never a float column (B5). Locked in B0.3.
+> **Money is never a float at the Lemma boundary (B5 ✅, locked in B0.3).** Lemma has **no native
+> DECIMAL** type, `FLOAT` loses precision (proven: `12345678901234567.89` → `…568`), and `INTEGER` is
+> **int32** (overflows on minor-units). So store money/price/quantity as a **`TEXT` string-encoded
+> `Decimal`**, round-tripped via `Decimal(str)` in `alpha-core`. Never a `FLOAT` column.
