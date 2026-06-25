@@ -30,7 +30,7 @@ Goal: a correct `alpha-core`/`worker`/`pod` skeleton that lints/types/tests gree
 
 | ID | Task | Owner | Done-when |
 |---|---|---|---|
-| B0.1 | Scaffold `alpha-core/` + `worker/` + `pod/` + `docs/`; `pyproject.toml` (uv, py≥3.12; pydantic/pydantic-settings/structlog + dev ruff/mypy/pytest/hypothesis/pre-commit); ruff + `mypy --strict` + pytest config; CI (uv→ruff→mypy→pytest) | [CC] | ⏳ empty pytest green in CI; ruff + mypy clean; pushed |
+| B0.1 | Scaffold `alpha-core/` + `worker/` + `pod/` + `docs/`; `pyproject.toml` (uv, py≥3.12; pydantic/pydantic-settings/structlog + dev ruff/mypy/pytest/hypothesis/pre-commit); ruff + `mypy --strict` + pytest config; CI (uv→ruff→mypy→pytest) | [CC] | ✅ green in CI; ruff + mypy clean; merged (#5) |
 | B0.2 | Mirror Vega quality gates into `alpha-core`: `fail_under=94`, `mypy strict`, pre-commit hooks | [CC] | ⏳ gates enforced locally + in CI |
 | B0.3 | Lemma Phase-0 verification (B5): inspect money-column types → lock native DECIMAL vs string-Decimal; confirm `lemma` → Vault; verify table/RLS/FK primitives | [You]+[CC] | ⏳ B5 locked; a `Decimal` round-trips through a test table |
 | B0.4 | Pod skeleton: `pod.json` + table DDL (deployments, strategies, backtests, discovery_runs, paper_runs, orders, fills, positions, pnl_snapshots, risk_events, **commands**(+`emergency_flatten`), **worker_status**, **research_status**, **research_ledger** keyed by (market,family,window), broker_credentials RLS) + seed | [CC] | ⏳ `lemma records create` + `query run` confirm columns/FKs/RLS + money type |
@@ -131,16 +131,15 @@ Goal: additive, last — the riskiest discovery track, hard-gated on isolation.
 > it here. Update via `/session-wrap` at the end of every session.
 
 ### 🟢 Unblocked — ready to start now
-- **B0.1** — Scaffold `alpha-core`/`worker`/`pod` + tooling + CI. *(the first move; everything else chains off it)*
-- **B0.2** — Mirror Vega quality gates (after B0.1).
-- **B0.7** — Portable strategy contract + trivial MA-crossover ref impl (after B0.1).
+- **B0.2** — Mirror Vega quality gates (`fail_under=94` coverage floor + full pre-commit set). *(B0.1 ✅ merged #5)*
+- **B0.7** — Portable `(bars, params) -> signals` contract + trivial MA-crossover ref impl. *(do after B0.2)*
 
 ### 🟡 Blocked — needs a prerequisite
-- **B0.3 / B0.4** — Lemma verification + pod skeleton — needs the Mac `lemma` CLI session (Vault pod). *([You]+[CC])*
+- **B0.3 / B0.4** — Lemma verification + pod skeleton (tables/RLS/money-type + seed) — needs the Mac `lemma` CLI session (Vault pod). *([You]+[CC]; B0.1 scaffolded the empty `pod/` bundle.)*
 - **B0.5** — AWS prep (preserve `.env`, wipe Vega deployment, set up research host) — needs [You] SSH/AWS access.
-- **B0.8** — Track A — needs NautilusTrader installed.
+- **B0.8** — Track A — needs NautilusTrader installed + B0.7.
 - **B0.9** — Track B — needs the Vega repo on disk (`/Users/jaydipdas/Code/Vega`, present) + B0.7's contract.
 - **B0.10 → 0.GATE** — parity bake-off + engine decision — needs B0.8 **and** B0.9.
 
 ### ▶️ Next action for a cold session
-Start **B0.1** (one branch + one PR): scaffold the three packages + `pyproject.toml` + ruff/mypy/pytest + CI, green. Then B0.2 and B0.7. Do **not** start B0.8/B0.9 until the contract (B0.7) exists. Stop at any `[You]`/`[You]+[CC]` step and ask.
+**B0.1 ✅ merged (#5).** Start **B0.2** (one branch + one PR): mirror Vega's gates — coverage `fail_under=94` + the full pre-commit set — green in CI. Then **B0.7** (the `(bars, params) -> signals` contract + MA-crossover ref impl; reference Vega's `Strategy` ABC read-only). **PR norm:** build → CI green → spawn a review sub-agent → apply fixes → **CC merges** (squash); the human is out of the code-merge loop (money / live-gate / secrets gates unchanged). **Stop and ask** before B0.8/B0.9 (engine bake-off) and any `[You]`/`[You]+[CC]` step (B0.3, B0.5).
