@@ -1,0 +1,165 @@
+# config/instruments.yaml — tradable universe + per-instrument metadata and
+# per-segment trading rules. Source: ADR 0002 / 0007 / 0010. Skeleton — the real
+# universe is populated as adapters land (equity first).
+
+# Per-segment trading rules (sessions/square-off/rollover/funding).
+segments:
+  equity:
+    session: { open: "09:15", close: "15:30", tz: "Asia/Kolkata" }
+    no_new_entry_time: "15:10"
+    square_off_time: "15:15"
+  crypto:
+    clock: "24x7"
+    funding: true
+  index_option:
+    session: { open: "09:15", close: "15:30", tz: "Asia/Kolkata" }
+    no_new_entry_time: "15:10"
+    square_off_time: "15:15"
+    rollover_before: "1d"
+
+# Per-instrument entries. The registry (execution/instruments.py) reads these and
+# gates the universe + quantizes orders (lot/tick). NSE cash trades single shares
+# (lot_size 1) on a ₹0.05 tick. Add F&O contracts (with real lot sizes) under G11.
+instruments:
+  "NSE:RELIANCE":
+    segment: equity
+    asset_class: EQUITY
+    quote_currency: INR
+    lot_size: 1
+    tick_size: "0.05"
+    circuit_band_pct: "0.10"
+  "NSE:TCS":
+    segment: equity
+    asset_class: EQUITY
+    quote_currency: INR
+    lot_size: 1
+    tick_size: "0.05"
+    circuit_band_pct: "0.10"
+  "NSE:INFY":
+    segment: equity
+    asset_class: EQUITY
+    quote_currency: INR
+    lot_size: 1
+    tick_size: "0.05"
+    circuit_band_pct: "0.10"
+  "NSE:HDFCBANK":
+    segment: equity
+    asset_class: EQUITY
+    quote_currency: INR
+    lot_size: 1
+    tick_size: "0.05"
+    circuit_band_pct: "0.10"
+  # Index-option example (G11). Real contract symbols/expiries/lots come from the
+  # Kite instrument master at go-live; this is a representative entry so the
+  # registry quantizes F&O orders (lot 75 = NIFTY) and the cost model has a tick.
+  "NFO:NIFTY-EXAMPLE-CE":
+    segment: index_option
+    asset_class: INDEX_OPTION
+    quote_currency: INR
+    lot_size: 75
+    tick_size: "0.05"
+  # Crypto majors (ccxt symbols). lot_size = min qty step, tick_size = price step
+  # (Binance spot values; the exchange's own precision is authoritative — a future
+  # enhancement can load it from ccxt load_markets). Used for the crypto universe +
+  # order quantization. The tradable universe per run is filtered by venue.
+  "BTC/USDT":
+    segment: crypto
+    asset_class: CRYPTO
+    venues: [BINANCE, BYBIT]   # spot symbols — not on Delta (P19.1)
+    quote_currency: USDT
+    lot_size: "0.00001"
+    tick_size: "0.01"
+  "ETH/USDT":
+    segment: crypto
+    asset_class: CRYPTO
+    venues: [BINANCE, BYBIT]
+    quote_currency: USDT
+    lot_size: "0.0001"
+    tick_size: "0.01"
+  "SOL/USDT":
+    segment: crypto
+    asset_class: CRYPTO
+    venues: [BINANCE, BYBIT]
+    quote_currency: USDT
+    lot_size: "0.001"
+    tick_size: "0.01"
+  # Delta India perpetual (derivatives, P18.2). Quantity is in CONTRACTS
+  # (1 contract = 0.001 BTC); lot_size 1 = integer contracts, tick 0.5 (from
+  # ccxt load_markets on the India endpoint). Set DELTA_MARKET_TYPE=swap so
+  # positions reconcile. NB: Delta India lists BTC/USD:USD (USD-settled), not the
+  # global BTC/USDT:USDT.
+  # Delta India USD-settled perpetuals (top by USD volume on api.india.delta.exchange,
+  # fetched via ccxt load_markets). lot_size is always 1 = integer contracts; the
+  # "1 contract = <contractSize> base" comment is the underlying multiplier (NOT a
+  # tunable the engine reads — kept for sizing sanity). tick_size is the venue's
+  # authoritative price step. Quantity is in CONTRACTS; set DELTA_MARKET_TYPE=swap.
+  "BTC/USD:USD":             # 1 contract = 0.001 BTC
+    segment: crypto
+    asset_class: CRYPTO
+    venues: [DELTA]   # Delta India perpetual only (P19.1)
+    quote_currency: USD
+    lot_size: "1"
+    tick_size: "0.5"
+  "ETH/USD:USD":             # 1 contract = 0.01 ETH
+    segment: crypto
+    asset_class: CRYPTO
+    venues: [DELTA]
+    quote_currency: USD
+    lot_size: "1"
+    tick_size: "0.05"
+  "SOL/USD:USD":             # 1 contract = 1 SOL
+    segment: crypto
+    asset_class: CRYPTO
+    venues: [DELTA]
+    quote_currency: USD
+    lot_size: "1"
+    tick_size: "0.0001"
+  "XRP/USD:USD":             # 1 contract = 1 XRP
+    segment: crypto
+    asset_class: CRYPTO
+    venues: [DELTA]
+    quote_currency: USD
+    lot_size: "1"
+    tick_size: "0.0001"
+  "BNB/USD:USD":             # 1 contract = 0.1 BNB
+    segment: crypto
+    asset_class: CRYPTO
+    venues: [DELTA]
+    quote_currency: USD
+    lot_size: "1"
+    tick_size: "0.001"
+  "DOGE/USD:USD":            # 1 contract = 100 DOGE
+    segment: crypto
+    asset_class: CRYPTO
+    venues: [DELTA]
+    quote_currency: USD
+    lot_size: "1"
+    tick_size: "0.000001"
+  "UNI/USD:USD":             # 1 contract = 1 UNI
+    segment: crypto
+    asset_class: CRYPTO
+    venues: [DELTA]
+    quote_currency: USD
+    lot_size: "1"
+    tick_size: "0.0001"
+  "PAXG/USD:USD":            # 1 contract = 0.001 PAXG (tokenized gold)
+    segment: crypto
+    asset_class: CRYPTO
+    venues: [DELTA]
+    quote_currency: USD
+    lot_size: "1"
+    tick_size: "0.01"
+  "XAUT/USD:USD":            # 1 contract = 0.001 XAUT (tokenized gold)
+    segment: crypto
+    asset_class: CRYPTO
+    venues: [DELTA]
+    quote_currency: USD
+    lot_size: "1"
+    tick_size: "0.01"
+  "ZEC/USD:USD":             # 1 contract = 0.1 ZEC
+    segment: crypto
+    asset_class: CRYPTO
+    venues: [DELTA]
+    quote_currency: USD
+    lot_size: "1"
+    tick_size: "0.01"
