@@ -42,8 +42,7 @@ bash pod/seed/seed.sh                                                          #
 
 ## Status (Phase 0)
 
-- **B0.1 (this PR):** bundle scaffolded (manifest + this README). No tables/agents yet; nothing
-  imported to the Vault.
+- **B0.1: ✅** bundle scaffolded (manifest + this README).
 - **B0.3 `[You]+[CC]`: ✅ done.** `lemma` 0.5.0 reaches the active Vault; **B5 locked** (see money note
   below); a `Decimal` round-trips exactly through a `TEXT` column.
 - **B0.4 `[CC]`: ✅ done.** All 15 tables authored in `tables/` + imported to the Vault; `seed/seed.sh`

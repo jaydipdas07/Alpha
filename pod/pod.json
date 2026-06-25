@@ -1,5 +1,5 @@
 {
   "format_version": 2,
-  "name": "alpha",
+  "name": "Vault",
   "description": "Alpha mission control (Vault pod): the AI strategy-discovery brain, cockpit dashboard, and human approval gate. Issues commands to the worker; never places live orders (TEST-8)."
 }
