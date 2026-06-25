@@ -44,8 +44,20 @@ START_CASH = Decimal("1000000")
 _INTERVAL = timedelta(minutes=1)
 _META = InstrumentMeta(asset_class=AssetClass.CRYPTO)
 # Same synthetic rise-then-fall series as the Track-B proof: MaCrossover(2,4) BUYs then SELLs.
-_CLOSES = ["30000", "30000", "30000", "30000", "30200", "30500",
-           "30800", "31000", "30500", "30000", "29500", "29000"]
+_CLOSES = [
+    "30000",
+    "30000",
+    "30000",
+    "30000",
+    "30200",
+    "30500",
+    "30800",
+    "31000",
+    "30500",
+    "30000",
+    "29500",
+    "29000",
+]
 
 
 class VegaCostFeeModel(FeeModel):

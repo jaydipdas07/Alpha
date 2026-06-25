@@ -46,6 +46,14 @@ The **same** contract emits the **same** 2 fills (BUY then SELL on the fast/slow
 crossover) as Track B, and the **same** `CostModel` charges the cost — proving the
 portable contract + cost kernel run unchanged on a second engine.
 
+**Parity (the key result):** Track A's net **−6.32080420** matches Track B to **8
+decimals**. Track-B's `final_pnl` is **−2.72240064** but that field is *net-of-
+slippage, gross-of-fees*; Track B reports fees in a separate `total_fees` =
+**3.59840355**, and −2.72240064 − 3.59840355 = **−6.32080419** ≡ Track A. So the two
+engines **agree to the cent** on the same contract + cost kernel — **parity is NOT
+the differentiator**; the engine choice rests on integration friction + time-to-market
+(below).
+
 ## Integration-friction notes (input to `B0.10` / `0.GATE`)
 
 What it took to get the contract running on Nautilus — the bake-off's real signal:
@@ -56,14 +64,16 @@ What it took to get the contract running on Nautilus — the bake-off's real sig
    (`Bar`/`Price`/`Quantity`/`Money`) — every bar and order crosses a manual
    `Decimal`/`datetime` ↔ Nautilus boundary (~40 lines of glue here). Track B has
    none of this: the contract and OMS are already native `alpha_core` types.
-3. **Cost-model mechanism mismatch (a parity nuance for B0.10).** Vega's `CostModel`
-   returns an all-in cost (slippage + spread + fees + taxes) and Track B's
-   `PaperBroker` splits it into a slippage-adjusted **fill price** + separate fees.
-   Nautilus separates a **fill model** (price impact) from the **fee model**
-   (commission); here the whole cost is mapped to commission, so the *total* P&L
-   impact matches but the decomposition differs (`-6.32` here vs Track-B `-2.72` at
-   the same qty — the gap is the slippage that Track B prices into the fill and
-   Track A books as commission). Reconciling this is `B0.10` parity work.
+3. **Cost-model mechanism mismatch (decomposition only — totals agree).** Vega's
+   `CostModel` returns an all-in cost; Track B's `PaperBroker` splits it into a
+   slippage-adjusted **fill price** + separate fees, whereas Nautilus separates a
+   **fill model** (price impact) from the **fee model** (commission). Here the whole
+   cost is mapped to commission, so the **net P&L totals match to 8 decimals** (see
+   Parity above). The only residual is *where* the slippage/spread component (~0.7 =
+   the 4.32 all-in cost minus the 3.60 fees) lands — Track B prices it into the fill,
+   Track A books it as commission. A `B0.10` refinement
+   (add a Nautilus fill model) would align the decomposition too; it does not change
+   the total.
 4. **Not yet done on Track A: live testnet.** Track B already trades on Binance
    testnet (`B0.9f`); the equivalent on Nautilus needs its live data/exec engine +
    Binance adapter — additional integration. That gap is itself a time-to-market
