@@ -1,8 +1,9 @@
-"""Alpha core domain layer — enums, immutable money/time-safe models, and the
-strategy contract.
+"""Alpha core domain layer — enums, the broker-error taxonomy, immutable money/time-safe
+models, the order FSM, and the venue-agnostic interfaces (`Strategy` / `BrokerAdapter` /
+`DataFeed` / `PortfolioConstructor`).
 
-This is the portable surface imported identically by the research-box backtester and
-the live worker. B0.7 lands the minimal slice (`Bar`/`Tick`/`Signal` + the `Strategy`
-ABC); the full engine (`Order`/`Fill`/`Position`, the order FSM, broker adapters) is
-lifted wholesale from Vega in B0.9.
+The portable surface imported identically by the research-box backtester and the live
+worker (the backtest-equals-live parity guarantee). Pure Python — no broker SDKs; money
+is `Decimal`, time is tz-aware UTC, and `now` is injected. Lifted wholesale from Vega in
+B0.9a; the execution / risk / backtest layers follow (B0.9b onward).
 """
