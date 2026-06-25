@@ -213,7 +213,7 @@ def test_quantity_must_be_positive() -> None:
 
 def test_real_costs_yaml_works(monkeypatch: pytest.MonkeyPatch) -> None:
     # Uses the committed config/costs.yaml via the default config dir.
-    monkeypatch.delenv("VEGA_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("ALPHA_CONFIG_DIR", raising=False)
     cfg = load_yaml("costs.yaml")
     model = CostModel(cfg)
     b = model.estimate(

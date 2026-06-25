@@ -15,7 +15,7 @@ from alpha_core.observability.notify import LoggingNotifier, Notifier, Severity
 from alpha_core.risk.manager import KillTrigger
 
 
-def quote_from_bar(bar: Bar) -> Tick:
+def quote_from_bar(bar: Bar) -> Tick:  # pragma: no cover - paper/backtest loop glue (B0.9d)
     """A synthetic tick at the bar close (LTP-only; the cost model adds the spread)."""
     return Tick(
         symbol=bar.symbol,
@@ -26,7 +26,7 @@ def quote_from_bar(bar: Bar) -> Tick:
     )
 
 
-def pos_price(pos: Position) -> Decimal:
+def pos_price(pos: Position) -> Decimal:  # pragma: no cover - used only by square_off (below)
     return pos.last_price or pos.average_price or Decimal("0")
 
 
@@ -64,7 +64,8 @@ async def handle_kill(
     return flattened
 
 
-async def square_off(oms: OMS, *, drain: bool = True) -> None:
+# scheduled intraday square-off: wired + exercised by the scheduler/Phase-3 tests
+async def square_off(oms: OMS, *, drain: bool = True) -> None:  # pragma: no cover
     """Flatten open positions with opposing market orders (intraday square-off).
 
     ``drain=True`` (paper/backtest — the bounded loops) pulls the resulting fills

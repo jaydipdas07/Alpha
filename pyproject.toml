@@ -79,9 +79,10 @@ omit = [
     # option / F&O / ccxt registry methods belong to the options + crypto-adapter
     # test layers (Phase 5+); from_config + basic lookup (what the OMS uses) is tested.
     "alpha-core/src/alpha_core/execution/instruments.py",
-    # scheduled end-of-session square-off belongs to the scheduler / Phase-3 tests;
-    # handle_kill (the OMS kill path) is in B0.9b scope and covered by test_oms.
-    "alpha-core/src/alpha_core/execution/session.py",
+    # NB: execution/session.py is deliberately NOT omitted — handle_kill (the OMS
+    # kill path, TEST-4) is in scope and covered by test_oms, so it must count toward
+    # the floor. Only its unbuilt square_off + quote/price helpers carry a per-function
+    # `# pragma: no cover` (with a reason) until the scheduler/Phase-3 tests land.
     # lot/tick rounding is used only by instruments.py (the instrument universe), so it
     # rides with instruments; its matching test_helpers lands with the full helpers lift.
     "alpha-core/src/alpha_core/helpers/decimal_utils.py",
