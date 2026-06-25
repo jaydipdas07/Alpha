@@ -1,0 +1,17 @@
+{
+  // Worker heartbeat (one row per worker, upserted). A stale last_seen alerts via
+  // a DATASTORE schedule. `armed` mirrors the latching kill-switch.
+  "name": "worker_status",
+  "primary_key_column": "id",
+  "enable_rls": false,
+  "columns": [
+    { "name": "worker_id", "type": "TEXT", "required": true, "unique": true, "max_length": 64 },
+    { "name": "last_seen", "type": "DATETIME", "required": true },
+    { "name": "mode", "type": "ENUM", "required": true, "default": "paper",
+      "options": ["paper", "live"] },
+    { "name": "armed", "type": "BOOLEAN", "default": false },
+    { "name": "positions_hash", "type": "TEXT", "max_length": 80 },
+    { "name": "build_version", "type": "TEXT", "max_length": 64 },
+    { "name": "detail", "type": "JSON" }
+  ]
+}

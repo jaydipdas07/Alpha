@@ -1,0 +1,21 @@
+{
+  // A strategy deployed to paper/live on a venue. Approval is the durable human
+  // gate (Workflow B). capital = TEXT money (B5).
+  "name": "deployments",
+  "primary_key_column": "id",
+  "enable_rls": false,
+  "columns": [
+    { "name": "strategy_id", "type": "UUID", "required": true,
+      "foreign_key": { "references": "strategies.id" } },
+    { "name": "venue", "type": "TEXT", "required": true, "max_length": 16 },
+    { "name": "mode", "type": "ENUM", "required": true, "default": "paper",
+      "options": ["paper", "live"] },
+    { "name": "status", "type": "ENUM", "required": true, "default": "pending_approval",
+      "options": ["pending_approval", "approved", "running", "paused", "halted", "stopped"] },
+    { "name": "capital", "type": "TEXT", "max_length": 48, "description": "money: string-Decimal (B5)" },
+    { "name": "risk_limits", "type": "JSON", "description": "per-deployment risk config (risk-officer)" },
+    { "name": "worker_id", "type": "TEXT", "max_length": 64 },
+    { "name": "approved_by", "type": "USER", "description": "the human who approved the FORM" },
+    { "name": "approved_at", "type": "DATETIME" }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  // The pod -> worker command bus (the pod issues commands; only the worker
+  // executes — TEST-8). `emergency_flatten` is the trip path. The worker polls
+  // this via watchChanges + ~1s fallback (R10). deployment_id optional (global cmds).
+  "name": "commands",
+  "primary_key_column": "id",
+  "enable_rls": false,
+  "columns": [
+    { "name": "deployment_id", "type": "UUID",
+      "foreign_key": { "references": "deployments.id" } },
+    { "name": "kind", "type": "ENUM", "required": true,
+      "options": ["start", "stop", "pause", "flatten", "arm_kill", "clear_halt",
+                  "emergency_flatten", "refresh_token"] },
+    { "name": "status", "type": "ENUM", "required": true, "default": "pending",
+      "options": ["pending", "acked", "done", "failed"] },
+    { "name": "worker_id", "type": "TEXT", "max_length": 64 },
+    { "name": "payload", "type": "JSON" },
+    { "name": "issued_by", "type": "USER" },
+    { "name": "acked_at", "type": "DATETIME" }
+  ]
+}
