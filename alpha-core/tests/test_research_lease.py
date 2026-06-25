@@ -19,6 +19,11 @@ def test_is_stale() -> None:
     assert is_stale(_T0, _T0 + timedelta(seconds=121), timeout)  # stale
 
 
+def test_is_stale_requires_utc() -> None:
+    with pytest.raises(ValueError, match="tz-aware UTC"):
+        is_stale(datetime(2026, 1, 1), _T0, timedelta(seconds=60))  # naive last_seen
+
+
 def test_lease_requires_utc() -> None:
     with pytest.raises(ValueError, match="tz-aware UTC"):
         Lease(holder="r1", acquired_at=datetime(2026, 1, 1), expires_at=_T0 + _TTL)  # naive

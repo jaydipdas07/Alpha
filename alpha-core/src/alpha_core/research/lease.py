@@ -45,6 +45,10 @@ def is_stale(last_seen: datetime, now: datetime, timeout: timedelta) -> bool:
     ``last_seen`` and ``now`` are tz-aware UTC; ``now`` is injected so staleness is
     deterministic in backtest and live.
     """
+    if last_seen.tzinfo is None or now.tzinfo is None:
+        raise ValueError("is_stale timestamps must be tz-aware UTC")
+    # strict ``>``: at exactly ``timeout`` not yet stale (wait the full window before
+    # alerting) — contrast ``Lease.is_expired``'s ``>=`` (eager reclaim at the deadline).
     return now - last_seen > timeout
 
 
@@ -66,7 +70,7 @@ class Lease:
 
     def is_expired(self, now: datetime) -> bool:
         """True once ``now`` reaches the expiry — the lease is then reclaimable."""
-        return now >= self.expires_at
+        return now >= self.expires_at  # ``>=``: reclaim eagerly at the deadline
 
 
 def acquire(current: Lease | None, holder: str, now: datetime, ttl: timedelta) -> Lease | None:
