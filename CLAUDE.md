@@ -112,8 +112,12 @@ forces) · `ccxt` / `ccxt.pro` · `kiteconnect` (+ Dhan/Upstox SDKs) · Nautilus
 - Perform irreversible actions (force-push, history rewrite, `reset --hard`, data deletion) without approval.
 - **Fabricate a `▲ DECIDE HERE` value.** If something required is missing or unclear, **STOP and ask (max 3 questions)**, then proceed.
 
-The human reviews and approves **every PR**, and **every go-live is a human FORM approval**. Build
-incrementally — never "build it all at once."
+**PR review/merge is delegated to Claude Code** (the operator's standing instruction): for every PR,
+CC spawns a **review sub-agent**, applies its findings as fixes, re-confirms CI green, and **merges**
+(squash) — the operator is *not* in the code-merge loop. This covers **code** review/merge only.
+**Every go-live remains a human FORM approval**, and the money / live-gate / secrets / account gates in
+the never-do list above are unchanged and non-negotiable. Build incrementally — never "build it all at
+once."
 
 ## Environment boundary (from `docs/PHASE0_HANDOFF.md`)
 The build runs on the **Mac `lemma` CLI session** — it alone has the `lemma` CLI + Vault pod, the Vega
@@ -124,5 +128,6 @@ rigor) can be built and pushed from anywhere.
 ## How to proceed
 Orient with the **Session continuity** protocol (source-of-truth files in every checkout). The live
 worklist is the **⏳ Pending tracker at the end of `TASKS.md`** — work whatever is unblocked, **one
-task at a time = one branch + one PR**, until its **Done-when** holds. **Stop at human-gated steps**
-(the never-do list). Close every non-trivial session with `/session-wrap` (+ `/checkpoint` on CLI).
+task at a time = one branch + one PR**, until its **Done-when** holds; then **review it via a spawned
+sub-agent and merge it yourself** (the PR norm above). **Stop at human-gated steps** (the never-do
+list). Close every non-trivial session with `/session-wrap` (+ `/checkpoint` on CLI).
