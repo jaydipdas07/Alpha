@@ -34,3 +34,6 @@ build/
 
 # Local Claude overrides (the shared harness is .claude/settings.json)
 .claude/settings.local.json
+
+# B1a.1b cold-store data (reproducible from scripts/ingest_cold_store.py)
+data_cold/
