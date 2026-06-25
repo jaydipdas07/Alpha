@@ -1,0 +1,6 @@
+# config/strategies/ma_crossover.yaml — MA-crossover tunables (B0.7).
+# The reference strategy's parameters live here, not in code (no magic numbers).
+strategy_id: ma_crossover
+fast_period: 10    # bars in the fast SMA
+slow_period: 30    # bars in the slow SMA (must exceed fast_period)
+quantity: "1"      # units per signal (string -> Decimal; never a float)
