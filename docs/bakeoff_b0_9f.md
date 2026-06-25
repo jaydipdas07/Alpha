@@ -2,9 +2,15 @@
 
 **Goal (B0.9 Done-when):** the B0.7 portable contract (`MaCrossover`, a
 `(bars, params) -> signals` strategy) runs *unchanged* through the **lifted Vega
-engine** — first a **backtest**, then **Delta-testnet live-paper** — proving the
+engine** — first a **backtest**, then **crypto-testnet live-paper** — proving the
 lift is wired end-to-end and is the parity substrate the bake-off (B0.10 / 0.GATE)
 will compare against the NautilusTrader shell (Track A, B0.8).
+
+> **Venue note:** the live-paper half targets **Binance testnet**, not Delta. Delta
+> Exchange does not let one user hold both a live and a testnet account, so [You]
+> provided **Binance** testnet creds (`BINANCE_TESTNET_*` in `.env`) — which is also
+> the `CcxtAdapter`'s validated path (its docstring). Same `CcxtAdapter`, different
+> ccxt exchange; switching to Delta later is a creds + symbol change, no code change.
 
 This is Track **B** evidence only. The A/B comparison + parity oracle is **B0.10**;
 the engine decision + ADR is **0.GATE**.
@@ -46,10 +52,35 @@ fees), P&L folded in `Decimal`, no kill-switch trip. (The `vega-` client-order-i
 prefix + `=== Vega backtest ===` label are faithful-lift provenance artifacts,
 deferred to a namespacing pass at 0.GATE — see the B0.9b/d PR notes.)
 
-## 2. Delta-testnet live-paper — PENDING ⏳
+## 2. Binance-testnet live-paper — DONE ✅
 
-Next sub-step: lift `adapters/crypto_ccxt.py` (+ `ccxt`), point it at **Delta
-testnet** with the `DELTA_TESTNET_*` keys from `.env`, and run the same
-`MaCrossover` on a live testnet ticker so a trivial signal places a **testnet**
-(no real money) order. Mac-CLI-only (needs `.env` + network); captured here as a
-transcript when run. **No live keys, no live gate** — testnet only.
+`MaCrossover`'s signal is driven through the **whole lifted execution path onto a
+real testnet venue** — `StrategyEngine -> OMS (risk gate) -> CcxtAdapter -> ccxt ->
+Binance testnet` — placing a live testnet order that fills, then flattening. Driver:
+`scripts/bakeoff_binance_testnet.py` (Mac-CLI; needs `BINANCE_TESTNET_*` + network;
+not a CI test). `set_sandbox_mode(True)` forces the sandbox — **fake money, never live**.
+
+Captured run:
+
+```
+=== B0.9f live-paper — Binance TESTNET (sandbox) via the lifted engine ===
+[feed]  BTC/USDT last=59317.44
+[strat] MaCrossover emitted BUY 0.001 BTC/USDT (MA cross up)
+[oms]   risk-approved -> placed: client_order_id=vega-27e2d5144b8e4948 venue_order_id=9148888 state=OPEN
+[fill]  testnet order closed: filled=0.001 avg=59317.45 fee=None None
+[flat]  closed 0.00100 BTC via OMS -> closed
+=== done — a trivial strategy traded on Binance testnet via the lifted engine ===
+```
+
+What this proves end-to-end on a live venue: the lifted **strategy** emits a signal →
+the lifted **risk gate** approves it → the lifted **OMS** derives an idempotent
+client-order-id (`vega-…`, the flagged provenance prefix) and places via the lifted
+**`CcxtAdapter`** → a real Binance-**testnet** order is accepted, **fills** (0.001 BTC
+@ 59317.45), and is **flattened** back through the OMS. The position is left flat.
+
+## B0.9 Done-when — met ✅
+
+Both halves hold: **backtest runs** (§1, in CI) **and a trivial strategy trades on
+testnet via the lifted engine** (§2). Track B is the ready parity substrate for the
+A/B bake-off — **B0.10** (parity oracle + integration-friction memo across Track A
+**B0.8** and Track B) → **0.GATE** (engine choice → `docs/adr/0001`).

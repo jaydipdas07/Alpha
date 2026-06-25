@@ -14,6 +14,12 @@ dependencies = [
     "prometheus-client>=0.25.0",
 ]
 
+[project.optional-dependencies]
+# Crypto execution needs ccxt — but the worker / bake-off scripts construct the real
+# ccxt exchange; the CcxtAdapter itself imports no SDK (it takes an injected exchange).
+# Installed on demand (`uv sync --extra crypto`), not pulled into CI or the kernel.
+crypto = ["ccxt>=4.5"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
