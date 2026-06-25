@@ -125,13 +125,15 @@ async def main() -> None:
         for bar in _rising_bars():
             for sig in engine.process_bar(bar):
                 buy = sig
-        assert buy is not None and buy.side is Side.BUY, "strategy did not emit a BUY"
+        if buy is None or buy.side is not Side.BUY:  # explicit (not assert: not -O-strippable)
+            raise SystemExit("strategy did not emit a BUY")
         print(
             f"[strat] MaCrossover emitted {buy.side.value} {buy.quantity} {SYMBOL} ({buy.reason})"
         )
 
         order = await oms.submit_signal(buy, reference_price=last)
-        assert order is not None, "risk gate rejected the order"
+        if order is None:  # the risk gate rejected it — do not proceed
+            raise SystemExit("risk gate rejected the order")
         print(
             f"[oms]   risk-approved -> placed: client_order_id={order.client_order_id} "
             f"venue_order_id={order.venue_order_id} state={order.state.value}"
@@ -162,7 +164,8 @@ async def main() -> None:
                 reason="flatten the live-paper position",
             )
             sold_order = await oms.submit_signal(sell, reference_price=last)
-            assert sold_order is not None
+            if sold_order is None:
+                raise SystemExit("flatten rejected — testnet position may be open")
             await asyncio.sleep(1.0)
             sold = await ex.fetch_order(sold_order.venue_order_id, SYMBOL)
             print(f"[flat]  closed {net} BTC via OMS -> {sold.get('status')}")
