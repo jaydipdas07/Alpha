@@ -12,7 +12,7 @@ from __future__ import annotations
 import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -22,6 +22,7 @@ from alpha_core.core.enums import AssetClass, Venue
 from alpha_core.core.interfaces import BrokerEventKind, PortfolioConstructor, Strategy
 from alpha_core.core.models import Bar
 from alpha_core.execution.costs import CostModel, InstrumentMeta
+from alpha_core.execution.funding import FundingConfig, funding_cash_flow
 from alpha_core.execution.oms import OMS
 from alpha_core.execution.session import handle_kill, quote_from_bar, square_off
 from alpha_core.execution.state import PnlLedgerRow, StateStore
@@ -46,6 +47,7 @@ class BacktestStats:
     win_rate: float
     traded_notional: Decimal = Decimal(0)  # sum |fill price x qty| - gross traded value
     turnover_ratio: float = 0.0  # traded_notional / capital (churn; capacity input, R6)
+    funding_paid: Decimal = Decimal(0)  # cumulative perp funding cash flow (negative = paid, R13)
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +83,7 @@ def _compute_stats(
     total_fees: Decimal,
     realized_events: list[Decimal],
     traded_notional: Decimal = Decimal(0),
+    funding_paid: Decimal = Decimal(0),
 ) -> BacktestStats:
     final_pnl = equity_curve[-1][1] if equity_curve else Decimal(0)
     equity = [starting_cash + pnl for _, pnl in equity_curve] or [starting_cash]
@@ -115,6 +118,7 @@ def _compute_stats(
         win_rate=win_rate,
         traded_notional=traded_notional,
         turnover_ratio=float(traded_notional / starting_cash) if starting_cash else 0.0,
+        funding_paid=funding_paid,
     )
 
 
@@ -128,8 +132,11 @@ async def run_backtest(
     venue: Venue = Venue.NSE,
     starting_cash: Decimal = Decimal("1000000"),
     stress: bool = False,
+    funding: FundingConfig | None = None,
 ) -> BacktestResult:
-    """Run ``strategy`` over historical ``bars`` and return stats."""
+    """Run ``strategy`` over historical ``bars`` and return stats. With ``funding``
+    set, perp funding accrues on held crypto positions every funding interval (R13)
+    — into P&L and the daily-loss kill gate."""
     broker = PaperBroker(
         cost_model=CostModel(cost_config),
         instruments=instruments,
@@ -145,16 +152,34 @@ async def run_backtest(
     oms = OMS(adapter=broker, risk=risk, store=store, venue=venue, clock=clock)
     engine = StrategyEngine(strategy)
 
+    # Perp funding boundaries (R13): aligned to UTC-midnight multiples of the interval.
+    funding_interval = timedelta(hours=funding.interval_hours) if funding else None
+    next_funding: datetime | None = None
+    if funding and funding_interval and bars:
+        next_funding = bars[0].start.replace(hour=0, minute=0, second=0, microsecond=0)
+        while next_funding <= bars[0].start:  # first funding is strictly after the start
+            next_funding += funding_interval
+
     equity_curve: list[tuple[datetime, Decimal]] = []
     for bar in bars:
-        clock.set(bar.start + bar.interval)  # decision instant = bar close
+        bar_close = bar.start + bar.interval
+        clock.set(bar_close)  # decision instant = bar close
         broker.on_tick(quote_from_bar(bar))
         for signal in engine.process_bar(bar):
             await oms.submit_signal(signal, reference_price=bar.close)
         await oms.drain_events()
+        # Accrue perp funding on held crypto positions at each boundary this bar crosses,
+        # before the mark — so a funding-bleed feeds the daily-loss kill via mark() (R13).
+        if funding and funding_interval and next_funding is not None:
+            while bar_close >= next_funding:
+                for pos in oms.positions:
+                    if pos.asset_class is AssetClass.CRYPTO and pos.quantity != 0:
+                        mark = pos.last_price or pos.average_price or bar.close
+                        oms.accrue_funding(funding_cash_flow(pos, mark, funding.rate))
+                next_funding += funding_interval
         oms.mark({bar.symbol: bar.close})
         total = oms.total_realized_pnl() + oms.total_unrealized_pnl()
-        equity_curve.append((bar.start + bar.interval, total))
+        equity_curve.append((bar_close, total))
         if risk.is_halted:
             # A kill mid-backtest flattens (cancel + flatten) so the curve is
             # realistic — square_off would be blocked while halted.
@@ -185,6 +210,7 @@ async def run_backtest(
         total_fees=total_fees,
         realized_events=realized_events,
         traded_notional=traded_notional,
+        funding_paid=oms.total_funding(),
     )
     store.dispose()
     return BacktestResult(stats=stats, equity_curve=equity_curve, halted=risk.is_halted)
@@ -211,6 +237,10 @@ async def run_portfolio_backtest(
     strategy → ``SignalBook`` → allocator → ``rebalance_orders`` → OMS. The
     Universe→Alpha→Portfolio→Risk→Execution stages all run through the SAME
     OMS/risk/cost path as live (ADR 0001), so a backtest and a live run agree.
+
+    NB: perp funding (R13) is NOT accrued here yet — that lands only in the
+    single-strategy ``run_backtest``; ``stats.funding_paid`` is 0 on this path.
+    TODO: thread funding through the portfolio rebalance loop before running perps here.
     """
     broker = PaperBroker(
         cost_model=CostModel(cost_config),
@@ -290,6 +320,7 @@ async def run_portfolio_backtest(
         total_fees=total_fees,
         realized_events=realized_events,
         traded_notional=traded_notional,
+        funding_paid=oms.total_funding(),
     )
     store.dispose()
     return BacktestResult(stats=stats, equity_curve=equity_curve, halted=risk.is_halted)

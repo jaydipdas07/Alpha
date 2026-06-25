@@ -28,3 +28,11 @@ segments:
   crypto:
     trading_fee:  { pct: 0.001, side: both }             # taker; venue-specific
     tds:          { pct: 0.01, side: sell }              # 1% TDS on transfer (spot)
+
+# Perp funding (R13) — the periodic funding payment on a held perpetual position.
+# A constant assumed rate for now; real per-interval rates come from the funding-rate
+# data feed later. Longs pay shorts when rate > 0; a funding-bleed feeds the loss gate.
+funding:
+  crypto:
+    interval_hours: 8                                     # Binance USDⓈ-M perps fund every 8h
+    rate: "0.0001"                                        # 0.01% per interval (assumed)
