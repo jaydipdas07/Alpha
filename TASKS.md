@@ -49,7 +49,7 @@ Goal: a trusted single backtester with full statistical rigor + population calib
 
 | ID | Task | Owner | Done-when |
 |---|---|---|---|
-| B1a.1 | Free-data ingest (Binance WS/historical, Kite ₹500 historical, NSE bhavcopy, Dukascopy) → Parquet/DuckDB cold store | [CC] | ⏳ BTC-perp 5m + a NIFTY-constituent daily load reproducibly |
+| B1a.1 | Free-data ingest (Binance WS/historical, Kite ₹500 historical, NSE bhavcopy, Dukascopy) → Parquet/DuckDB cold store | [CC] | 🟡 **B1a.1a ✅** (#28) — Parquet/DuckDB `BarStore` cold store (Decimal-exact, idempotent/reproducible writes, DuckDB analytics) + lifted `data/{normalize,historical}` readers (+ `test_feed` un-omitted `data/feed`). ⏳ **B1a.1b** — the Binance BTC-perp 5m + NIFTY-constituent-daily **fetchers** writing into the store (the load-reproducibly Done-when). |
 | B1a.2 | Lift Vega cost model (Indian stack + TDS) into the chosen engine; **add perp funding accrual → P&L + risk gate** (R13) | [CC] | ⏳ funding shows in backtest P&L + kill threshold (funding-bleed trips the loss gate) |
 | B1a.3 | Lift Vega rigor (look-ahead audit + walk-forward + 2× stress + portfolio rigor) into `alpha-core` | [CC] | ⏳ Vega rigor tests green in `alpha-core` |
 | B1a.4 | Extend rigor: CPCV + embargo + PBO | [CC] | ⏳ PBO computed; flags a known-overfit control |
@@ -131,15 +131,14 @@ Goal: additive, last — the riskiest discovery track, hard-gated on isolation.
 > it here. Update via `/session-wrap` at the end of every session.
 
 ### 🟢 Unblocked — ready to start now
-- **`vega`→`alpha` namespacing** (immediate [CC] follow-up to 0.GATE): rename the faithful-lift provenance identifiers in `alpha_core` — `vega-` client-order-id prefix (`oms.py`), `vega_*` metric names (`metrics.py`), `vega_append_only` pg trigger (`state.py`), the "Vega backtest" label (`runner.py`) — and update the tests that assert them. One mechanical PR.
-- **Phase 1a — B1a.1** (free-data ingest → Parquet/DuckDB cold store): the first Phase-1a [CC] build on the now-locked `alpha_core` engine; then B1a.2–B1a.9 → 1a.GATE (see the Phase-1a table above).
+- **B1a.1b — the data fetchers** (finish B1a.1, on the merged `BarStore`): a **Binance BTC-perp 5m** historical fetcher (public klines, no keys) + a **NIFTY-constituent daily** fetcher (NSE bhavcopy / a free source) → `normalize` → `BarStore`. Done-when: both load **reproducibly**. *External data sources — Binance is straightforward; Indian free data (NSE) is finicky (anti-bot, shifting URLs).* Then **B1a.2** (cost model + perp funding, R13) → B1a.3 (lift Vega rigor) → … → 1a.GATE (the Phase-1a table above).
 
 ### 🟡 Blocked — needs [You]
 - *(none — 0.GATE is ratified. Phase 1a needs no [You] gate until B1a.9 / 1a.GATE — the Tier-2 rigor error-rate params.)*
 
 ### ▶️ Next action for a cold session
-**Phase 0 is COMPLETE — B0.1–B0.10 ✅ + 0.GATE ✅.** [You] ratified **Track B** (the lifted Vega engine in `alpha_core`) on 2026-06-26; ADR 0001 *accepted*, `track-a/` archived, `alpha-core` locked. The engine runs the B0.7 contract through a deterministic backtest **and** a real Binance-testnet order (#14–#25); 401 tests, ≥94% cov; `main` clean.
+**Phase 0 COMPLETE (B0.1–B0.10 + 0.GATE ✅, [You] ratified Track B) and the `vega`→`alpha` namespacing done (#27). Phase 1a underway:** **B1a.1a ✅ (#28)** — the Parquet/DuckDB `BarStore` cold store + the `data/{normalize,historical}` readers are merged. 418 tests, ≥94% cov; `main` clean, 0 open PRs.
 
-**Next:** the `vega`→`alpha` namespacing PR (see 🟢), then **Phase 1a — B1a.1** (free-data ingest → DuckDB) and onward (B1a.2–1a.GATE), all on the locked `alpha_core` engine, under the **PR norm**.
+**Next: B1a.1b** — write the **Binance BTC-perp 5m** + **NIFTY-constituent daily** fetchers into the `BarStore` (the B1a.1 "load reproducibly" Done-when; see 🟢). Then **B1a.2 → … → 1a.GATE**, all under the **PR norm**. (B1a.1b touches external data sources — no [You] gate, but Indian free data is finicky.)
 
-**Deferred during the lift (each rejoins when its layer/phase lands, tracked in the coverage `omit` + checkpoint):** the **fuller `helpers/config.py`** (Env/live-gate `load_env_config` + universe config + **restore `_scan_for_secrets`**) — **[You]-gated** (touches the live gate); `strategy/registry` + the ~8 example strategies + the **options** layer; the **data** ingest layer (`data.universe` etc.); `portfolio/setup`. **Faithful-lift provenance** (`vega-` client-order-id prefix, `vega_*` metric names, `vega_append_only` trigger, "Vega backtest" label) — **`vega`→`alpha` namespacing is now the immediate post-0.GATE PR** (see 🟢 Unblocked). **Safety-gate edits** (never-do / cardinal invariants / money-live-secrets / live-gate) → **[You]** merges.
+**Deferred during the lift (each rejoins when its layer/phase lands, tracked in the coverage `omit` + checkpoint):** the **fuller `helpers/config.py`** (Env/live-gate `load_env_config` + universe config + **restore `_scan_for_secrets`**) — **[You]-gated** (touches the live gate); `strategy/registry` + the ~8 example strategies + the **options** layer; `data.universe` (needs the universe config); `portfolio/setup`. *(The data **readers** — `normalize`/`historical`/`feed` + the new `store` — landed in B1a.1a.)* **Faithful-lift provenance** `vega`→`alpha` **namespacing is done (#27)**. **Safety-gate edits** (never-do / cardinal invariants / money-live-secrets / live-gate) → **[You]** merges.
