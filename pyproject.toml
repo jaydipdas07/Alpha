@@ -35,6 +35,7 @@ dev = [
     # prod install stays lean + duckdb-free; CI/research/dev get them via --all-groups.
     "duckdb>=1.5.4",
     "pyarrow>=17.0.0",
+    "pytz>=2025.1",  # duckdb needs it for TIMESTAMPTZ ops (the store's tz-aware `start`)
 ]
 
 [tool.ruff]

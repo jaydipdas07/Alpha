@@ -81,11 +81,14 @@ def test_duckdb_query_over_the_cold_store(tmp_path: Path) -> None:
     store = BarStore(tmp_path)
     store.write_bars(_bars(["30000", "30100", "30200"]))
     con = store.connect()
-    row = con.execute("SELECT count(*), avg(close) FROM bars").fetchone()
+    # min(start) aggregates the tz-aware TIMESTAMPTZ column — exercises duckdb's
+    # timezone path (needs pytz), the bug the ingest script surfaced.
+    row = con.execute("SELECT count(*), avg(close), min(start) FROM bars").fetchone()
     assert row is not None
-    count, avg = row
+    count, avg, earliest = row
     assert count == 3
     assert abs(float(avg) - 30100) < 1e-9  # the DuckDB analytical layer reads the Parquet
+    assert earliest is not None and earliest.year == 2026
 
 
 def test_connect_on_empty_store(tmp_path: Path) -> None:
