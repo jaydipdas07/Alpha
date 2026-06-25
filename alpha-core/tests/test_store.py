@@ -86,3 +86,34 @@ def test_duckdb_query_over_the_cold_store(tmp_path: Path) -> None:
     count, avg = row
     assert count == 3
     assert abs(float(avg) - 30100) < 1e-9  # the DuckDB analytical layer reads the Parquet
+
+
+def test_connect_on_empty_store(tmp_path: Path) -> None:
+    con = BarStore(tmp_path).connect()  # no parquet files yet
+    row = con.execute("SELECT count(*) FROM bars").fetchone()
+    assert row is not None and row[0] == 0  # a typed 0-row view, not a crash
+
+
+def test_distinct_symbols_never_collide(tmp_path: Path) -> None:
+    store = BarStore(tmp_path)
+
+    def _one(symbol: str, close: str) -> Bar:
+        return Bar(
+            symbol=symbol,
+            venue=Venue.BINANCE,
+            asset_class=AssetClass.CRYPTO,
+            start=START,
+            interval=FIVE_MIN,
+            open=Decimal(close),
+            high=Decimal(close) + 10,
+            low=Decimal(close) - 10,
+            close=Decimal(close),
+            volume=Decimal("1"),
+        )
+
+    store.write_bars([_one("BTC/USDT", "30000")])
+    store.write_bars([_one("BTC_USDT", "40000")])  # would clobber under a lossy key
+    a = store.read_bars(symbol="BTC/USDT", venue=Venue.BINANCE, interval_seconds=300)
+    b = store.read_bars(symbol="BTC_USDT", venue=Venue.BINANCE, interval_seconds=300)
+    assert [x.close for x in a] == [Decimal("30000")]
+    assert [x.close for x in b] == [Decimal("40000")]

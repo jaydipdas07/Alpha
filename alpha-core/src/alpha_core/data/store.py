@@ -9,8 +9,8 @@ Writes are **idempotent + deterministic**: each write merges with what's on disk
 dedups by bar ``start`` (newest wins), and sorts — so re-ingesting the same window
 yields a byte-stable file and never duplicates a bar (reproducibility, B1a.7).
 
-``duckdb``/``pyarrow`` are the ``research`` extra (+ the dev group for CI); the live
-worker never imports this module, so it stays out of the execution kernel.
+``duckdb``/``pyarrow`` live in the dev group (not alpha-core's core deps), so the
+live worker never pulls them — this module is research-plane only.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import duckdb
 import pyarrow as pa
@@ -29,7 +30,15 @@ from alpha_core.core.models import Bar
 
 # 38 digits / 18 fractional holds crypto + equity prices and volumes exactly; the
 # read-back Decimal is value-equal to what was written (scale-normalized to 18).
+# Values beyond this range raise ArrowInvalid on write (fail-fast, never silent loss).
 _MONEY = pa.decimal128(38, 18)
+# DuckDB column types mirroring _SCHEMA, for the empty-store view.
+_EMPTY_VIEW = (
+    "SELECT NULL::VARCHAR AS symbol, NULL::VARCHAR AS venue, NULL::VARCHAR AS asset_class, "
+    "NULL::TIMESTAMPTZ AS start, NULL::BIGINT AS interval_seconds, "
+    "NULL::DECIMAL(38,18) AS open, NULL::DECIMAL(38,18) AS high, NULL::DECIMAL(38,18) AS low, "
+    "NULL::DECIMAL(38,18) AS close, NULL::DECIMAL(38,18) AS volume"
+)
 _SCHEMA = pa.schema(
     [
         ("symbol", pa.string()),
@@ -47,8 +56,9 @@ _SCHEMA = pa.schema(
 
 
 def _safe(symbol: str) -> str:
-    """A filesystem-safe series key — crypto symbols carry ``/`` and ``:``."""
-    return symbol.replace("/", "_").replace(":", "_")
+    """A reversible, filesystem-safe series key — percent-encode so distinct symbols
+    (``BTC/USDT`` vs ``BTC_USDT``) never collide onto one file."""
+    return quote(symbol, safe="")
 
 
 def _row(bar: Bar) -> dict[str, Any]:
@@ -141,8 +151,13 @@ class BarStore:
         """A DuckDB connection with a ``bars`` view over every Parquet file in the
         store — the analytical (warm-query) layer over the cold store."""
         con = duckdb.connect(":memory:")
-        # inline the glob (a parameter doesn't bind inside a stored CREATE VIEW); the
-        # path is the store root (no user input), single-quotes escaped defensively.
-        glob = str(self._root / "*.parquet").replace("'", "''")
-        con.execute(f"CREATE VIEW bars AS SELECT * FROM read_parquet('{glob}', union_by_name=true)")
+        if any(self._root.glob("*.parquet")):
+            # inline the glob (a parameter doesn't bind inside a stored CREATE VIEW); the
+            # path is the store root (no user input), single-quotes escaped defensively.
+            glob = str(self._root / "*.parquet").replace("'", "''")
+            con.execute(
+                f"CREATE VIEW bars AS SELECT * FROM read_parquet('{glob}', union_by_name=true)"
+            )
+        else:  # empty store -> a typed 0-row view so analytical queries still work
+            con.execute(f"CREATE VIEW bars AS SELECT * FROM ({_EMPTY_VIEW}) WHERE false")
         return con
