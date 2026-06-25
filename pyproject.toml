@@ -83,9 +83,8 @@ omit = [
     # kill path, TEST-4) is in scope and covered by test_oms, so it must count toward
     # the floor. Only its unbuilt square_off + quote/price helpers carry a per-function
     # `# pragma: no cover` (with a reason) until the scheduler/Phase-3 tests land.
-    # lot/tick rounding is used only by instruments.py (the instrument universe), so it
-    # rides with instruments; its matching test_helpers lands with the full helpers lift.
-    "alpha-core/src/alpha_core/helpers/decimal_utils.py",
+    # (helpers/decimal_utils.py rejoined coverage in B0.9f — test_helpers, lifted with
+    # the ccxt adapter's ratelimit/retry helpers, now exercises floor_to_lot/quantize_to_tick.)
     # the data feed (ReplayFeed) is the data layer; pulled forward so test_paper +
     # the backtest tests can drive it. Its dedicated test_feed lands with the data
     # ingest layer (B1a.1); it's exercised here but not exhaustively covered.

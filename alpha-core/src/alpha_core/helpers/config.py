@@ -47,6 +47,16 @@ def load_yaml(name: str) -> dict[str, Any]:
     return raw
 
 
+class RetryConfig(BaseModel):
+    """Backoff policy for transient broker errors (lifted from Vega for the ccxt adapter)."""
+
+    model_config = ConfigDict(extra="forbid")
+    max_attempts: int = 5
+    base_backoff: float = 0.5
+    max_backoff: float = 30.0
+    jitter: bool = True
+
+
 # --- Portfolio allocator config (lifted from Vega config.py for B0.9d backtest) ----
 # The pure-allocator parameters (portfolio.yaml). The fuller layered loader (per-env
 # configs, the live-mode gate, secret scanning, universe config) is still pending its
