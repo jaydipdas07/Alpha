@@ -1,0 +1,22 @@
+# config/portfolio.yaml — how scored signals become target weights (scaling
+# design D6). These are the *pure allocator* parameters consumed by
+# portfolio/construction.py (R4); the risk overlay (risk.yaml) separately caps
+# the result and is non-bypassable. No magic numbers in code — every knob here.
+
+allocation:
+  method: equal_weight # equal_weight | inverse_vol (mean_variance / kelly are later, opt-in)
+  top_k: 5 # trade the K highest-conviction signals per rebalance
+  max_weight_per_name: "0.15" # ceiling on any single name's capital fraction; MUST sit
+                              # below risk.yaml limits.max_position_per_instrument (0.20)
+                              # so the allocator never targets a position the risk gate rejects
+  gross_cap: "1.0" # ceiling on sum(|weight|); 1.0 = fully invested, no leverage
+
+rebalance:
+  no_trade_band: "0.02" # only trade a name when |target − current| weight exceeds this (anti-thrash)
+  turnover_cap: "1.0" # ceiling on sum(|Δweight|) per rebalance (churn guard)
+  min_position_weight: "0.05" # capital-fragmentation floor as a FRACTION of capital
+                              # (§7). 0.05 = 5% — the same ratio the old 5000 INR
+                              # floor implied at the 100k base_capital, but it now
+                              # auto-rescales with base_capital (ADR 0006, one knob).
+                              # PortfolioConfig rejects a config whose top_k book
+                              # can't fund every name at this weight (fail fast).
