@@ -1,0 +1,18 @@
+{
+  // Risk-gate audit events (a stale/critical one alerts via a DATASTORE schedule).
+  // deployment_id optional — some events are global.
+  "name": "risk_events",
+  "primary_key_column": "id",
+  "enable_rls": false,
+  "columns": [
+    { "name": "deployment_id", "type": "UUID",
+      "foreign_key": { "references": "deployments.id" } },
+    { "name": "kind", "type": "ENUM", "required": true,
+      "options": ["limit_breach", "kill_armed", "kill_tripped", "halt", "drift",
+                  "reconcile_mismatch", "funding_bleed", "clear_halt"] },
+    { "name": "severity", "type": "ENUM", "required": true, "default": "warning",
+      "options": ["info", "warning", "critical"] },
+    { "name": "ts", "type": "DATETIME", "required": true, "description": "event time (domain)" },
+    { "name": "detail", "type": "JSON" }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  // Research-box heartbeat (R8): a stale box alerts / times out, never hangs.
+  // One row per research host, upserted.
+  "name": "research_status",
+  "primary_key_column": "id",
+  "enable_rls": false,
+  "columns": [
+    { "name": "research_id", "type": "TEXT", "required": true, "unique": true, "max_length": 64 },
+    { "name": "last_seen", "type": "DATETIME", "required": true },
+    { "name": "status", "type": "ENUM", "required": true, "default": "idle",
+      "options": ["idle", "running", "stale", "error"] },
+    { "name": "current_task", "type": "TEXT", "max_length": 200 },
+    { "name": "detail", "type": "JSON" }
+  ]
+}

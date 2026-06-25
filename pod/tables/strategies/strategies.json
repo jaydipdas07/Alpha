@@ -1,0 +1,20 @@
+{
+  // A discovered/candidate/approved strategy. id/created_at/updated_at are auto.
+  "name": "strategies",
+  "primary_key_column": "id",
+  "enable_rls": false,
+  "columns": [
+    { "name": "name", "type": "TEXT", "required": true, "max_length": 120 },
+    { "name": "family", "type": "TEXT", "required": true, "max_length": 64,
+      "description": "strategy family (e.g. ma_crossover) — research_ledger keying" },
+    { "name": "market", "type": "ENUM", "required": true,
+      "options": ["crypto", "equity", "index_option"] },
+    { "name": "status", "type": "ENUM", "required": true, "default": "candidate",
+      "options": ["candidate", "backtested", "paper", "approved", "live", "rejected", "retired"] },
+    { "name": "origin", "type": "ENUM", "default": "constrained",
+      "options": ["constrained", "freeform", "manual"] },
+    { "name": "config", "type": "JSON", "description": "validated strategy params" },
+    { "name": "rationale", "type": "TEXT", "max_length": 4000,
+      "description": "economic rationale from the strategist" }
+  ]
+}

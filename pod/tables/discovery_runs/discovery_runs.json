@@ -1,0 +1,17 @@
+{
+  // One discovery cycle (Workflow A). trial_count is the PER-RUN count;
+  // the global cumulative count lives in research_ledger (R4).
+  "name": "discovery_runs",
+  "primary_key_column": "id",
+  "enable_rls": false,
+  "columns": [
+    { "name": "status", "type": "ENUM", "required": true, "default": "running",
+      "options": ["running", "complete", "failed"] },
+    { "name": "market", "type": "ENUM", "options": ["crypto", "equity", "index_option"] },
+    { "name": "family", "type": "TEXT", "max_length": 64 },
+    { "name": "window", "type": "TEXT", "max_length": 64 },
+    { "name": "trial_count", "type": "INTEGER", "default": 0, "description": "per-run trial count" },
+    { "name": "survivors", "type": "INTEGER", "default": 0 },
+    { "name": "detail", "type": "JSON" }
+  ]
+}

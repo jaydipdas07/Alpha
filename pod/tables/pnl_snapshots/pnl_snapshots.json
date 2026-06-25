@@ -1,0 +1,20 @@
+{
+  // P&L/equity over time per deployment. snapshot_key = "deployment_id|ts"
+  // carries the (deployment_id, ts) uniqueness. Money = TEXT (B5). Includes
+  // perp funding accrual (R13).
+  "name": "pnl_snapshots",
+  "primary_key_column": "id",
+  "enable_rls": false,
+  "columns": [
+    { "name": "deployment_id", "type": "UUID", "required": true,
+      "foreign_key": { "references": "deployments.id" } },
+    { "name": "snapshot_key", "type": "TEXT", "required": true, "unique": true, "max_length": 200,
+      "description": "composite: deployment_id|ts" },
+    { "name": "ts", "type": "DATETIME", "required": true, "description": "snapshot time (domain)" },
+    { "name": "realized_pnl", "type": "TEXT", "max_length": 48 },
+    { "name": "unrealized_pnl", "type": "TEXT", "max_length": 48 },
+    { "name": "equity", "type": "TEXT", "max_length": 48 },
+    { "name": "fees_paid", "type": "TEXT", "max_length": 48 },
+    { "name": "funding_paid", "type": "TEXT", "max_length": 48, "description": "perp funding accrual (R13)" }
+  ]
+}

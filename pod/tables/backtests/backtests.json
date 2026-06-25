@@ -1,0 +1,27 @@
+{
+  // A backtest run + rigor metrics. Money = TEXT (B5); rigor stats = FLOAT (sortable).
+  "name": "backtests",
+  "primary_key_column": "id",
+  "enable_rls": false,
+  "columns": [
+    { "name": "strategy_id", "type": "UUID", "required": true,
+      "foreign_key": { "references": "strategies.id" } },
+    { "name": "status", "type": "ENUM", "required": true, "default": "running",
+      "options": ["running", "complete", "failed"] },
+    { "name": "market", "type": "ENUM", "options": ["crypto", "equity", "index_option"] },
+    { "name": "family", "type": "TEXT", "max_length": 64 },
+    { "name": "window", "type": "TEXT", "max_length": 64, "description": "data window key" },
+    { "name": "sharpe", "type": "FLOAT" },
+    { "name": "max_dd", "type": "FLOAT", "description": "max drawdown (fraction)" },
+    { "name": "cpcv_pbo", "type": "FLOAT", "description": "probability of backtest overfitting" },
+    { "name": "deflated_sharpe", "type": "FLOAT" },
+    { "name": "net_pnl", "type": "TEXT", "max_length": 48, "description": "money: string-Decimal (B5)" },
+    { "name": "trial_count", "type": "INTEGER", "description": "per-run trial count" },
+    { "name": "holdout_used", "type": "BOOLEAN", "default": false },
+    { "name": "holdout_metrics", "type": "JSON" },
+    { "name": "dataset_version", "type": "TEXT", "max_length": 64 },
+    { "name": "engine_version", "type": "TEXT", "max_length": 64 },
+    { "name": "cost_model_version", "type": "TEXT", "max_length": 64 },
+    { "name": "seed", "type": "TEXT", "max_length": 32, "description": "RNG seed (TEXT: may exceed int32)" }
+  ]
+}

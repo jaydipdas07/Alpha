@@ -1,0 +1,28 @@
+{
+  // Orders the worker placed (broker = truth; the pod records, never executes —
+  // TEST-8). client_order_id is the idempotency key (one signal -> one order,
+  // TEST-6). All money/qty/price columns = TEXT string-Decimal (B5).
+  "name": "orders",
+  "primary_key_column": "id",
+  "enable_rls": false,
+  "columns": [
+    { "name": "deployment_id", "type": "UUID", "required": true,
+      "foreign_key": { "references": "deployments.id" } },
+    { "name": "client_order_id", "type": "TEXT", "required": true, "unique": true, "max_length": 80,
+      "description": "client-generated idempotency key (dedup-by-query)" },
+    { "name": "venue_order_id", "type": "TEXT", "max_length": 80 },
+    { "name": "symbol", "type": "TEXT", "required": true, "max_length": 64 },
+    { "name": "venue", "type": "TEXT", "max_length": 16 },
+    { "name": "asset_class", "type": "ENUM", "options": ["EQUITY", "CRYPTO", "INDEX_OPTION"] },
+    { "name": "side", "type": "ENUM", "required": true, "options": ["BUY", "SELL"] },
+    { "name": "order_type", "type": "ENUM", "required": true,
+      "options": ["MARKET", "LIMIT", "STOP", "STOP_LIMIT"] },
+    { "name": "state", "type": "ENUM", "required": true, "default": "NEW",
+      "options": ["NEW", "PENDING", "OPEN", "PARTIALLY_FILLED", "FILLED", "REJECTED", "CANCELLED", "EXPIRED"] },
+    { "name": "quantity", "type": "TEXT", "required": true, "max_length": 48 },
+    { "name": "limit_price", "type": "TEXT", "max_length": 48 },
+    { "name": "stop_price", "type": "TEXT", "max_length": 48 },
+    { "name": "filled_quantity", "type": "TEXT", "default": "0", "max_length": 48 },
+    { "name": "average_fill_price", "type": "TEXT", "max_length": 48 }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  // Global cumulative trial count keyed by (market, family, window) (R4) — the
+  // count Deflated-Sharpe consumes, invariant to unrelated cells. Lemma has no
+  // composite-unique, so `cell_key` = "market|family|window" carries the unique
+  // constraint; atomic increments (a function, later) upsert by cell_key.
+  "name": "research_ledger",
+  "primary_key_column": "id",
+  "enable_rls": false,
+  "columns": [
+    { "name": "cell_key", "type": "TEXT", "required": true, "unique": true, "max_length": 160,
+      "description": "composite key: market|family|window" },
+    { "name": "market", "type": "ENUM", "required": true,
+      "options": ["crypto", "equity", "index_option"] },
+    { "name": "family", "type": "TEXT", "required": true, "max_length": 64 },
+    { "name": "window", "type": "TEXT", "required": true, "max_length": 64 },
+    { "name": "cumulative_trials", "type": "INTEGER", "required": true, "default": 0 }
+  ]
+}

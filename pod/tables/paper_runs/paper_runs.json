@@ -1,0 +1,17 @@
+{
+  // A paper-trading run for a deployment. status=passed DATASTORE-triggers
+  // Workflow B (deployment-approval).
+  "name": "paper_runs",
+  "primary_key_column": "id",
+  "enable_rls": false,
+  "columns": [
+    { "name": "deployment_id", "type": "UUID", "required": true,
+      "foreign_key": { "references": "deployments.id" } },
+    { "name": "status", "type": "ENUM", "required": true, "default": "running",
+      "options": ["running", "complete", "passed", "failed"] },
+    { "name": "window", "type": "TEXT", "max_length": 64 },
+    { "name": "started_at", "type": "DATETIME" },
+    { "name": "ended_at", "type": "DATETIME" },
+    { "name": "metrics", "type": "JSON", "description": "paper-vs-backtest divergence metrics" }
+  ]
+}

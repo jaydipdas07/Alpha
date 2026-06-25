@@ -1,0 +1,20 @@
+{
+  // Current position per (deployment, venue, symbol) — direction is the sign of
+  // quantity. position_key carries the composite uniqueness. Money = TEXT (B5).
+  "name": "positions",
+  "primary_key_column": "id",
+  "enable_rls": false,
+  "columns": [
+    { "name": "deployment_id", "type": "UUID", "required": true,
+      "foreign_key": { "references": "deployments.id" } },
+    { "name": "position_key", "type": "TEXT", "required": true, "unique": true, "max_length": 200,
+      "description": "composite: deployment_id|venue|symbol" },
+    { "name": "symbol", "type": "TEXT", "required": true, "max_length": 64 },
+    { "name": "venue", "type": "TEXT", "max_length": 16 },
+    { "name": "quantity", "type": "TEXT", "required": true, "max_length": 48,
+      "description": "signed qty (string-Decimal); 0 = flat" },
+    { "name": "avg_entry_price", "type": "TEXT", "max_length": 48 },
+    { "name": "realized_pnl", "type": "TEXT", "max_length": 48 },
+    { "name": "unrealized_pnl", "type": "TEXT", "max_length": 48 }
+  ]
+}

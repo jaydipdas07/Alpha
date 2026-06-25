@@ -1,0 +1,23 @@
+{
+  // Immutable executions. P&L/exposure is a pure fold over deduped fills (R11/
+  // TEST-2). dedup_key = "order_id|venue_fill_id" carries the (order_id,
+  // venue_fill_id) uniqueness (Lemma has no composite-unique). Money = TEXT (B5).
+  "name": "fills",
+  "primary_key_column": "id",
+  "enable_rls": false,
+  "columns": [
+    { "name": "order_id", "type": "UUID", "required": true,
+      "foreign_key": { "references": "orders.id" } },
+    { "name": "dedup_key", "type": "TEXT", "required": true, "unique": true, "max_length": 200,
+      "description": "composite: order_id|venue_fill_id (idempotent fill ingest)" },
+    { "name": "venue_order_id", "type": "TEXT", "max_length": 80 },
+    { "name": "venue_fill_id", "type": "TEXT", "max_length": 80 },
+    { "name": "symbol", "type": "TEXT", "required": true, "max_length": 64 },
+    { "name": "venue", "type": "TEXT", "max_length": 16 },
+    { "name": "side", "type": "ENUM", "required": true, "options": ["BUY", "SELL"] },
+    { "name": "quantity", "type": "TEXT", "required": true, "max_length": 48 },
+    { "name": "price", "type": "TEXT", "required": true, "max_length": 48 },
+    { "name": "fees", "type": "TEXT", "max_length": 48 },
+    { "name": "ts", "type": "DATETIME", "required": true, "description": "venue fill time (domain, not row insert)" }
+  ]
+}
