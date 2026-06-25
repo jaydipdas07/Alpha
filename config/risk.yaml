@@ -1,0 +1,57 @@
+# config/risk.yaml — ALL risk limits (the most-tuned file). Source: ADR 0006 / §3.
+# Change base_capital alone to rescale every %-based limit.
+base_capital: 25000               # INR — pilot default (smallest capital). The one
+                                  # number to rescale every %-limit; raise after the pilot.
+currency: INR
+
+limits:
+  max_gross_exposure: 1.00          # 100% of base_capital
+  max_position_per_instrument: 0.20 # 20%
+  max_concurrent_positions: 5
+  max_order_value: 0.25             # 25% fat-finger hard cap -> reject above
+  max_orders_per_minute: 10
+  max_daily_loss_halt: 0.02         # 2% -> kill switch
+  max_loss_per_trade: 0.01          # 1% per-trade stop discipline
+  per_segment_exposure_cap: 0.60    # 60% (once multiple segments live)
+
+kill_switch:
+  triggers:
+    daily_loss_breach: true
+    consecutive_errors: 3           # >=3 consecutive rejects/errors
+    feed_stale_seconds: 60          # no tick on a HELD symbol for >60s = dead feed.
+                                    # Crypto streams via watch_trades (ticks only ON a
+                                    # trade), so a thin/low-volume symbol can be quiet for
+                                    # tens of seconds without the feed being dead — keep
+                                    # this generous (a genuinely dead feed stays dead).
+                                    # Override per venue with risk.<venue>.yaml if needed.
+    reconciliation_mismatch: true
+    manual: true
+  on_trip:                          # illustrative: the on-trip steps are hard-wired (ADR 0006), not gated by these flags
+    cancel_all_orders: true
+    flatten_positions: true         # kill flattens ALL open positions incl. crypto (OMS.flatten_all); only the *scheduled* square-off is intraday-only
+    alert: true
+  rearm: manual                     # latched; resume needs deliberate manual re-arm
+
+# Pre-trade margin estimate (ADR 0006 step 9). required margin = notional /
+# leverage; the resulting book's total must fit base_capital. Conservative
+# pilot leverage — the real F&O figure is SPAN + exposure (refined live).
+margin:
+  enabled: true
+  leverage:
+    equity: 5          # intraday MIS ~5x
+    index_option: 8    # approximate (real SPAN+exposure differs)
+    crypto: 3
+
+# Portfolio-risk overlay (P3) — caps on the allocator's TARGET WEIGHTS, applied
+# every rebalance before orders (non-bypassable, scaling design D9). Independent
+# of the allocator's own portfolio.yaml params (defence in depth). Conservative.
+portfolio:
+  max_gross_weight: "1.0"        # sum |weight| <= 100% of base_capital (no leverage)
+  max_weight_per_name: "0.15"    # no single name above 15% — kept below the per-order
+                                 # limits.max_position_per_instrument (0.20) so targets clear the risk gate
+  max_weight_per_sector: "0.40"  # no single sector above 40% (correlation cluster)
+  # Options Greeks caps (ADR 0017 OPT-6) — ceilings on the book's |net delta| / |net
+  # vega|, checked every rebalance. Optional: omit (or leave commented) for equity/
+  # crypto books, which carry no option Greeks. Tune once an options edge is live.
+  # max_net_delta: "75"          # e.g. |Σ qty*delta| <= 1 lot of NIFTY directional
+  # max_net_vega: "5000"         # |Σ qty*vega| ceiling (vega per 1.00 vol)
