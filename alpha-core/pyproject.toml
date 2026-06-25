@@ -10,6 +10,8 @@ dependencies = [
     "pydantic-settings>=2.14.1",
     "structlog>=26.1.0",
     "pyyaml>=6.0.3",
+    "sqlalchemy>=2.0.51",
+    "prometheus-client>=0.25.0",
 ]
 
 [build-system]

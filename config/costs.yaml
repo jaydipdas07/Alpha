@@ -1,0 +1,30 @@
+# config/costs.yaml — fees, taxes, slippage. Source: ADR 0008 / §3.
+# Illustrative rates — VERIFY against current statute at go-live (config edit only).
+slippage:
+  equity:       { type: bps,   value: 5 }      # large-cap 5 bps/side
+  crypto:       { type: bps,   value: 8 }      # majors 5-10 bps/side
+  index_option: { type: ticks, value: 2 }      # ATM ~1-2 ticks; scale for far strikes
+  default_spread:                               # used only when LTP-only (no quote)
+    equity: 0.0005
+    crypto: 0.0008
+    index_option_ticks: 1
+  stress_multiplier: 2                          # mandatory 2x backtest stress test
+
+segments:
+  equity_intraday:
+    brokerage:    { pct: 0.0003, flat: 20, mode: min }   # min(0.03%, ₹20)/order
+    stt:          { pct: 0.00025, side: sell }
+    exchange_txn: { pct: 0.0000297 }
+    sebi:         { pct: 0.000001 }
+    gst:          { pct: 0.18, on: [brokerage, exchange_txn, sebi] }
+    stamp_duty:   { pct: 0.00003, side: buy }
+  index_option:
+    brokerage:    { flat: 20, mode: flat }               # ₹20/order
+    stt:          { pct: 0.000625, side: sell, on: premium }
+    exchange_txn: { pct: 0.0003503, on: premium }
+    sebi:         { pct: 0.000001 }
+    gst:          { pct: 0.18, on: [brokerage, exchange_txn, sebi] }
+    stamp_duty:   { pct: 0.00003, side: buy, on: premium }
+  crypto:
+    trading_fee:  { pct: 0.001, side: both }             # taker; venue-specific
+    tds:          { pct: 0.01, side: sell }              # 1% TDS on transfer (spot)
