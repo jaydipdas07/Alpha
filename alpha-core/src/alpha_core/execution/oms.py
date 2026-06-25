@@ -96,6 +96,7 @@ class OMS:
         self._positions: dict[tuple[Venue, str], Position] = {}
         self._seen_fills: set[str] = set()
         self._day_realized: Decimal = Decimal(0)
+        self._funding: Decimal = Decimal(0)  # cumulative perp funding cash flow (R13)
         # Reservation price per working order (for valuing market orders that have
         # no limit price) + the single lock that makes check→reserve→place→ack
         # atomic against fill application (ADR 0014).
@@ -225,7 +226,18 @@ class OMS:
         return list(self._orders.values())
 
     def total_realized_pnl(self) -> Decimal:
-        return sum((p.realized_pnl for p in self._positions.values()), Decimal(0))
+        return sum((p.realized_pnl for p in self._positions.values()), Decimal(0)) + self._funding
+
+    def total_funding(self) -> Decimal:
+        """Cumulative perp funding cash flow accrued so far (negative = paid out, R13)."""
+        return self._funding
+
+    def accrue_funding(self, cash_flow: Decimal) -> None:
+        """Book one funding payment (R13): into realized P&L (so it shows in reported
+        P&L) AND into the day's realized total, so a funding-bleed feeds the daily-loss
+        kill gate via the next ``mark()`` -> ``risk.update_pnl``."""
+        self._funding += cash_flow
+        self._day_realized += cash_flow
 
     def total_unrealized_pnl(self) -> Decimal:
         """Mark-to-market P&L on open positions from their last marks."""
