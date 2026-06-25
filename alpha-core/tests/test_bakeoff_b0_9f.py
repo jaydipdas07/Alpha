@@ -109,7 +109,9 @@ async def _run() -> BacktestResult:
 async def test_ma_crossover_contract_trades_through_lifted_engine() -> None:
     """The B0.7 contract emits signals the lifted OMS turns into real fills."""
     result = await _run()
-    assert result.stats.num_fills >= 2  # a BUY entry and a SELL/flatten exit executed
+    # exactly 2: the BUY entry (bar 4) and the SELL that closes it (bar 9); the run is
+    # deterministic, so pin the count — a double-submit or spurious square-off fill fails.
+    assert result.stats.num_fills == 2
     assert result.stats.traded_notional > 0
     assert isinstance(result.stats.final_pnl, Decimal)  # money is Decimal, never float
     assert not result.halted  # a clean run, no kill-switch trip
