@@ -30,6 +30,11 @@ dev = [
     "pytest-cov>=7.1.0",
     "pytest-asyncio>=1.4.0",
     "types-PyYAML>=6.0.12",
+    # Research-plane data store (alpha_core.data.store). Runtime deps of the cold
+    # store, but kept in the dev group (not alpha-core core deps) so the live worker's
+    # prod install stays lean + duckdb-free; CI/research/dev get them via --all-groups.
+    "duckdb>=1.5.4",
+    "pyarrow>=17.0.0",
 ]
 
 [tool.ruff]
@@ -58,6 +63,14 @@ explicit_package_bases = true
 module = ["alembic.*"]
 ignore_missing_imports = true
 
+# The cold-store deps (alpha_core.data.store) ship partial/untyped APIs (pyarrow's
+# parquet writers, duckdb's connection); treat them as untyped so --strict doesn't
+# flag every call. The store's own types (Bar in/out) stay fully checked.
+[[tool.mypy.overrides]]
+module = ["pyarrow.*", "duckdb.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
 [tool.pytest.ini_options]
 testpaths = ["alpha-core/tests", "worker/tests"]
 addopts = "-q"
@@ -85,10 +98,8 @@ omit = [
     # `# pragma: no cover` (with a reason) until the scheduler/Phase-3 tests land.
     # (helpers/decimal_utils.py rejoined coverage in B0.9f — test_helpers, lifted with
     # the ccxt adapter's ratelimit/retry helpers, now exercises floor_to_lot/quantize_to_tick.)
-    # the data feed (ReplayFeed) is the data layer; pulled forward so test_paper +
-    # the backtest tests can drive it. Its dedicated test_feed lands with the data
-    # ingest layer (B1a.1); it's exercised here but not exhaustively covered.
-    "alpha-core/src/alpha_core/data/feed.py",
+    # (data/feed.py rejoined coverage in B1a.1 — test_feed, lifted with the data
+    # readers, now exercises ReplayFeed + AdapterFeed.)
     # the portfolio risk overlay is a P3/scaling feature: the lifted backtest tests run
     # the allocator with overlay=None, and its dedicated test (test_portfolio_risk_overlay)
     # needs the universe-config layer (data.universe -> SelectionToken/UniverseConfig),
