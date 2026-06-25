@@ -1,0 +1,4 @@
+# config/research.yaml — research-box heartbeat + backtest lease/timeout (R8, B0.6).
+# A dead/stale research box must alert and have its work reclaimed, never hang a workflow.
+heartbeat_timeout_seconds: 120    # a research_status older than this is "stale" -> alert
+lease_ttl_seconds: 1800           # a backtest-request lease (30 min); on expiry -> reclaimable
