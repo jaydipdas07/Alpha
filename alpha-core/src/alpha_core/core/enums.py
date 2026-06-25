@@ -1,7 +1,6 @@
-"""Core enums — string enums, so they serialize to their value in config, DB, and logs.
+"""Core enums — exactly as fixed by ADR 0002.
 
-The minimal set the B0.7 strategy contract needs; the full enum set (`OrderState`,
-`OptionRight`, `Settlement`, …) lands with the Vega lift (B0.9).
+All are string enums so they serialize to their value in config, DB, and logs.
 """
 
 from __future__ import annotations
@@ -10,21 +9,52 @@ from enum import StrEnum
 
 
 class Side(StrEnum):
-    """Direction of a signal/order/fill."""
+    """Direction of an order/fill/signal. Position direction is the sign of its
+    quantity, not a ``Side``."""
 
     BUY = "BUY"
     SELL = "SELL"
 
 
 class OrderType(StrEnum):
-    """Venue-agnostic order type; adapters map to venue terms. B0.7 emits MARKET."""
+    """Venue-agnostic order type; adapters map to venue terms (e.g. Kite SL/SL-M)."""
 
     MARKET = "MARKET"
     LIMIT = "LIMIT"
+    STOP = "STOP"
+    STOP_LIMIT = "STOP_LIMIT"
+
+
+class OrderState(StrEnum):
+    """Order lifecycle state. Transition rules are owned by ADR 0003."""
+
+    NEW = "NEW"
+    PENDING = "PENDING"
+    OPEN = "OPEN"
+    PARTIALLY_FILLED = "PARTIALLY_FILLED"
+    FILLED = "FILLED"
+    REJECTED = "REJECTED"
+    CANCELLED = "CANCELLED"
+    EXPIRED = "EXPIRED"
+
+    @property
+    def is_terminal(self) -> bool:
+        """FILLED/REJECTED/CANCELLED/EXPIRED are terminal."""
+        return self in _TERMINAL_STATES
+
+
+_TERMINAL_STATES: frozenset[OrderState] = frozenset(
+    {
+        OrderState.FILLED,
+        OrderState.REJECTED,
+        OrderState.CANCELLED,
+        OrderState.EXPIRED,
+    }
+)
 
 
 class AssetClass(StrEnum):
-    """Tradable segments, in rollout order."""
+    """Tradable segments, in the §3 rollout order."""
 
     EQUITY = "EQUITY"
     CRYPTO = "CRYPTO"
@@ -32,11 +62,26 @@ class AssetClass(StrEnum):
 
 
 class Venue(StrEnum):
-    """Execution/data venues. PAPER is always first; crypto live target is DELTA."""
+    """Execution venues. PAPER is always first; crypto live target is DELTA."""
 
     PAPER = "PAPER"
     NSE = "NSE"
     BSE = "BSE"
+    BYBIT = "BYBIT"
     BINANCE = "BINANCE"
     DELTA = "DELTA"
-    BYBIT = "BYBIT"
+
+
+class OptionRight(StrEnum):
+    """Call or put (ADR 0017). The contract's strike/expiry live on ``OptionContract``."""
+
+    CALL = "CALL"
+    PUT = "PUT"
+
+
+class Settlement(StrEnum):
+    """How an option settles at expiry (ADR 0017). NSE index options and Delta crypto
+    options are CASH-settled; PHYSICAL is reserved for later equity-stock options."""
+
+    CASH = "CASH"
+    PHYSICAL = "PHYSICAL"
