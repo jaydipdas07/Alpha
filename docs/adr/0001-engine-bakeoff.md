@@ -1,6 +1,6 @@
 # ADR 0001 — Engine bake-off: Track A (NautilusTrader) vs Track B (lifted Vega)
 
-- Status: **Proposed** — recommendation below; **0.GATE ratification is [You]'s call**
+- Status: **Accepted** — ratified by [You] (Jaydip Das) at 0.GATE on 2026-06-26
 - Date: 2026-06-26
 - Deciders: Jaydip Das ([You]) / Claude Code
 - Depends on: `docs/DESIGN_v4.md` (E1), `BUILD_PLAN.md`
@@ -59,10 +59,10 @@ carries the lower risk (operator-owned, proven, already live on testnet). Track 
 *viable* engine — the bake-off proved the contract is genuinely portable — but it buys a
 heavyweight dependency + a permanent translation layer for no parity gain.
 
-> **0.GATE is a `[You]+[CC]` gate.** This ADR records the recommendation; the engine choice
-> is **[You]'s to ratify**. On ratification this flips to *Status: accepted*.
+> **Ratified.** 0.GATE is a `[You]+[CC]` gate; **[You] ratified Track B on 2026-06-26**.
+> The consequences below are now in effect.
 
-## Consequences (on ratification)
+## Consequences (in effect)
 
 - `alpha_core` is the locked Phase-0 engine foundation; Phase 1a (rigor crown-jewel) builds on it.
 - **Track A is archived** — `track-a/` removed and `nautilus_trader` dropped (the bake-off
