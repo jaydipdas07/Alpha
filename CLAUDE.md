@@ -112,12 +112,14 @@ forces) · `ccxt` / `ccxt.pro` · `kiteconnect` (+ Dhan/Upstox SDKs) · Nautilus
 - Perform irreversible actions (force-push, history rewrite, `reset --hard`, data deletion) without approval.
 - **Fabricate a `▲ DECIDE HERE` value.** If something required is missing or unclear, **STOP and ask (max 3 questions)**, then proceed.
 
-**PR review/merge is delegated to Claude Code** (the operator's standing instruction): for every PR,
-CC spawns a **review sub-agent**, applies its findings as fixes, re-confirms CI green, and **merges**
-(squash) — the operator is *not* in the code-merge loop. This covers **code** review/merge only.
-**Every go-live remains a human FORM approval**, and the money / live-gate / secrets / account gates in
-the never-do list above are unchanged and non-negotiable. Build incrementally — never "build it all at
-once."
+**Code-PR review/merge is delegated to Claude Code** (the operator's standing instruction): for every
+**code** PR, CC spawns a **review sub-agent**, applies its findings as fixes, and — once CI is green —
+**merges** (squash); the operator is *not* in the code-merge loop. **Carve-out:** a PR that edits the
+safety gates themselves — the *What Claude Code must NEVER do* list, the cardinal invariants
+(TEST-1..8), or the money / live-gate / secrets rules — is reviewed and **merged by the human**; CC
+never self-merges a change to its own guardrails. **Every go-live remains a human FORM approval**, and
+the money / live-gate / secrets / account gates above are unchanged and non-negotiable. Build
+incrementally — never "build it all at once."
 
 ## Environment boundary (from `docs/PHASE0_HANDOFF.md`)
 The build runs on the **Mac `lemma` CLI session** — it alone has the `lemma` CLI + Vault pod, the Vega
