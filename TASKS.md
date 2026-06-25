@@ -31,12 +31,12 @@ Goal: a correct `alpha-core`/`worker`/`pod` skeleton that lints/types/tests gree
 | ID | Task | Owner | Done-when |
 |---|---|---|---|
 | B0.1 | Scaffold `alpha-core/` + `worker/` + `pod/` + `docs/`; `pyproject.toml` (uv, py≥3.12; pydantic/pydantic-settings/structlog + dev ruff/mypy/pytest/hypothesis/pre-commit); ruff + `mypy --strict` + pytest config; CI (uv→ruff→mypy→pytest) | [CC] | ✅ green in CI; ruff + mypy clean; merged (#5) |
-| B0.2 | Mirror Vega quality gates into `alpha-core`: `fail_under=94`, `mypy strict`, pre-commit hooks | [CC] | ⏳ gates enforced locally + in CI |
+| B0.2 | Mirror Vega quality gates into `alpha-core`: `fail_under=94`, `mypy strict`, pre-commit hooks | [CC] | ✅ gates enforced locally + in CI (#7) |
 | B0.3 | Lemma Phase-0 verification (B5): inspect money-column types → lock native DECIMAL vs string-Decimal; confirm `lemma` → Vault; verify table/RLS/FK primitives | [You]+[CC] | ⏳ B5 locked; a `Decimal` round-trips through a test table |
 | B0.4 | Pod skeleton: `pod.json` + table DDL (deployments, strategies, backtests, discovery_runs, paper_runs, orders, fills, positions, pnl_snapshots, risk_events, **commands**(+`emergency_flatten`), **worker_status**, **research_status**, **research_ledger** keyed by (market,family,window), broker_credentials RLS) + seed | [CC] | ⏳ `lemma records create` + `query run` confirm columns/FKs/RLS + money type |
 | B0.5 | AWS prep: SSH; preserve `.env` keys → Alpha gitignored secrets; wipe the AWS box's Vega **deployment** (keep the Mac Vega repo as the lift source); set up the research host | [You]+[CC] | ⏳ research host reachable; keys copied; nothing live |
 | B0.6 | `research_status` heartbeat table + `request_backtest` lease/timeout scaffolding (R8) | [CC] | ⏳ a stale research box alerts / times out, never hangs |
-| B0.7 | Portable strategy contract in `alpha-core`: `(bars, params) -> signals` (= Vega `Strategy` ABC) + a trivial MA-crossover reference impl | [CC] | ⏳ trivial strategy implements the contract; unit-tested |
+| B0.7 | Portable strategy contract in `alpha-core`: `(bars, params) -> signals` (= Vega `Strategy` ABC) + a trivial MA-crossover reference impl | [CC] | ✅ contract + MA-crossover ref impl; 29 tests, 100% cov (#8) |
 | B0.8 | **Track A (Nautilus-shell):** install NautilusTrader; wrap the contract in a Nautilus strategy; wire the Vega-pattern Indian cost model (+funding) into Nautilus's fee hook; Nautilus backtest + Delta-testnet live-paper via ccxt | [CC] | ⏳ trivial strategy trades on Delta testnet via Nautilus; backtest runs |
 | B0.9 | **Track B (lift-Vega):** copy Vega `core`/`execution`/`risk`/`backtest` into `alpha-core` (rename `tradebot`→`alpha_core`); run the same contract + Delta-testnet live-paper + backtest through the lifted engine | [CC] | ⏳ trivial strategy trades on Delta testnet via lifted Vega; backtest runs |
 | B0.10 | Parity + oracle: assert backtest ≡ paper parity on a replay per track (**TEST-1**); stand up the Vega differential-oracle (its property/replay suite) cross-checking P&L/positions; measure integration friction + time-to-code | [CC] | ⏳ parity asserted both tracks; comparison memo written |
@@ -131,15 +131,14 @@ Goal: additive, last — the riskiest discovery track, hard-gated on isolation.
 > it here. Update via `/session-wrap` at the end of every session.
 
 ### 🟢 Unblocked — ready to start now
-- **B0.2** — Mirror Vega quality gates (`fail_under=94` coverage floor + full pre-commit set). *(B0.1 ✅ merged #5)*
-- **B0.7** — Portable `(bars, params) -> signals` contract + trivial MA-crossover ref impl. *(do after B0.2)*
+- *(none that aren't human-gated — the next Phase-0 work is the **engine bake-off**, which is stop-and-ask; see Next action.)*
 
-### 🟡 Blocked — needs a prerequisite
-- **B0.3 / B0.4** — Lemma verification + pod skeleton (tables/RLS/money-type + seed) — needs the Mac `lemma` CLI session (Vault pod). *([You]+[CC]; B0.1 scaffolded the empty `pod/` bundle.)*
-- **B0.5** — AWS prep (preserve `.env`, wipe Vega deployment, set up research host) — needs [You] SSH/AWS access.
-- **B0.8** — Track A — needs NautilusTrader installed + B0.7.
-- **B0.9** — Track B — needs the Vega repo on disk (`/Users/jaydipdas/Code/Vega`, present) + B0.7's contract.
+### 🟡 Blocked / human-gated — needs a prerequisite or a [You] step
+- **B0.8 / B0.9 — engine bake-off** — **stop-and-ask [You] before starting.** B0.8 (Nautilus shell) needs NautilusTrader installed; B0.9 (lift Vega) is otherwise ready (Vega repo present + the B0.7 contract ✅). Both need [You]'s go-ahead + AWS/Delta-testnet for live-paper.
 - **B0.10 → 0.GATE** — parity bake-off + engine decision — needs B0.8 **and** B0.9.
+- **B0.3 / B0.4** — Lemma verification + pod skeleton (tables/RLS/money-type + seed) — needs the Mac `lemma` CLI session (Vault pod). *([You]+[CC]; B0.1 scaffolded the empty `pod/` bundle. When B0.9 lifts the config loader, restore Vega's `_scan_for_secrets` guard.)*
+- **B0.5** — AWS prep (preserve `.env`, wipe Vega deployment, set up research host) — needs [You] SSH/AWS access.
+- **B0.6** — `research_status` heartbeat + `request_backtest` lease/timeout scaffolding (R8) — needs B0.4 (pod tables).
 
 ### ▶️ Next action for a cold session
-**B0.1 ✅ merged (#5).** Start **B0.2** (one branch + one PR): mirror Vega's gates — coverage `fail_under=94` + the full pre-commit set — green in CI. Then **B0.7** (the `(bars, params) -> signals` contract + MA-crossover ref impl; reference Vega's `Strategy` ABC read-only). **PR norm:** build → CI green → spawn a review sub-agent → apply fixes → **CC merges** (squash); the human is out of the code-merge loop (money / live-gate / secrets gates unchanged). **Stop and ask** before B0.8/B0.9 (engine bake-off) and any `[You]`/`[You]+[CC]` step (B0.3, B0.5).
+**B0.1, B0.2, B0.7 all ✅ merged (#5, #7, #8); the PR-merge norm is codified (#6).** The remaining Phase-0 work is the **engine bake-off** (B0.8/B0.9 → B0.10 → 0.GATE) plus the human-gated rails (B0.3/B0.4 Lemma, B0.5 AWS). **STOP and ask [You]** before B0.8/B0.9 (needs NautilusTrader install + AWS/Lemma/Delta-testnet prep) and any `[You]`/`[You]+[CC]` step. **PR norm:** build → CI green → spawn a review sub-agent → apply fixes → **CC merges** (squash); edits to the safety gates (never-do list / cardinal invariants / money-live-secrets) go to **[You]** to merge.
