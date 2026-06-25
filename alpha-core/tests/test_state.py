@@ -25,7 +25,7 @@ def _store() -> StateStore:
 def _order(state: OrderState = OrderState.NEW, filled: str = "0") -> Order:
     avg = Decimal("100") if Decimal(filled) > 0 else None
     return Order(
-        client_order_id="vega-1",
+        client_order_id="alpha-1",
         symbol="NSE:RELIANCE",
         venue=Venue.NSE,
         asset_class=AssetClass.EQUITY,
@@ -44,7 +44,7 @@ def _order(state: OrderState = OrderState.NEW, filled: str = "0") -> Order:
 def _fill(fid: str, vfid: str, qty: str = "5", side: Side = Side.BUY) -> Fill:
     return Fill(
         fill_id=fid,
-        client_order_id="vega-1",
+        client_order_id="alpha-1",
         venue_fill_id=vfid,
         symbol="NSE:RELIANCE",
         venue=Venue.NSE,
@@ -112,7 +112,7 @@ def test_fills_append_only_no_update() -> None:
 def test_audit_append_only_no_delete() -> None:
     store = _store()
     with store.transaction() as s:
-        store.append_audit(s, event_type="ORDER_SUBMIT", payload={"id": "vega-1"})
+        store.append_audit(s, event_type="ORDER_SUBMIT", payload={"id": "alpha-1"})
     with pytest.raises(IntegrityError), store.transaction() as s:
         s.execute(text("DELETE FROM audit_log"))
 

@@ -34,18 +34,18 @@ def test_redact_leaves_clean_keys() -> None:
 
 def test_metrics_increment() -> None:
     before = metrics.registry.get_sample_value(
-        "vega_orders_placed_total", {"venue": "PAPER", "strategy": "s1"}
+        "alpha_orders_placed_total", {"venue": "PAPER", "strategy": "s1"}
     )
     metrics.orders_placed.labels(venue="PAPER", strategy="s1").inc()
     after = metrics.registry.get_sample_value(
-        "vega_orders_placed_total", {"venue": "PAPER", "strategy": "s1"}
+        "alpha_orders_placed_total", {"venue": "PAPER", "strategy": "s1"}
     )
     assert (after or 0) == (before or 0) + 1
 
 
 def test_gauge_set() -> None:
     metrics.open_positions.set(3)
-    assert metrics.registry.get_sample_value("vega_open_positions") == 3
+    assert metrics.registry.get_sample_value("alpha_open_positions") == 3
 
 
 # --- heartbeat -----------------------------------------------------------------

@@ -34,7 +34,7 @@ def _order_in(state: OrderState) -> Order:
     elif state is OrderState.FILLED:
         filled, avg = QTY, Decimal("100")
     return Order(
-        client_order_id="vega-1",
+        client_order_id="alpha-1",
         symbol="NSE:RELIANCE",
         venue=Venue.NSE,
         asset_class=AssetClass.EQUITY,
@@ -53,7 +53,7 @@ def _order_in(state: OrderState) -> Order:
 def _fill(qty: str, fid: str = "f1", vfid: str | None = "vf1") -> Fill:
     return Fill(
         fill_id=fid,
-        client_order_id="vega-1",
+        client_order_id="alpha-1",
         venue_fill_id=vfid,
         symbol="NSE:RELIANCE",
         venue=Venue.NSE,
@@ -177,7 +177,7 @@ def test_partial_then_complete_weighted_avg() -> None:
         OrderEvent.FILL,
         fill=Fill(
             fill_id="f2",
-            client_order_id="vega-1",
+            client_order_id="alpha-1",
             venue_fill_id="b",
             symbol="NSE:RELIANCE",
             venue=Venue.NSE,
@@ -213,7 +213,7 @@ def test_fill_before_ack_implies_ack_and_sets_venue_id() -> None:
     order = _order_in(OrderState.PENDING)
     fill = Fill(
         fill_id="f1",
-        client_order_id="vega-1",
+        client_order_id="alpha-1",
         venue_order_id="V1",
         venue_fill_id="vf1",
         symbol="NSE:RELIANCE",

@@ -58,7 +58,7 @@ class BacktestResult:
         s = self.stats
         return "\n".join(
             [
-                "=== Vega backtest — stats ===",
+                "=== Alpha backtest — stats ===",
                 f"final P&L:      {s.final_pnl}",
                 f"total return:   {s.total_return_pct:.4f}%",
                 f"max drawdown:   {s.max_drawdown_pct:.4f}%",

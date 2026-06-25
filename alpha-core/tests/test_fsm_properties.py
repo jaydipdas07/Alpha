@@ -29,7 +29,7 @@ def step(order: Order, event: OrderEvent, **kw: Any) -> Order:
 
 def _open_order(quantity: Decimal) -> Order:
     return Order(
-        client_order_id="vega-x",
+        client_order_id="alpha-x",
         venue_order_id="V1",
         symbol="NSE:RELIANCE",
         venue=Venue.NSE,
@@ -47,7 +47,7 @@ def _open_order(quantity: Decimal) -> Order:
 def _fill(fid: str, qty: Decimal) -> Fill:
     return Fill(
         fill_id=fid,
-        client_order_id="vega-x",
+        client_order_id="alpha-x",
         symbol="NSE:RELIANCE",
         venue=Venue.NSE,
         asset_class=AssetClass.EQUITY,

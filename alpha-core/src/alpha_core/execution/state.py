@@ -190,14 +190,14 @@ def append_only_trigger_sql(dialect: str) -> list[str]:
     statements: list[str] = []
     if dialect == "postgresql":
         statements.append(
-            "CREATE OR REPLACE FUNCTION vega_append_only() RETURNS trigger AS $$ "
+            "CREATE OR REPLACE FUNCTION alpha_append_only() RETURNS trigger AS $$ "
             "BEGIN RAISE EXCEPTION 'table is append-only'; END; $$ LANGUAGE plpgsql;"
         )
     for table in _APPEND_ONLY_TABLES:
         if dialect == "postgresql":
             statements.append(
                 f"CREATE TRIGGER {table}_append_only BEFORE UPDATE OR DELETE ON {table} "
-                f"FOR EACH ROW EXECUTE FUNCTION vega_append_only();"
+                f"FOR EACH ROW EXECUTE FUNCTION alpha_append_only();"
             )
         else:  # sqlite (and compatible)
             for op in ("UPDATE", "DELETE"):

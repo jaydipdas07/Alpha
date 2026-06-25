@@ -35,7 +35,7 @@ def _cfg(**limit_overrides: Any) -> RiskConfig:
 
 def _order(side: Side = Side.BUY, qty: str = "10", stop: str | None = None) -> Order:
     return Order(
-        client_order_id="vega-1",
+        client_order_id="alpha-1",
         symbol="NSE:RELIANCE",
         venue=Venue.NSE,
         asset_class=AssetClass.EQUITY,
@@ -276,7 +276,7 @@ def test_leverage_must_be_positive() -> None:
 
 
 def test_real_risk_yaml_loads(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("VEGA_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("ALPHA_CONFIG_DIR", raising=False)
     cfg = load_risk_config()
     assert cfg.base_capital > 0  # a tunable (pilot size) — don't pin the exact value
     assert cfg.limits.max_order_value == Decimal("0.25")

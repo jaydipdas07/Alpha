@@ -68,7 +68,7 @@ def _order(
     order_type: OrderType = OrderType.MARKET,
     qty: str = "10",
     limit: str | None = None,
-    cid: str = "vega-1",
+    cid: str = "alpha-1",
 ) -> Order:
     return Order(
         client_order_id=cid,

@@ -126,7 +126,7 @@ async def test_idempotent_client_order_id() -> None:
     sig = _signal()
     a = derive_client_order_id(sig, Venue.NSE)
     b = derive_client_order_id(sig, Venue.NSE)
-    assert a == b and a.startswith("vega-")
+    assert a == b and a.startswith("alpha-")
 
 
 async def test_audit_chain_intact_after_flow() -> None:

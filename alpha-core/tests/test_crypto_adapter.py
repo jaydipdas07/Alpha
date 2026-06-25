@@ -147,7 +147,7 @@ class FakeExchange:
 
 def _order(
     *,
-    cid: str = "vega-btc1",
+    cid: str = "alpha-btc1",
     order_type: OrderType = OrderType.MARKET,
     limit: str | None = None,
     stop: str | None = None,
@@ -188,7 +188,7 @@ async def test_place_market_order_maps_fields() -> None:
     assert sent["side"] == "buy"
     assert sent["amount"] == 0.5
     assert sent["price"] is None
-    assert sent["params"]["clientOrderId"] == "vega-btc1"  # native dedup key
+    assert sent["params"]["clientOrderId"] == "alpha-btc1"  # native dedup key
 
 
 async def test_place_is_idempotent() -> None:
@@ -204,9 +204,9 @@ async def test_place_is_idempotent() -> None:
 async def test_limit_and_stop_cross_the_boundary() -> None:
     ex = FakeExchange()
     adapter = CcxtAdapter(exchange=ex)
-    await adapter.place_order(_order(cid="vega-l", order_type=OrderType.LIMIT, limit="65000.5"))
+    await adapter.place_order(_order(cid="alpha-l", order_type=OrderType.LIMIT, limit="65000.5"))
     await adapter.place_order(
-        _order(cid="vega-s", order_type=OrderType.STOP_LIMIT, limit="64000", stop="64500")
+        _order(cid="alpha-s", order_type=OrderType.STOP_LIMIT, limit="64000", stop="64500")
     )
     assert ex.created[0]["type"] == "limit"
     assert ex.created[0]["price"] == 65000.5
@@ -243,7 +243,7 @@ async def test_sdk_errors_are_normalized(exc: Exception, expected: type[Exceptio
 async def test_cancel_unknown_is_noop() -> None:
     ex = FakeExchange()
     adapter = CcxtAdapter(exchange=ex)
-    await adapter.cancel("vega-never")
+    await adapter.cancel("alpha-never")
     assert ex.cancelled == []
 
 
@@ -251,20 +251,20 @@ async def test_cancel_known_calls_exchange() -> None:
     ex = FakeExchange()
     adapter = CcxtAdapter(exchange=ex)
     vid = await adapter.place_order(_order())
-    await adapter.cancel("vega-btc1")
+    await adapter.cancel("alpha-btc1")
     assert ex.cancelled[0] == (vid, "BTC/USDT")
 
 
 async def test_modify_requires_a_field() -> None:
     adapter = CcxtAdapter(exchange=FakeExchange())
     with pytest.raises(InvalidOrder):
-        await adapter.modify("vega-btc1")
+        await adapter.modify("alpha-btc1")
 
 
 async def test_modify_unknown_rejected() -> None:
     adapter = CcxtAdapter(exchange=FakeExchange())
     with pytest.raises(InvalidOrder):
-        await adapter.modify("vega-ghost", limit_price=Decimal("100"))
+        await adapter.modify("alpha-ghost", limit_price=Decimal("100"))
 
 
 # --- dedup-by-query ------------------------------------------------------------
@@ -273,19 +273,19 @@ async def test_modify_unknown_rejected() -> None:
 async def test_find_order_id_scans_by_client_id() -> None:
     ex = FakeExchange()
     ex._open = [
-        {"id": "BIN55", "clientOrderId": "vega-btc1"},
+        {"id": "BIN55", "clientOrderId": "alpha-btc1"},
         {"id": "BIN99", "clientOrderId": "other"},
     ]
     adapter = CcxtAdapter(exchange=ex)
-    assert await adapter.find_order_id("vega-btc1") == "BIN55"
-    assert await adapter.find_order_id("vega-missing") is None
+    assert await adapter.find_order_id("alpha-btc1") == "BIN55"
+    assert await adapter.find_order_id("alpha-missing") is None
 
 
 async def test_find_order_id_uses_cache_after_place() -> None:
     ex = FakeExchange()
     adapter = CcxtAdapter(exchange=ex)
     vid = await adapter.place_order(_order())
-    assert await adapter.find_order_id("vega-btc1") == vid
+    assert await adapter.find_order_id("alpha-btc1") == vid
 
 
 # --- broker truth mapping ------------------------------------------------------
@@ -294,7 +294,7 @@ async def test_find_order_id_uses_cache_after_place() -> None:
 def _ccxt_order(**over: Any) -> dict[str, Any]:
     base = {
         "id": "BIN1",
-        "clientOrderId": "vega-btc1",
+        "clientOrderId": "alpha-btc1",
         "symbol": "BTC/USDT",
         "type": "market",
         "side": "buy",
@@ -314,7 +314,7 @@ async def test_get_orders_maps_closed_fill() -> None:
     ex._open = [_ccxt_order()]
     adapter = CcxtAdapter(exchange=ex)
     o = (await adapter.get_orders())[0]
-    assert o.client_order_id == "vega-btc1"
+    assert o.client_order_id == "alpha-btc1"
     assert o.venue_order_id == "BIN1"
     assert o.symbol == "BTC/USDT"
     assert o.asset_class is AssetClass.CRYPTO
@@ -428,7 +428,7 @@ async def test_order_events_emits_exact_fill_and_cancel() -> None:
         [
             {
                 "id": "BIN2",
-                "clientOrderId": "vega-btc2",
+                "clientOrderId": "alpha-btc2",
                 "symbol": "BTC/USDT",
                 "side": "sell",
                 "status": "canceled",
@@ -438,7 +438,7 @@ async def test_order_events_emits_exact_fill_and_cancel() -> None:
         ]
     ]
     adapter = CcxtAdapter(exchange=ex)
-    adapter._vid_to_cid["BIN1"] = "vega-btc1"  # as if we placed BIN1
+    adapter._vid_to_cid["BIN1"] = "alpha-btc1"  # as if we placed BIN1
     by_kind: dict[BrokerEventKind, BrokerOrderEvent] = {}
     async for ev in adapter.order_events():
         by_kind[ev.kind] = ev
@@ -446,7 +446,7 @@ async def test_order_events_emits_exact_fill_and_cancel() -> None:
             break
     fill = by_kind[BrokerEventKind.FILL].fill
     assert fill is not None
-    assert fill.fill_id == "T-1" and fill.client_order_id == "vega-btc1"
+    assert fill.fill_id == "T-1" and fill.client_order_id == "alpha-btc1"
     assert fill.price == Decimal("65010.0") and fill.quantity == Decimal("0.5")
     assert fill.fees == Decimal("0.65")
     assert BrokerEventKind.CANCEL in by_kind
@@ -518,7 +518,7 @@ async def test_partial_fills_emit_per_trade() -> None:
         ],
     ]
     adapter = CcxtAdapter(exchange=ex)
-    adapter._vid_to_cid["BIN1"] = "vega-x"
+    adapter._vid_to_cid["BIN1"] = "alpha-x"
     events = []
     async for ev in adapter.order_events():
         events.append(ev)
@@ -570,7 +570,7 @@ class RestOnlyExchange:
 def _poll_trade(tid: str) -> dict[str, Any]:
     return {
         "id": tid,
-        "clientOrderId": "vega-poll1",
+        "clientOrderId": "alpha-poll1",
         "order": "V9",
         "symbol": "BTC/USD:USD",
         "side": "buy",
@@ -588,7 +588,7 @@ async def test_rest_only_polls_fill_from_my_trades() -> None:
     adapter = CcxtAdapter(exchange=ex, streaming=False, poll_interval=0.001)  # type: ignore[arg-type]
     async for ev in adapter.order_events():
         assert ev.kind is BrokerEventKind.FILL
-        assert ev.client_order_id == "vega-poll1"
+        assert ev.client_order_id == "alpha-poll1"
         assert ev.fill is not None and ev.fill.price == Decimal("64000.0")
         break
 
@@ -637,10 +637,10 @@ async def test_rest_only_order_events_seed_then_emit() -> None:
     # First poll seeds (no replay of history); a NEW terminal order on a later
     # poll is emitted (P18.1).
     ex = RestOnlyExchange()
-    ex.closed_script = [[], [{"id": "V1", "clientOrderId": "vega-x", "status": "canceled"}]]
+    ex.closed_script = [[], [{"id": "V1", "clientOrderId": "alpha-x", "status": "canceled"}]]
     adapter = CcxtAdapter(exchange=ex, streaming=False, poll_interval=0.001)  # type: ignore[arg-type]
     async for ev in adapter.order_events():
-        assert ev.client_order_id == "vega-x"
+        assert ev.client_order_id == "alpha-x"
         assert ev.kind is BrokerEventKind.CANCEL
         break
 
@@ -651,11 +651,11 @@ async def test_order_events_ws_stream_reconnects_then_emits() -> None:
     ex = FakeExchange()
     ex.order_batches = [
         NetworkError("ws drop"),
-        [{"id": "V1", "clientOrderId": "vega-x", "status": "canceled"}],
+        [{"id": "V1", "clientOrderId": "alpha-x", "status": "canceled"}],
     ]
     adapter = CcxtAdapter(exchange=ex)  # streaming default
     async for ev in adapter.order_events():
-        assert ev.kind is BrokerEventKind.CANCEL and ev.client_order_id == "vega-x"
+        assert ev.kind is BrokerEventKind.CANCEL and ev.client_order_id == "alpha-x"
         break
 
 
