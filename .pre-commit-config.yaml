@@ -1,0 +1,39 @@
+# Pre-commit gates (CLAUDE.md: gate every commit).
+#   install:  uv run pre-commit install
+#   run all:  uv run pre-commit run -a
+# Lint/type hooks are `local` so they invoke the exact uv-locked ruff/mypy that CI
+# runs — no pre-commit-vs-CI version skew. Hygiene + secret hooks are pinned repos.
+# B0.2 mirrors the remainder of Vega's gate set (coverage floor, markdownlint, …).
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: detect-private-key  # never commit secrets (CLAUDE.md never-do list)
+
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff (lint)
+        entry: uv run ruff check --fix
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+      - id: ruff-format
+        name: ruff (format)
+        entry: uv run ruff format
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+      - id: mypy
+        name: mypy (strict)
+        entry: uv run mypy
+        language: system
+        pass_filenames: false  # mypy uses the config `files`, not changed-file list
+        types_or: [python, pyi]
+        require_serial: true
