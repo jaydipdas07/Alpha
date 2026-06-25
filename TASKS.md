@@ -35,7 +35,7 @@ Goal: a correct `alpha-core`/`worker`/`pod` skeleton that lints/types/tests gree
 | B0.3 | Lemma Phase-0 verification (B5): inspect money-column types → lock native DECIMAL vs string-Decimal; confirm `lemma` → Vault; verify table/RLS/FK primitives | [You]+[CC] | ✅ B5 = **TEXT string-Decimal** (Lemma has no native DECIMAL; FLOAT lossy + INTEGER is int32 — both proven); `Decimal` round-trips; `lemma`→Vault ok |
 | B0.4 | Pod skeleton: `pod.json` + table DDL (deployments, strategies, backtests, discovery_runs, paper_runs, orders, fills, positions, pnl_snapshots, risk_events, **commands**(+`emergency_flatten`), **worker_status**, **research_status**, **research_ledger** keyed by (market,family,window), broker_credentials RLS) + seed | [CC] | ✅ 15 tables imported + seeded; FK JOIN + money round-trip + idempotency + RLS verified (#11) |
 | B0.5 | AWS prep: SSH; preserve `.env` keys → Alpha gitignored secrets; wipe the AWS box's Vega **deployment** (keep the Mac Vega repo as the lift source); set up the research host | [You]+[CC] | ⏳ research host reachable; keys copied; nothing live |
-| B0.6 | `research_status` heartbeat table + `request_backtest` lease/timeout scaffolding (R8) | [CC] | ⏳ a stale research box alerts / times out, never hangs |
+| B0.6 | `research_status` heartbeat table + `request_backtest` lease/timeout scaffolding (R8) | [CC] | ✅ lease + heartbeat-staleness logic (`alpha_core/research`); a dead box's work is reclaimable, never hangs; 100% cov (#12) |
 | B0.7 | Portable strategy contract in `alpha-core`: `(bars, params) -> signals` (= Vega `Strategy` ABC) + a trivial MA-crossover reference impl | [CC] | ✅ contract + MA-crossover ref impl; 29 tests, 100% cov (#8) |
 | B0.8 | **Track A (Nautilus-shell):** install NautilusTrader; wrap the contract in a Nautilus strategy; wire the Vega-pattern Indian cost model (+funding) into Nautilus's fee hook; Nautilus backtest + Delta-testnet live-paper via ccxt | [CC] | ⏳ trivial strategy trades on Delta testnet via Nautilus; backtest runs |
 | B0.9 | **Track B (lift-Vega):** copy Vega `core`/`execution`/`risk`/`backtest` into `alpha-core` (rename `tradebot`→`alpha_core`); run the same contract + Delta-testnet live-paper + backtest through the lifted engine | [CC] | ⏳ trivial strategy trades on Delta testnet via lifted Vega; backtest runs |
@@ -130,14 +130,13 @@ Goal: additive, last — the riskiest discovery track, hard-gated on isolation.
 > Every open item appears here exactly once. When it lands, mark ✅ in its phase table above and remove
 > it here. Update via `/session-wrap` at the end of every session.
 
-### 🟢 Unblocked — ready to start now (full A/B bake-off + Lemma + AWS authorized by [You])
+### 🟢 Unblocked — ready to start now (full A/B bake-off authorized by [You])
 - **B0.9** — Track B: lift Vega `core`/`execution`/`risk`/`backtest` → `alpha_core`; run the B0.7 contract through it (backtest + Delta-**testnet** live-paper). *(Vega present + B0.7 ✅ + testnet keys lifted.)*
 - **B0.8** — Track A: install NautilusTrader, wrap the contract, Vega-pattern cost model, Delta-testnet live-paper. *(Full A/B bake-off authorized.)*
-- **B0.5** — AWS prep: **[CC] drives via [You]'s SSH access**; preserve `.env` keys (✅ lifted from Vega), **wipe the AWS Vega *deployment* — confirm with [You] first**, set up the research host.
-- **B0.6** — `research_status` heartbeat + `request_backtest` lease/timeout scaffolding (R8). *(B0.4 ✅ — pod tables exist.)*
 
-### 🟡 Blocked — needs a prerequisite
+### 🟡 Blocked — needs [You] or a prerequisite
+- **B0.5** — AWS prep — **the box is unreachable**: `ubuntu@3.6.176.133` (Vega `deploy-box.sh`, key `~/.ssh/vega-key.pem`) times out on `:22` (instance off / IP rotated — non-elastic). Needs [You]: confirm/start the box + the current IP, then the destructive Vega-deployment **wipe confirm**. *(`.env` keys ✅ already lifted.)*
 - **B0.10 → 0.GATE** — parity bake-off + engine decision (→ `docs/adr/0001`) — needs B0.8 **and** B0.9.
 
 ### ▶️ Next action for a cold session
-**Done: B0.1/B0.2/B0.3/B0.4/B0.7 ✅; PR-merge norm (#6); B5 = `TEXT` string-Decimal; pod tables imported + seeded.** [You] authorized the full A/B bake-off + AWS (via SSH) + keys lifted. Drive the unblocked queue under the **PR norm** (build → CI green → sub-agent review → **CC merges** squash): **B0.9** (lift Vega → `alpha_core`), **B0.8** (Nautilus + install NautilusTrader), **B0.5** (AWS — **confirm the destructive wipe with [You]** first), **B0.6** (research heartbeat) → then **B0.10 → 0.GATE** (engine choice → ADR 0001). Build note: when B0.9 lifts the config loader, restore Vega's `_scan_for_secrets`. **Safety-gate edits** (never-do / cardinal invariants / money-live-secrets) → **[You]** merges.
+**Done: B0.1/B0.2/B0.3/B0.4/B0.6/B0.7 ✅; PR-merge norm (#6); B5 = `TEXT` string-Decimal; 15 pod tables imported + seeded.** The big remaining Phase-0 work is the **engine bake-off** — drive under the **PR norm** (build → CI green → sub-agent review → **CC merges** squash): **B0.9** (lift Vega → `alpha_core`), **B0.8** (Nautilus + install NautilusTrader) → **B0.10 → 0.GATE** (engine choice → ADR 0001). **B0.5** (AWS) is parked on [You] — the box at `3.6.176.133` is unreachable (confirm/start it + current IP + wipe confirm). Build note: when B0.9 lifts the config loader, restore Vega's `_scan_for_secrets`. **Safety-gate edits** (never-do / cardinal invariants / money-live-secrets) → **[You]** merges.
