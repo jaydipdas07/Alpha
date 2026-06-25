@@ -6,14 +6,18 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+from alpha_core.adapters.paper import PaperBroker
 from alpha_core.backtest.runner import BacktestResult, run_backtest
 from alpha_core.core.enums import AssetClass, OrderType, Side, Venue
 from alpha_core.core.interfaces import Strategy
 from alpha_core.core.models import Bar, Position, Signal, Tick
-from alpha_core.execution.costs import InstrumentMeta
+from alpha_core.execution.costs import CostModel, InstrumentMeta
 from alpha_core.execution.funding import FundingConfig, funding_cash_flow, load_funding_config
+from alpha_core.execution.oms import OMS
+from alpha_core.execution.state import StateStore
 from alpha_core.helpers.config import load_yaml
 from alpha_core.risk.limits import RiskConfig
+from alpha_core.risk.manager import KillTrigger, RiskManager
 
 SYM = "BTCUSDT"
 START = datetime(2026, 6, 26, tzinfo=UTC)  # a UTC midnight (on the 8h funding grid)
@@ -45,6 +49,29 @@ def test_load_funding_config() -> None:
     cfg = load_funding_config(load_yaml("costs.yaml"))
     assert cfg is not None and cfg.interval_hours == 8 and cfg.rate == Decimal("0.0001")
     assert load_funding_config({}) is None  # no funding block -> None
+
+
+def test_accrue_funding_books_to_pnl_and_the_kill_gate() -> None:
+    """One accrue_funding moves total_funding(), the reported realized P&L, AND the
+    daily-loss gate input by the same amount — the contract the runner relies on."""
+    risk = RiskManager(RiskConfig.model_validate(_risk("0.01")))  # daily-loss cap = -1000
+    store = StateStore("sqlite:///:memory:")
+    store.create_schema()
+    oms = OMS(
+        adapter=PaperBroker(cost_model=CostModel(load_yaml("costs.yaml")), instruments={}),
+        risk=risk,
+        store=store,
+        venue=Venue.BINANCE,
+    )
+    assert oms.total_funding() == 0
+    oms.accrue_funding(Decimal("-600"))
+    assert oms.total_funding() == Decimal("-600")
+    assert oms.total_realized_pnl() == Decimal("-600")  # funding shows in realized P&L
+    oms.mark({})  # feeds -600 to the gate; under the -1000 cap, not halted
+    assert not risk.is_halted
+    oms.accrue_funding(Decimal("-600"))  # -1200 total, past the cap
+    oms.mark({})
+    assert risk.is_halted and risk.halt_trigger is KillTrigger.DAILY_LOSS
 
 
 # --- backtest integration -----------------------------------------------------

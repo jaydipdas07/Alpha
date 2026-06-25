@@ -237,6 +237,10 @@ async def run_portfolio_backtest(
     strategy → ``SignalBook`` → allocator → ``rebalance_orders`` → OMS. The
     Universe→Alpha→Portfolio→Risk→Execution stages all run through the SAME
     OMS/risk/cost path as live (ADR 0001), so a backtest and a live run agree.
+
+    NB: perp funding (R13) is NOT accrued here yet — that lands only in the
+    single-strategy ``run_backtest``; ``stats.funding_paid`` is 0 on this path.
+    TODO: thread funding through the portfolio rebalance loop before running perps here.
     """
     broker = PaperBroker(
         cost_model=CostModel(cost_config),
