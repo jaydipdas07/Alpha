@@ -12,59 +12,59 @@ from prometheus_client import CollectorRegistry, Counter, Gauge
 registry = CollectorRegistry()
 
 orders_placed = Counter(
-    "vega_orders_placed_total",
+    "alpha_orders_placed_total",
     "Orders submitted to a broker",
     ["venue", "strategy"],
     registry=registry,
 )
 orders_rejected = Counter(
-    "vega_orders_rejected_total",
+    "alpha_orders_rejected_total",
     "Orders rejected (risk or broker)",
     ["reason"],
     registry=registry,
 )
 fills = Counter(
-    "vega_fills_total",
+    "alpha_fills_total",
     "Fills received",
     ["venue", "side"],
     registry=registry,
 )
 risk_decisions = Counter(
-    "vega_risk_decisions_total",
+    "alpha_risk_decisions_total",
     "Pre-trade risk decisions",
     ["outcome"],
     registry=registry,
 )
 errors = Counter(
-    "vega_errors_total",
+    "alpha_errors_total",
     "Errors by class",
     ["kind"],
     registry=registry,
 )
 kill_switch_trips = Counter(
-    "vega_kill_switch_trips_total",
+    "alpha_kill_switch_trips_total",
     "Kill-switch trips",
     ["trigger"],
     registry=registry,
 )
 
 open_positions = Gauge(
-    "vega_open_positions",
+    "alpha_open_positions",
     "Current number of open positions",
     registry=registry,
 )
 realized_pnl = Gauge(
-    "vega_realized_pnl",
+    "alpha_realized_pnl",
     "Running realized P&L (quote ccy)",
     registry=registry,
 )
 feed_lag_seconds = Gauge(
-    "vega_feed_lag_seconds",
+    "alpha_feed_lag_seconds",
     "Seconds since the last valid tick",
     registry=registry,
 )
 heartbeat_alive = Gauge(
-    "vega_heartbeat_alive",
+    "alpha_heartbeat_alive",
     "1 if the loop has beaten within its staleness budget, else 0",
     registry=registry,
 )

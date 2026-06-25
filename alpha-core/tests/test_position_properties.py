@@ -25,7 +25,7 @@ _qty = st.decimals(min_value=Decimal("1"), max_value=Decimal("10000"), places=0)
 def _fill(draw: st.DrawFn) -> Fill:
     return Fill(
         fill_id=draw(st.uuids()).hex,
-        client_order_id="vega-x",
+        client_order_id="alpha-x",
         symbol="NSE:RELIANCE",
         venue=Venue.NSE,
         asset_class=AssetClass.EQUITY,
@@ -65,7 +65,7 @@ def test_round_trip_realizes_price_difference(
 ) -> None:
     buy = Fill(
         fill_id="b",
-        client_order_id="vega-x",
+        client_order_id="alpha-x",
         symbol="NSE:RELIANCE",
         venue=Venue.NSE,
         asset_class=AssetClass.EQUITY,

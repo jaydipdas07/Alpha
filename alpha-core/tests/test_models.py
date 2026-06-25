@@ -18,7 +18,7 @@ T0 = datetime(2026, 1, 1, 9, 15, tzinfo=UTC)
 
 def _order(**overrides: object) -> Order:
     base: dict[str, object] = {
-        "client_order_id": "vega-1",
+        "client_order_id": "alpha-1",
         "symbol": "NSE:RELIANCE",
         "venue": Venue.NSE,
         "asset_class": AssetClass.EQUITY,
@@ -236,7 +236,7 @@ def test_target_exposure_immutable() -> None:
 def test_fill_positive_price_qty() -> None:
     common = {
         "fill_id": "f1",
-        "client_order_id": "vega-1",
+        "client_order_id": "alpha-1",
         "symbol": "X",
         "venue": Venue.NSE,
         "asset_class": AssetClass.EQUITY,
@@ -251,7 +251,7 @@ def test_fill_positive_price_qty() -> None:
 def test_frozen_models_immutable() -> None:
     fill = Fill(
         fill_id="f1",
-        client_order_id="vega-1",
+        client_order_id="alpha-1",
         symbol="X",
         venue=Venue.NSE,
         asset_class=AssetClass.EQUITY,

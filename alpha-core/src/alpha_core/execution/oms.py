@@ -60,7 +60,7 @@ def derive_client_order_id(signal: Signal, venue: Venue) -> str:
         )
     )
     digest = hashlib.sha1(parts.encode()).hexdigest()[:16]
-    return f"vega-{digest}"
+    return f"alpha-{digest}"
 
 
 def derive_client_order_id_for_flatten(pos: Position, venue: Venue, now: datetime) -> str:
@@ -68,7 +68,7 @@ def derive_client_order_id_for_flatten(pos: Position, venue: Venue, now: datetim
     parts = "|".join(
         str(x) for x in ("flatten", pos.symbol, venue.value, pos.quantity, now.isoformat())
     )
-    return f"vega-{hashlib.sha1(parts.encode()).hexdigest()[:16]}"
+    return f"alpha-{hashlib.sha1(parts.encode()).hexdigest()[:16]}"
 
 
 class OMS:

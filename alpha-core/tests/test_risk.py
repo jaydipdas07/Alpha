@@ -35,7 +35,7 @@ def _cfg(**limit_overrides: Any) -> RiskConfig:
 
 def _order(side: Side = Side.BUY, qty: str = "10", stop: str | None = None) -> Order:
     return Order(
-        client_order_id="vega-1",
+        client_order_id="alpha-1",
         symbol="NSE:RELIANCE",
         venue=Venue.NSE,
         asset_class=AssetClass.EQUITY,

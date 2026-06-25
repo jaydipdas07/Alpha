@@ -67,7 +67,7 @@ def test_order_rejected_carries_reason() -> None:
 def test_broker_order_event_shape() -> None:
     fill = Fill(
         fill_id="f1",
-        client_order_id="vega-1",
+        client_order_id="alpha-1",
         symbol="X",
         venue=Venue.NSE,
         asset_class=AssetClass.EQUITY,
@@ -76,7 +76,7 @@ def test_broker_order_event_shape() -> None:
         price=Decimal("100"),
         ts=datetime(2026, 1, 1, tzinfo=UTC),
     )
-    ev = BrokerOrderEvent(kind=BrokerEventKind.FILL, client_order_id="vega-1", fill=fill)
+    ev = BrokerOrderEvent(kind=BrokerEventKind.FILL, client_order_id="alpha-1", fill=fill)
     assert ev.kind is BrokerEventKind.FILL
     assert ev.fill is fill
     with pytest.raises(AttributeError):  # frozen dataclass
