@@ -10,6 +10,10 @@ venv/
 .ruff_cache/
 .pytest_cache/
 .hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
 *.egg-info/
 
 # Secrets / env — live secrets are NEVER committed (B3; CLAUDE.md never-do)
