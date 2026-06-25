@@ -37,5 +37,5 @@ jobs:
       - name: Mypy (strict)
         run: uv run --no-sync mypy
 
-      - name: Pytest
-        run: uv run --no-sync pytest
+      - name: Pytest (with coverage gate)
+        run: uv run --no-sync pytest --cov --cov-report=term-missing
