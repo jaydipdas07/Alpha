@@ -57,6 +57,22 @@ class _BuyHold(Strategy):
         return []
 
 
+class _SellHold(Strategy):
+    """Sells (opens a short) the first bar it sees, then holds."""
+
+    def __init__(self) -> None:
+        self._opened = False
+
+    def on_bar(self, bar: Bar) -> Sequence[Signal]:
+        if self._opened:
+            return []
+        self._opened = True
+        return [_sig(bar, Side.SELL)]
+
+    def on_tick(self, tick: Tick) -> Sequence[Signal]:
+        return []
+
+
 class _Churn(Strategy):
     """Buys on even bars, sells on odd — exercises both entries and exits."""
 
@@ -98,6 +114,15 @@ def test_prescreen_culls_a_loser() -> None:
     )
     assert result.passed is False  # a falling buy-and-hold loses -> culled before CPCV
     assert result.median_sharpe < 0
+
+
+def test_prescreen_credits_short_alpha() -> None:
+    # On a short-capable perp venue, a SELL-to-short winner in a FALLING market must survive
+    # (a culled short winner is the costly false-negative). direction='both' models it.
+    won = prescreen(lambda _b: _SellHold(), _bars(range(130, 100, -1)), min_sharpe=0.0, n_windows=3)
+    assert won.passed is True and won.median_sharpe > 0
+    lost = prescreen(lambda _b: _SellHold(), _bars(range(100, 130)), min_sharpe=0.0, n_windows=3)
+    assert lost.passed is False and lost.median_sharpe < 0  # short on a rising market loses
 
 
 def test_prescreen_honours_the_config_floor() -> None:

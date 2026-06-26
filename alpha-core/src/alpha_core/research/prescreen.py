@@ -38,7 +38,10 @@ class PrescreenResult:
 
 
 def _signal_arrays(make_strategy: MakeStrategy, bars: list[Bar]) -> tuple[np.ndarray, np.ndarray]:
-    """The strategy's BUY/SELL signals over ``bars`` as vectorbt entry/exit boolean arrays."""
+    """The strategy's signals over ``bars`` as vectorbt long/short boolean arrays: a BUY is a
+    long signal, a SELL a short signal. With ``direction="both"`` (a coarse flip model of
+    directional alpha) the screen credits short edge too — vital on a short-capable perp
+    venue, where culling a short winner would be the costly error."""
     engine = StrategyEngine(make_strategy(bars))
     entries = np.zeros(len(bars), dtype=bool)
     exits = np.zeros(len(bars), dtype=bool)
@@ -52,10 +55,11 @@ def _signal_arrays(make_strategy: MakeStrategy, bars: list[Bar]) -> tuple[np.nda
 
 
 def _coarse_sharpe(close: np.ndarray, entries: np.ndarray, exits: np.ndarray) -> float:
-    """Per-bar Sharpe of vectorbt's fast portfolio sim of these signals (0 if undefined). The
-    ``freq`` only satisfies vectorbt; the metric is computed from the raw per-bar returns, so
-    it is annualization-independent."""
-    pf = vbt.Portfolio.from_signals(close, entries, exits, freq="1D")
+    """Per-bar Sharpe of vectorbt's fast portfolio sim of these signals (0 if undefined).
+    ``direction="both"`` lets a SELL open a short (not just exit a long), so short alpha is
+    screened too. The ``freq`` only satisfies vectorbt; the metric is computed from the raw
+    per-bar returns, so it is annualization-independent."""
+    pf = vbt.Portfolio.from_signals(close, entries, exits, freq="1D", direction="both")
     returns = np.asarray(pf.returns(), dtype=float)
     returns = returns[~np.isnan(returns)]
     if returns.size < 2:  # pragma: no cover - defensive: callers guard windows >= 2 bars
@@ -65,7 +69,7 @@ def _coarse_sharpe(close: np.ndarray, entries: np.ndarray, exits: np.ndarray) ->
 
 
 def prescreen(
-    make_strategy: MakeStrategy, bars: list[Bar], *, min_sharpe: float, n_windows: int = 3
+    make_strategy: MakeStrategy, bars: list[Bar], *, min_sharpe: float, n_windows: int
 ) -> PrescreenResult:
     """Coarse vectorbt walk-forward pre-screen: split ``bars`` into ``n_windows`` sequential
     out-of-sample windows, take each window's coarse per-bar Sharpe, and **pass** iff their
