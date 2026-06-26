@@ -249,6 +249,15 @@ class DiscoveryCellConfig(BaseModel):
             raise ValueError("window must not contain the '|' cell-key separator")
         return value
 
+    @field_validator("templates")
+    @classmethod
+    def _templates_omitted_or_non_empty(cls, value: list[str] | None) -> list[str] | None:
+        # omit (null) = all registered templates; an explicit [] is ambiguous (means "none"?) and
+        # almost always a mistake — reject it so the intent is never silently widened to "all".
+        if value is not None and not value:
+            raise ValueError("templates must be omitted (= all registered) or a non-empty list")
+        return value
+
 
 class DiscoveryConfig(BaseModel):
     """``discovery.yaml`` — the discovery universe: every research cell mapped to its series."""

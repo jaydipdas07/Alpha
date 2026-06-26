@@ -14,6 +14,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from alpha_core.core.enums import AssetClass, Venue
 from alpha_core.core.models import Bar
@@ -236,6 +237,45 @@ def test_an_unknown_template_fails_fast_before_any_backtest() -> None:
             backtester_for=lambda _cell: _FakeBacktester(),
             n_candidates=3,
         )
+
+
+def test_a_cell_with_no_data_is_skipped_before_proposing() -> None:
+    # cell_ready rejects the equity cell -> it is skipped WITHOUT proposing (its DSR trial count
+    # stays 0, so an un-ingested cell can't over-deflate a real edge later); the ready cell runs.
+    ledger = ProposalLedger()
+    strategist = Strategist(ledger, proposer=RandomProposer(seed=1))
+    cells = [
+        _cell(AssetClass.EQUITY, "empty", templates=["ma_crossover"]),
+        _cell(
+            AssetClass.CRYPTO,
+            "ok",
+            symbol="BTCUSDT",
+            venue=Venue.BINANCE,
+            interval_seconds=300,
+            templates=["ma_crossover"],
+        ),
+    ]
+    report = run_nightly_discovery(
+        cells,
+        strategist=strategist,
+        quant_analyst=QuantAnalyst(),
+        backtester_for=lambda _cell: _FakeBacktester(),
+        n_candidates=3,
+        cell_ready=lambda cell: cell.market is AssetClass.CRYPTO,
+    )
+    assert [r.market for r in report.reports] == [AssetClass.CRYPTO]  # only the ready cell ran
+    assert len(report.quarantined) == 1
+    skipped = report.quarantined[0]
+    assert (skipped.market, skipped.template) == (AssetClass.EQUITY, "*")
+    assert "skipped" in skipped.error
+    assert ledger.count(AssetClass.EQUITY, "ma_crossover", "empty") == 0  # never proposed
+    assert ledger.count(AssetClass.CRYPTO, "ma_crossover", "ok") >= 1  # the ready cell proposed
+
+
+def test_config_rejects_an_empty_templates_list() -> None:
+    # omit templates (= all registered) or give a non-empty list; [] is ambiguous, not "all".
+    with pytest.raises(ValidationError, match="non-empty list"):
+        _cell(AssetClass.EQUITY, "w", templates=[])
 
 
 # --- the per-cell engine-backtester factory + capital alignment ---------------------------------

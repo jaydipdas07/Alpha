@@ -34,6 +34,7 @@ from alpha_core.execution.costs import InstrumentMeta
 from alpha_core.helpers.config import (
     DiscoveryCellConfig,
     load_discovery_config,
+    load_rigor_config,
     load_yaml,
 )
 from alpha_core.research.cold_store_bars import ColdStoreBarsFor
@@ -51,6 +52,8 @@ ALL_TEMPLATES: tuple[str, ...] = tuple(sorted(TEMPLATES))
 # A per-cell backtester source: production builds an EngineBacktester over the cold store; tests
 # inject a fake. Injected (like ``run_discovery_cycle``'s backtester) so the loop stays pure.
 BacktesterFor = Callable[[DiscoveryCellConfig], Backtester]
+# A per-cell readiness check: does the cell have enough cold-store data to bother proposing?
+CellReady = Callable[[DiscoveryCellConfig], bool]
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,17 +103,33 @@ def run_nightly_discovery(
     quant_analyst: QuantAnalyst,
     backtester_for: BacktesterFor,
     n_candidates: int,
+    cell_ready: CellReady | None = None,
 ) -> NightlyReport:
     """Run a discovery cycle for every ``(cell, template)`` over the universe and collect survivors.
 
     The per-cell backtester is built by the injected ``backtester_for`` (production: a cold-store
     EngineBacktester; tests: a fake). A cycle that **raises** is quarantined and skipped — one bad
     combo never stalls the night — while an unknown template name fails fast up front (a config bug,
-    not a runtime condition)."""
+    not a runtime condition).
+
+    ``cell_ready`` (optional) is consulted once per cell *before* proposing: a cell it rejects (no /
+    too few cold-store bars yet) is skipped without proposing, so an un-ingested cell never burns
+    its DSR trial count night after night (which would over-deflate a real edge once data finally
+    lands). Omit it to run every cell; production wires it to a cold-store bar-count check."""
     _validate_templates(cells)
     reports: list[DiscoveryReport] = []
     quarantined: list[QuarantinedCell] = []
     for cell in cells:
+        if cell_ready is not None and not cell_ready(cell):
+            quarantined.append(
+                QuarantinedCell(
+                    cell.market,
+                    cell.window,
+                    "*",
+                    "skipped before proposing: no/insufficient cold-store data (trial count kept)",
+                )
+            )
+            continue
         backtester = backtester_for(cell)
         for template_name in _templates_for(cell):
             try:
@@ -162,19 +181,24 @@ def engine_backtester_for(
 def run_nightly_discovery_from_config(
     store: BarStore,
     *,
-    ledger_path: str | Path = ":memory:",
+    ledger_path: str | Path,
     proposer: Proposer | None = None,
     stress: bool = False,
 ) -> NightlyReport:
-    """Production entry point: load the discovery universe + risk + cost config, open the durable
-    proposal ledger, and run the nightly discovery over ``store`` (the cold store).
+    """Production entry point: load the discovery universe + risk + cost config and run the nightly
+    discovery over ``store`` (the cold store), recording trials in the **durable** proposal ledger
+    at ``ledger_path`` (required — the cross-run dedup lives there; an in-memory ledger loses it).
 
     The proposer defaults to a fresh (unseeded) ``RandomProposer`` so each night explores new
     configs — the ``ProposalLedger`` dedups any re-proposal idempotently across runs, so a repeat
-    is a no-op, never double-counting the DSR trial penalty. Pass a seeded proposer to reproduce."""
+    is a no-op, never double-counting the DSR trial penalty. Pass a seeded proposer to reproduce.
+    A cell with no/too few cold-store bars yet is skipped before proposing (so it doesn't burn the
+    cell's trial count nightly)."""
     cfg = load_discovery_config()
+    bars_for = ColdStoreBarsFor.from_config(store)
+    min_bars = 2 * load_rigor_config().cpcv.n_groups  # the rigor floor (as in EngineBacktester)
     backtester_for = engine_backtester_for(
-        ColdStoreBarsFor.from_config(store),
+        bars_for,
         risk_config=load_risk_config(),
         cost_config=load_yaml("costs.yaml"),
         stress=stress,
@@ -186,4 +210,5 @@ def run_nightly_discovery_from_config(
             quant_analyst=QuantAnalyst(),
             backtester_for=backtester_for,
             n_candidates=cfg.n_candidates,
+            cell_ready=lambda cell: len(bars_for(cell.market, cell.window)) >= min_bars,
         )
