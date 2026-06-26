@@ -7,10 +7,47 @@ from pathlib import Path
 
 import pytest
 
+from alpha_core.backtest.dsr import deflated_sharpe_ratio, expected_max_sharpe
 from alpha_core.core.enums import AssetClass
-from alpha_core.research.proposal_ledger import ProposalLedger, RecordResult
+from alpha_core.research.proposal_ledger import ProposalLedger, RecordResult, cell_key
 
 _CRYPTO = AssetClass.CRYPTO
+
+
+def test_cell_key_matches_pod_format() -> None:
+    assert cell_key(_CRYPTO, "ma_crossover", "2020-2023") == "crypto|ma_crossover|2020-2023"
+    assert cell_key(AssetClass.INDEX_OPTION, "x", "w") == "index_option|x|w"
+    with pytest.raises(ValueError, match="separator"):
+        cell_key(AssetClass.EQUITY, "a|b", "w")
+    with pytest.raises(ValueError, match="64 chars"):
+        cell_key(AssetClass.EQUITY, "f" * 65, "w")  # exceeds the pod column limit
+
+
+def test_dsr_penalty_is_invariant_to_unrelated_cells() -> None:
+    # 1a.GATE condition (R4, migrated from the retired TrialLedger): the DSR multiple-testing
+    # penalty for one cell depends only on that cell's own trial count, so hammering an unrelated
+    # cell never changes it.
+    returns = [0.1, 0.2, -0.05, 0.15, 0.0, 0.08, -0.1, 0.2] * 20
+    var = 0.25
+    cell_a = (_CRYPTO, "momentum", "2018-2021")
+    cell_b = (AssetClass.EQUITY, "mean_reversion", "2010-2015")
+    with ProposalLedger() as led:
+        for i in range(5):
+            led.record(*cell_a, f"a{i}")
+        n_a = led.count(*cell_a)
+        penalty_before = expected_max_sharpe(n_a, var)
+        dsr_before = deflated_sharpe_ratio(returns, n_trials=n_a, trial_sharpe_variance=var)
+
+        for i in range(100):  # an unrelated cell runs a large search
+            led.record(*cell_b, f"b{i}")
+
+        # cell A's count is untouched by the unrelated cell B, so its DSR penalty is too.
+        assert led.count(*cell_a) == n_a == 5
+        assert expected_max_sharpe(led.count(*cell_a), var) == penalty_before
+        assert (
+            deflated_sharpe_ratio(returns, n_trials=led.count(*cell_a), trial_sharpe_variance=var)
+            == dsr_before
+        )
 
 
 def test_recording_is_idempotent_so_the_count_cannot_be_inflated() -> None:
