@@ -98,6 +98,11 @@ class BarStore:
         self._root = Path(root)
         self._root.mkdir(parents=True, exist_ok=True)
 
+    @property
+    def root(self) -> Path:
+        """The store's on-disk root directory (read-only)."""
+        return self._root
+
     def _path(self, venue: Venue, symbol: str, interval_seconds: int) -> Path:
         return self._root / f"{venue.value}__{_safe(symbol)}__{interval_seconds}.parquet"
 

@@ -155,14 +155,21 @@ class DSRConfig(BaseModel):
     threshold: float = Field(gt=0, lt=1)  # minimum DSR (probability) to be significant
 
 
+class HoldoutConfig(BaseModel):
+    """Roll-forward locked holdout window (R5/R6, B1a.6)."""
+
+    model_config = ConfigDict(extra="forbid")
+    fraction: float = Field(gt=0, lt=1)  # most-recent fraction of the span locked away
+
+
 class RigorConfig(BaseModel):
-    """``rigor.yaml`` — the statistical-rigor tunables (CPCV embargo + PBO + DSR; holdout
-    cadence joins as later increments land)."""
+    """``rigor.yaml`` — the statistical-rigor tunables (CPCV embargo + PBO + DSR + holdout)."""
 
     model_config = ConfigDict(extra="forbid")
     cpcv: CPCVConfig
     pbo: PBOConfig
     dsr: DSRConfig
+    holdout: HoldoutConfig
 
 
 def load_rigor_config() -> RigorConfig:
