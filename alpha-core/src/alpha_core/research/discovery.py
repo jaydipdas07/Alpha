@@ -9,14 +9,17 @@ One cycle, for a single ``(market, family, window)`` cell:
    series — *injected* here via the ``Backtester`` protocol, so the loop stays pure and testable;
    the production backtester builds the strategy from the template and runs the engine on
    cold-store in-sample bars;
-3. the cell's trial returns set the DSR **deflation inputs** (the cumulative trial count + the
-   cross-trial Sharpe variance, R4) — computed by ``deflation_inputs`` over this run's trials;
+3. the DSR **deflation inputs** (R4): the cell's **cumulative** trial count (each proposal carries
+   its ledger-recorded ``trial_index``, so a second cycle over a durable cell can't under-penalize)
+   + the cross-trial Sharpe variance over this run's trials;
 4. the **quant-analyst** (B1b.2) adjudicates each candidate against that deflation → a verdict;
 5. the promoted candidates are the cycle's **survivors**.
 
-Scope: this deflates by *this run's* trials, which equals the cell's cumulative count on a fresh
-cell (the Done-when case). Carrying the cross-run cumulative variance (persisting each trial's
-score in the ledger) and wiring the real cold-store/engine backtester are the next increments.
+Scope: the deflation **count** is the cell's cumulative trial count (safe across re-runs), but the
+**variance** is over this run's trials only — carrying the cross-run cumulative variance
+(persisting each trial's score in the ledger) and wiring the real cold-store/engine backtester
+(which must also guarantee ``>= 2*n_groups`` bars per candidate and inject ``now``) are the next
+increments.
 
 Research-plane only; the loop never touches the holdout (the strategist is data-free and the
 backtester is handed in-sample bars only).
@@ -29,14 +32,13 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from alpha_core.core.enums import AssetClass
-from alpha_core.helpers.config import load_rigor_config
 from alpha_core.research.quant_analyst import (
     Assessment,
     QuantAnalyst,
     Verdict,
     deflation_inputs,
 )
-from alpha_core.research.strategist import Strategist, StrategistError, StrategyProposal
+from alpha_core.research.strategist import CellSaturated, Strategist, StrategyProposal
 
 
 class Backtester(Protocol):
@@ -72,25 +74,29 @@ def run_discovery_cycle(
     """Run one discovery cycle over the ``(market, template_name, window)`` cell and return the
     promote/reject/revise verdicts + the survivors. Proposes up to ``n_candidates`` originals
     (stopping early if the cell saturates), backtests each in-sample, then adjudicates them all
-    against the cell's DSR deflation."""
-    oos_fraction = load_rigor_config().quant_analyst.oos_fraction
+    against the cell's DSR deflation. An unknown template / invalid cell raises (a caller bug); a
+    saturated cell stops the loop and adjudicates what was found."""
+    oos_fraction = quant_analyst.oos_fraction  # one source -> deflation + assess share the slice
 
-    # 1-2. propose + backtest, until n_candidates originals or the cell saturates.
+    # 1-2. propose + backtest until n_candidates originals, or the cell saturates. Only a saturated
+    # cell is swallowed; unknown-template / invalid-cell errors propagate (caller bugs).
     trials: list[tuple[StrategyProposal, list[float]]] = []
     for _ in range(n_candidates):
         try:
             proposal = strategist.propose(template_name, market=market, window=window)
-        except StrategistError:
+        except CellSaturated:
             break  # the cell's bounded space is exhausted — adjudicate what we have
         trials.append((proposal, list(backtester.run(proposal))))
 
     if not trials:
         return DiscoveryReport(template_name, market, window, [], [])
 
-    # 3. the cell's deflation inputs (trial count + cross-trial Sharpe variance, R4); 4. adjudicate.
-    n_trials, variance = deflation_inputs(
-        [returns for _, returns in trials], oos_fraction=oos_fraction
-    )
+    # 3. the DSR deflation inputs (R4): the cell's CUMULATIVE trial count (each proposal carries its
+    # ledger-recorded trial_index, so a re-run over a durable cell can't under-penalize) + the
+    # cross-trial Sharpe variance over THIS run's trials (the cumulative variance is the next
+    # increment); 4. adjudicate each candidate against that deflation.
+    n_trials = max(proposal.trial_index for proposal, _ in trials)
+    _, variance = deflation_inputs([returns for _, returns in trials], oos_fraction=oos_fraction)
     assessments = [
         (
             proposal,

@@ -48,8 +48,13 @@ ParamValue = int | Decimal
 
 
 class StrategistError(RuntimeError):
-    """The strategist could not produce a valid, original proposal (unknown template, an invalid
-    cell, or the cell's bounded space is saturated — every proposal already recorded)."""
+    """The strategist could not produce a valid, original proposal — a *deterministic* cause:
+    an unknown template or an invalid cell (a caller bug, fix the inputs)."""
+
+
+class CellSaturated(StrategistError):
+    """The cell's bounded space is exhausted — every proposal the proposer makes is already
+    recorded. A *resource* condition (not a caller bug): the loop stops proposing here."""
 
 
 # --- the bounded param space (the vetted, whitelisted ranges the strategist may explore) -------
@@ -266,7 +271,7 @@ class Strategist:
             return StrategyProposal(
                 template_name, params, market, window, result.count, fingerprint
             )
-        raise StrategistError(
+        raise CellSaturated(
             f"no original valid proposal for {template_name!r} within {self._max_attempts} "
             "attempts (the cell is saturated)"
         )
