@@ -142,6 +142,33 @@ def test_seal_empty_dataset(tmp_path: Path) -> None:
     assert seal_dataset([], research=research, holdout=holdout, fraction=0.2) is None
 
 
+def test_reseal_rolls_forward_without_contaminating_the_holdout(tmp_path: Path) -> None:
+    research = BarStore(tmp_path / "cold")
+    holdout = HoldoutStore(tmp_path / "holdout")
+    w1 = seal_dataset(_bars(100), research=research, holdout=holdout, fraction=0.2)
+    w2 = seal_dataset(_bars(150), research=research, holdout=holdout, fraction=0.2)  # data grew
+    assert w1 is not None and w2 is not None and w2.start > w1.start  # window rolled forward
+
+    locked = holdout.read_holdout(symbol=SYM, venue=VENUE, interval_seconds=INTERVAL_S)
+    assert locked
+    assert all(b.start >= w2.start for b in locked)  # ONLY the current window
+    assert not any(b.start < w2.start for b in locked)  # no stale bars from w1's window
+
+    cold = research.read_bars(symbol=SYM, venue=VENUE, interval_seconds=INTERVAL_S)
+    assert any(w1.start <= b.start < w2.start for b in cold)  # released bars promoted to research
+    assert all(
+        b.start < w2.start for b in cold
+    )  # the current holdout never leaks into the cold store
+    assert not ({b.start for b in cold} & {b.start for b in locked})  # no bar lives in both stores
+
+    cw = holdout.current_window()  # holdout_window_version recorded + rolled
+    assert cw is not None and cw.version == w2.version and w2.version != w1.version
+
+
+def test_current_window_is_none_before_any_seal(tmp_path: Path) -> None:
+    assert HoldoutStore(tmp_path / "holdout").current_window() is None
+
+
 # --- config --------------------------------------------------------------------
 
 

@@ -21,6 +21,7 @@ Research-plane only (the holdout never reaches the worker); it builds on the col
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -40,8 +41,11 @@ class HoldoutWindow:
     version: str  # holdout_window_version: a deterministic id of this locked window
 
     def contains(self, ts: datetime) -> bool:
-        """True iff ``ts`` falls in the locked window (and so must never be researched)."""
-        return self.start <= ts <= self.end
+        """True iff ``ts`` is in the locked tail (at or after ``start``) and so must never
+        be researched — the single definition ``split_research_holdout`` uses. ``end``
+        records the data extent at lock time (and feeds ``version``); a bar arriving later
+        is still holdout (it is even more recent)."""
+        return ts >= self.start
 
 
 def _version(start: datetime, end: datetime) -> str:
@@ -71,7 +75,7 @@ def split_research_holdout(
     research: list[Bar] = []
     holdout: list[Bar] = []
     for bar in bars:
-        (holdout if bar.start >= window.start else research).append(bar)
+        (holdout if window.contains(bar.start) else research).append(bar)
     return research, holdout
 
 
@@ -89,9 +93,40 @@ class HoldoutStore:
     def root(self) -> Path:
         return self._store.root
 
-    def seal(self, bars: Sequence[Bar]) -> int:
-        """Lock ``bars`` into the isolated store (idempotent). Returns bars on disk."""
+    def _window_path(self) -> Path:
+        return self.root / "_window.json"
+
+    def replace(self, bars: Sequence[Bar], window: HoldoutWindow) -> int:
+        """**Rebuild** the isolated store to hold *exactly* the current locked window and
+        record its ``holdout_window_version`` (R5). The holdout is the recent tail, which
+        rolls forward and is **not** monotonic — so prior windows' bars are cleared, never
+        merged (a re-seal must not leave a stale bar that contaminates the one-shot gate).
+        Expects the current window's full set of bars across every series. Returns count."""
+        for parquet in self.root.glob("*.parquet"):
+            parquet.unlink()
+        self._window_path().write_text(
+            json.dumps(
+                {
+                    "start": window.start.isoformat(),
+                    "end": window.end.isoformat(),
+                    "version": window.version,
+                }
+            )
+        )
         return self._store.write_bars(bars)
+
+    def current_window(self) -> HoldoutWindow | None:
+        """The window locked at the last :meth:`replace` (its ``holdout_window_version``),
+        or ``None`` if nothing has been sealed yet."""
+        path = self._window_path()
+        if not path.exists():
+            return None
+        d = json.loads(path.read_text())
+        return HoldoutWindow(
+            start=datetime.fromisoformat(str(d["start"])),
+            end=datetime.fromisoformat(str(d["end"])),
+            version=str(d["version"]),
+        )
 
     def read_holdout(self, *, symbol: str, venue: Venue, interval_seconds: int) -> list[Bar]:
         """Read the locked holdout — **the one-shot final gate path only**. Never call
@@ -114,15 +149,21 @@ def _assert_disjoint(research_root: Path, holdout_root: Path) -> None:
 def seal_dataset(
     bars: Sequence[Bar], *, research: BarStore, holdout: HoldoutStore, fraction: float
 ) -> HoldoutWindow | None:
-    """Split ``bars`` by the roll-forward holdout window and persist the research bars to
-    the cold store and the holdout bars to the isolated store. The cold store ends up with
-    **no** holdout bars — the structural TEST-3 guarantee. Returns the locked window (R5),
-    or ``None`` for empty input. Raises if the two store roots are not disjoint."""
+    """Partition ``bars`` by the roll-forward window: research bars → the cold store,
+    holdout bars → the isolated store. The cold store ends up with **no** holdout bars
+    (the structural TEST-3 guarantee). Returns the locked window (R5), or ``None`` for
+    empty input. Raises if the two store roots are not disjoint.
+
+    Pass the **full canonical dataset** each call (it is the partition's source of truth):
+    research grows monotonically as the window rolls forward (the cold store merges
+    correctly), while the holdout store is **rebuilt** to exactly the current window — so a
+    bar that leaves the window is promoted into the cold store and removed from the holdout,
+    never left stale in both."""
     _assert_disjoint(research.root, holdout.root)
     window = compute_holdout_window([b.start for b in bars], fraction=fraction)
     if window is None:
         return None
     research_bars, holdout_bars = split_research_holdout(bars, window)
     research.write_bars(research_bars)
-    holdout.seal(holdout_bars)
+    holdout.replace(holdout_bars, window)
     return window
