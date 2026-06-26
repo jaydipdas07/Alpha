@@ -235,6 +235,11 @@ class DiscoveryCellConfig(BaseModel):
     symbol: str = Field(min_length=1)  # the cold-store series symbol (e.g. "BTCUSDT")
     venue: Venue  # the series venue
     interval_seconds: int = Field(gt=0)  # the bar interval
+    # discovery-run params (B1b.4): the backtest capital at this cell's market scale (crypto $ vs
+    # equity ₹) — the per-cell risk base_capital is aligned to it so limits scale with the cell;
+    # and which vetted templates to search here (omit / null = all registered templates).
+    starting_cash: Decimal = Field(default=Decimal("1000000"), gt=0)
+    templates: list[str] | None = None
 
     @field_validator("window")
     @classmethod
@@ -244,12 +249,22 @@ class DiscoveryCellConfig(BaseModel):
             raise ValueError("window must not contain the '|' cell-key separator")
         return value
 
+    @field_validator("templates")
+    @classmethod
+    def _templates_omitted_or_non_empty(cls, value: list[str] | None) -> list[str] | None:
+        # omit (null) = all registered templates; an explicit [] is ambiguous (means "none"?) and
+        # almost always a mistake — reject it so the intent is never silently widened to "all".
+        if value is not None and not value:
+            raise ValueError("templates must be omitted (= all registered) or a non-empty list")
+        return value
+
 
 class DiscoveryConfig(BaseModel):
     """``discovery.yaml`` — the discovery universe: every research cell mapped to its series."""
 
     model_config = ConfigDict(extra="forbid")
     cells: list[DiscoveryCellConfig] = Field(min_length=1)  # an empty universe is a config error
+    n_candidates: int = Field(default=8, gt=1)  # proposals per (cell, template) discovery cycle
 
     @model_validator(mode="after")
     def _unique_cells(self) -> Self:
