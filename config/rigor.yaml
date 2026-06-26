@@ -66,10 +66,16 @@ calibration:
   edge_drift: 0.15          # the planted edge's per-bar mean (annualized Sharpe ~2.4 — realistic)
   oos_fraction: 0.5         # the out-of-sample slice the gate judges on (50/50 IS/OOS split)
 
-# Quant-analyst verdict (B1b.2) — composes the pre-screen + DSR + CPCV/PBO primitives into a
-# promote / reject / revise call. A candidate that is significant (clears the DSR gate) but holds
-# on too few combinatorial-purged folds is "fragile" -> revise rather than promote.
+# Quant-analyst verdict (B1b.2) — composes the DSR significance gate with a coarse OOS-edge
+# screen, a fold-consistency (regime) check, and an optional cell-level PBO into a
+# promote / reject / revise call. The DSR (dsr.threshold, B1a.9-calibrated) does the promote-work.
 quant_analyst:
-  cpcv_robustness_min: 0.6  # min fraction of CPCV test folds with positive Sharpe to promote
+  min_oos_sharpe: 0.0        # coarse out-of-sample edge screen: OOS Sharpe <= this => no edge =>
+                             # REJECT (also how a high-IS/poor-OOS overfit dies). Its OWN threshold,
+                             # NOT the B1a.8 vectorbt pre-screen (which is a windowed walk-forward).
+  fold_consistency_min: 0.6  # min fraction of the combinatorial test folds with positive Sharpe to
+                             # promote; below it a significant edge is "fragile" -> REVISE. A
+                             # judgment call, NOT a B1a.9-calibrated threshold like dsr.threshold.
+  oos_fraction: 0.5          # out-of-sample slice the verdict judges (matches calibration.oos_fraction)
 
 

@@ -191,10 +191,12 @@ class CalibrationConfig(BaseModel):
 
 
 class QuantAnalystConfig(BaseModel):
-    """Quant-analyst verdict thresholds (R7, B1b.2) — the promote/reject/revise call."""
+    """Quant-analyst verdict thresholds (B1b.2) — the promote/reject/revise call."""
 
     model_config = ConfigDict(extra="forbid")
-    cpcv_robustness_min: float = Field(ge=0, le=1)  # min fraction of positive CPCV folds to promote
+    min_oos_sharpe: float  # coarse OOS-edge screen: reject a candidate whose OOS Sharpe is <= this
+    fold_consistency_min: float = Field(ge=0, le=1)  # min positive-fold fraction to promote
+    oos_fraction: float = Field(gt=0, lt=1)  # the out-of-sample slice the verdict judges
 
 
 class RigorConfig(BaseModel):
