@@ -20,3 +20,10 @@ cpcv:
 pbo:
   n_splits: 10         # S (must be even)  ->  C(10,5) = 252 partitions
   threshold: 0.5       # PBO above this flags selection overfitting (reject)
+
+# Deflated Sharpe Ratio (DSR) — Bailey & López de Prado (2014). A candidate's observed
+# Sharpe is deflated by the Sharpe expected as the best of `cumulative_trials` (the
+# per-cell count from the keyed trial ledger, R4); DSR is the probability the edge is
+# real after that deflation. A candidate must clear `threshold` to be significant.
+dsr:
+  threshold: 0.95      # minimum DSR (probability) for a significant, non-overfit edge
