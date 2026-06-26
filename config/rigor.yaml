@@ -26,7 +26,11 @@ pbo:
 # per-cell count from the keyed trial ledger, R4); DSR is the probability the edge is
 # real after that deflation. A candidate must clear `threshold` to be significant.
 dsr:
-  threshold: 0.95      # minimum DSR (probability) for a significant, non-overfit edge
+  threshold: 0.92      # minimum DSR (probability) for a significant edge after deflation —
+                       # loosened from 0.95 (B1a.9 calibration) so a realistic strong edge clears
+                       # the false-reject bound. Picked at the HIGH (safe) end of the feasible
+                       # [0.90, 0.92] window: false-promote (the dangerous error) stays 0 here,
+                       # while 0.90 lets the worst noise candidate (DSR 0.909) slip through.
 
 # Roll-forward locked holdout (R5) in the no-ACL store (R6, TEST-3). The most recent
 # `fraction` of the data span is locked into a physically separate store the research
@@ -49,5 +53,17 @@ prescreen:
 cpcv_budget:
   budget_seconds: 28800   # 8h — a night's compute budget
   pool_size: 4            # parallel CPCV workers (processes in production)
+
+# Population-calibration error-rate gate (R14) — the [You]-ratified Tier-2 thresholds the rigor
+# gate must meet against control populations before the strategist is trusted (the Phase-1b gate).
+# The dangerous error is promoting noise/overfit, so its bound is strict; rejecting a real edge
+# is the cheaper error, so its bound is looser.
+calibration:
+  false_promote_max: 0.05   # max rate of promoting a noise/overfit control
+  false_reject_max: 0.25    # max rate of rejecting a genuine planted edge
+  n_candidates: 40          # candidates per synthetic population
+  n_obs: 2400               # return-series length — a realistic ~5y daily OOS evaluation horizon
+  edge_drift: 0.15          # the planted edge's per-bar mean (annualized Sharpe ~2.4 — realistic)
+  oos_fraction: 0.5         # the out-of-sample slice the gate judges on (50/50 IS/OOS split)
 
 

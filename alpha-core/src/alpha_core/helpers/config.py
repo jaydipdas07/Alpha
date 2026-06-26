@@ -178,9 +178,21 @@ class CpcvBudgetConfig(BaseModel):
     pool_size: int = Field(gt=0)  # parallel CPCV workers
 
 
+class CalibrationConfig(BaseModel):
+    """Population-calibration error-rate gate (R14, B1a.9) — the [You]-ratified Tier-2 params."""
+
+    model_config = ConfigDict(extra="forbid")
+    false_promote_max: float = Field(gt=0, lt=1)  # max rate of promoting noise/overfit
+    false_reject_max: float = Field(gt=0, lt=1)  # max rate of rejecting a real edge
+    n_candidates: int = Field(gt=1)  # candidates per synthetic population
+    n_obs: int = Field(gt=1)  # return-series length per candidate
+    edge_drift: float = Field(gt=0)  # the planted edge's per-bar mean
+    oos_fraction: float = Field(gt=0, lt=1)  # the OOS slice the gate judges on
+
+
 class RigorConfig(BaseModel):
     """``rigor.yaml`` — the statistical-rigor tunables (CPCV embargo + PBO + DSR + holdout +
-    the vectorbt pre-screen + the CPCV compute budget)."""
+    the vectorbt pre-screen + the CPCV compute budget + population calibration)."""
 
     model_config = ConfigDict(extra="forbid")
     cpcv: CPCVConfig
@@ -189,6 +201,7 @@ class RigorConfig(BaseModel):
     holdout: HoldoutConfig
     prescreen: PrescreenConfig
     cpcv_budget: CpcvBudgetConfig
+    calibration: CalibrationConfig
 
 
 def load_rigor_config() -> RigorConfig:
