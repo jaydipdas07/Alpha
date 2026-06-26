@@ -69,24 +69,56 @@ def _edge_population(t: int, n: int, seed: int, drift: float) -> list[list[float
     return [[rng.gauss(drift if i == 0 else 0.0, 1.0) for i in range(n)] for _ in range(t)]
 
 
+def _reversing_population(t: int, n: int, seed: int, signal: float = 2.0) -> list[list[float]]:
+    """A genuinely overfit population: each trial's edge reverses sign at the midpoint
+    (the amplitude is spread across trials), so the in-sample-best trial is the
+    out-of-sample-worst. Unlike pure noise — which is *no-skill* (PBO ~ 0.5) — this is
+    robustly high-PBO for any seed, the textbook overfit a rigor gate must catch."""
+    rng = random.Random(seed)
+    half = t // 2
+    return [
+        [
+            (1.0 if ti < half else -1.0) * signal * (i - (n - 1) / 2) + rng.gauss(0.0, 1.0)
+            for i in range(n)
+        ]
+        for ti in range(t)
+    ]
+
+
 def test_pbo_flags_a_known_overfit_control() -> None:
     cfg = load_rigor_config()
-    overfit = probability_of_backtest_overfitting(
-        _noise_population(200, 12, seed=42), n_splits=cfg.pbo.n_splits
-    )
     clean = probability_of_backtest_overfitting(
-        _edge_population(200, 12, seed=7, drift=0.6), n_splits=cfg.pbo.n_splits
+        _edge_population(120, 10, seed=7, drift=0.8), n_splits=cfg.pbo.n_splits
     )
-    # Picking the in-sample-best of many pure-noise trials is the textbook overfit:
-    # that winner is almost always below-median out-of-sample -> high PBO, flagged.
-    assert overfit.is_overfit(cfg.pbo.threshold) is True
-    assert overfit.pbo > 0.7
     # A single genuine edge generalizes -> in-sample-best stays OOS-best -> PBO ~ 0.
     assert clean.is_overfit(cfg.pbo.threshold) is False
     assert clean.pbo < 0.2
-    assert overfit.pbo > clean.pbo
-    assert overfit.n_paths == clean.n_paths == 252  # C(10,5)
-    assert overfit.n_trials == 12
+    # An overfit population (edge reverses out-of-sample) is flagged. Checked across
+    # several seeds so the pass is the *method*, never a cherry-picked draw.
+    for seed in (1, 2, 3):
+        overfit = probability_of_backtest_overfitting(
+            _reversing_population(120, 10, seed=seed), n_splits=cfg.pbo.n_splits
+        )
+        assert overfit.is_overfit(cfg.pbo.threshold) is True
+        assert overfit.pbo > 0.7
+        assert overfit.pbo > clean.pbo
+        assert overfit.n_paths == 252  # C(10,5)
+        assert overfit.n_trials == 10
+
+
+def test_pbo_is_calibrated_no_skill_for_pure_noise() -> None:
+    """Independent pure-noise trials are *no-skill*, not overfit: the in-sample-best
+    has a uniform out-of-sample rank, so PBO centres on ~0.5 (a single noise draw is
+    high-variance, hence the mean over seeds). This is the honest baseline the overfit
+    and edge controls are flagged against."""
+    cfg = load_rigor_config()
+    pbos = [
+        probability_of_backtest_overfitting(
+            _noise_population(120, 10, seed=s), n_splits=cfg.pbo.n_splits
+        ).pbo
+        for s in range(20)
+    ]
+    assert 0.35 <= sum(pbos) / len(pbos) <= 0.65  # ~0.5: selection no better than chance
 
 
 def test_pbo_is_deterministic() -> None:
