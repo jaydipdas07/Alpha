@@ -125,7 +125,12 @@ def hash_result(result: BacktestResult) -> str:
 @dataclass(frozen=True, slots=True)
 class ReproRecord:
     """The provenance that reproduces a backtest bit-for-bit (B1a.7) — every result-affecting
-    input ``run_backtest`` takes."""
+    input ``run_backtest`` takes.
+
+    Strategies are pinned by ``strategy_id`` + ``strategy_params`` (the config-driven
+    ``strategies/<name>.yaml`` convention) + the seed, not by their source code — so editing a
+    custom ``Strategy``'s logic *without* bumping its id/params is recorded as the same run
+    (and would surface later as a :class:`ReproLedger` reproducibility violation)."""
 
     engine_version: str
     dataset_hash: str
