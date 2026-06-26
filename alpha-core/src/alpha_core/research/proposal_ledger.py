@@ -9,9 +9,9 @@ fingerprints** recorded for it, so recording the same proposal twice is a no-op.
 counter to drift from the fingerprint set — they are the same thing.
 
 Keyed by ``(market, family, window)`` (the same cell as the trial ledger, via ``cell_key``), so a
-cell's count is invariant to proposals in any *other* cell. SQLite (stdlib), WAL, one atomic
-upsert per record — safe across the discovery pool's processes. No money, no clock — just the
-durable set of what's been tried.
+cell's count is invariant to proposals in any *other* cell. SQLite (stdlib), WAL, one transaction
+per record (an idempotent insert + the authoritative count) — safe across the discovery pool's
+processes. No money, no clock — just the durable set of what's been tried.
 
 Wiring (B1b.3b): the ``strategist`` will ``record`` each candidate here (originality via
 ``is_new``, the trial index via ``count``) instead of an in-memory ``seen`` + a bare counter, and
@@ -59,6 +59,8 @@ class ProposalLedger:
         a fingerprint already present is a no-op (``is_new=False``) and the count is unchanged, so a
         re-proposed config never inflates the trial count. Insert + count are one transaction."""
         key = cell_key(market, family, window)
+        # write-first: the INSERT grabs SQLite's write lock eagerly (like BEGIN IMMEDIATE), so the
+        # count() below reads inside the same locked transaction — no read-modify-write race.
         with self._conn:  # one transaction: idempotent insert, then the authoritative count
             cursor = self._conn.execute(
                 "INSERT OR IGNORE INTO proposals (cell_key, market, family, window, fingerprint) "
@@ -90,7 +92,9 @@ class ProposalLedger:
         return int(row[0])
 
     def cells(self) -> list[CellCount]:
-        """Every recorded cell with its trial count (for sync to the pod / inspection)."""
+        """Every recorded cell with its trial count (for sync to the pod / inspection). For a
+        proposal cell, ``CellCount.cumulative_trials`` *is* ``count(distinct fingerprints)`` — there
+        is no separate incrementing counter."""
         rows = self._conn.execute(
             "SELECT market, family, window, count(*) FROM proposals "
             "GROUP BY cell_key, market, family, window ORDER BY cell_key"

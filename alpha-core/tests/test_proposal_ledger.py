@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
 
 from alpha_core.core.enums import AssetClass
-from alpha_core.research.proposal_ledger import ProposalLedger
+from alpha_core.research.proposal_ledger import ProposalLedger, RecordResult
 
 _CRYPTO = AssetClass.CRYPTO
 
@@ -17,7 +18,7 @@ def test_recording_is_idempotent_so_the_count_cannot_be_inflated() -> None:
     # deflates by can never be double-counted by a loop that re-proposes a config.
     with ProposalLedger() as ledger:
         first = ledger.record(_CRYPTO, "rsi_bollinger", "2020-2024", "abc123")
-        assert first == type(first)(is_new=True, count=1)
+        assert first == RecordResult(is_new=True, count=1)
         second = ledger.record(_CRYPTO, "rsi_bollinger", "2020-2024", "abc123")
         assert second.is_new is False
         assert second.count == 1  # unchanged — not 2
@@ -55,6 +56,43 @@ def test_originality_persists_across_instances(tmp_path: Path) -> None:
         assert reopened.seen(_CRYPTO, "vwap_reversion", "w") == {"fp1", "fp2"}
         assert reopened.count(_CRYPTO, "vwap_reversion", "w") == 2
         assert reopened.record(_CRYPTO, "vwap_reversion", "w", "fp1").is_new is False  # still seen
+
+
+def test_same_fingerprint_in_two_cells_is_counted_once_each() -> None:
+    # the composite PK (cell_key, fingerprint): the same fingerprint can live in two cells, counted
+    # once in each -> proves cell_key is genuinely part of the key, not just the fingerprint.
+    with ProposalLedger() as ledger:
+        assert ledger.record(_CRYPTO, "ma_crossover", "w", "x").is_new is True
+        assert ledger.record(AssetClass.EQUITY, "ma_crossover", "w", "x").is_new is True
+        assert ledger.count(_CRYPTO, "ma_crossover", "w") == 1
+        assert ledger.count(AssetClass.EQUITY, "ma_crossover", "w") == 1
+
+
+def test_concurrent_records_are_atomic(tmp_path: Path) -> None:
+    # the "safe across processes" guarantee: 8 threads (each its own connection on one WAL file)
+    # race to record the SAME 50 fingerprints; is_new must fire exactly once per fingerprint and
+    # the final count must be exactly the distinct set -- no double-counting under contention.
+    db = tmp_path / "proposals.db"
+    fingerprints = [f"fp{i}" for i in range(50)]
+    new_count = 0
+    guard = threading.Lock()
+
+    def worker() -> None:
+        nonlocal new_count
+        with ProposalLedger(db) as ledger:
+            for fp in fingerprints:
+                if ledger.record(_CRYPTO, "ma_crossover", "w", fp).is_new:
+                    with guard:
+                        new_count += 1
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    with ProposalLedger(db) as ledger:
+        assert ledger.count(_CRYPTO, "ma_crossover", "w") == 50  # exactly the distinct set
+    assert new_count == 50  # is_new fired once per fingerprint despite 8x contention
 
 
 def test_unseen_cell_is_empty() -> None:
