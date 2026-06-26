@@ -1,0 +1,26 @@
+# config/discovery.yaml — the discovery universe (B1b.3d).
+#
+# Maps each research *cell* (market, window) to the cold-store series the discovery
+# loop backtests it on: a (symbol, venue, interval_seconds) the `ColdStoreBarsFor`
+# adapter resolves and reads back as in-sample bars.
+#
+# IN-SAMPLE ONLY (TEST-3 / R6): the adapter reads the no-ACL research cold store,
+# which `seal_dataset` has already stripped of the rolled-forward holdout (the holdout
+# bars live in the separate, gate-only HoldoutStore). Isolation is *structural* — the
+# adapter is a pass-through; it never sees the holdout because the cold store doesn't
+# hold it. So these entries name a series, never a holdout boundary.
+#
+# `window` is the cell's label (also the proposal-ledger cell key, <= 64 chars, no "|").
+# `venue`/`market` must be valid Venue/AssetClass enum values. Seeded with the two
+# series currently in the cold store (B1a.1b); add a row per series as data lands.
+cells:
+  - market: CRYPTO
+    window: "btcusdt-5m"
+    symbol: "BTCUSDT"
+    venue: BINANCE
+    interval_seconds: 300
+  - market: EQUITY
+    window: "reliance-1d"
+    symbol: "NSE:RELIANCE"
+    venue: NSE
+    interval_seconds: 86400
