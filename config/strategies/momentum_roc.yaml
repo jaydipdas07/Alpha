@@ -1,0 +1,5 @@
+# config/strategies/momentum_roc.yaml — Momentum/ROC trend-following (R7, ADR 0011).
+strategy_id: momentum_roc
+period: 12          # ROC lookback in bars
+threshold_pct: "2"  # |ROC%| beyond this triggers entry
+quantity: "1"
