@@ -13,6 +13,7 @@ from alpha_core.core.enums import AssetClass, OrderType, Side, Venue
 from alpha_core.core.interfaces import Strategy
 from alpha_core.core.models import Bar, Signal, TargetExposure, Tick
 from alpha_core.execution.costs import InstrumentMeta
+from alpha_core.execution.funding import FundingConfig
 from alpha_core.helpers.config import PortfolioConfig
 from alpha_core.portfolio.construction import WeightAllocator
 from alpha_core.portfolio.rebalance import RebalanceOrder, rebalance_orders
@@ -327,3 +328,122 @@ async def test_portfolio_backtest_empty_bars() -> None:
     )
     assert result.stats.num_fills == 0
     assert result.equity_curve == []
+
+
+# --- perp funding on the portfolio path (R13) ----------------------------------
+
+CRYPTO_SYM = "BTCUSDT"
+CRYPTO_START = datetime(2026, 6, 26, tzinfo=UTC)  # UTC midnight, on the 8h funding grid
+ONE_HOUR = timedelta(hours=1)
+
+
+class _BuyHoldCrypto(Strategy):
+    """Scored BUY on the first bar, then hold — so the perp accrues funding (R13)."""
+
+    def __init__(self) -> None:
+        self._opened = False
+
+    def on_bar(self, bar: Bar) -> Sequence[Signal]:
+        if self._opened:
+            return []
+        self._opened = True
+        return [
+            Signal(
+                strategy_id="hold",
+                symbol=bar.symbol,
+                asset_class=AssetClass.CRYPTO,
+                side=Side.BUY,
+                quantity=Decimal("1"),
+                order_type=OrderType.MARKET,
+                created_at=bar.start + bar.interval,
+                score=Decimal("1"),
+            )
+        ]
+
+    def on_tick(self, tick: Tick) -> Sequence[Signal]:
+        return []
+
+
+def _crypto_flat_bars(hours: int) -> list[Bar]:
+    px = Decimal("30000")  # flat -> no churn, so funding is the only P&L driver
+    return [
+        Bar(
+            symbol=CRYPTO_SYM,
+            venue=Venue.BINANCE,
+            asset_class=AssetClass.CRYPTO,
+            start=CRYPTO_START + i * ONE_HOUR,
+            interval=ONE_HOUR,
+            open=px,
+            high=px,
+            low=px,
+            close=px,
+            volume=Decimal("1"),
+        )
+        for i in range(hours)
+    ]
+
+
+def _crypto_instruments() -> dict[str, InstrumentMeta]:
+    return {CRYPTO_SYM: InstrumentMeta(asset_class=AssetClass.CRYPTO)}
+
+
+@pytest.mark.asyncio
+async def test_portfolio_funding_accrues_on_held_perp() -> None:
+    """A perp held through the *portfolio* runner accrues funding (R13) — the same
+    rule as the single-strategy run_backtest — and it is opt-in (None = unchanged)."""
+
+    async def _run(funding: FundingConfig | None) -> BacktestResult:
+        return await run_portfolio_backtest(
+            bars=_crypto_flat_bars(48),  # 2 days -> crosses six 8h funding boundaries
+            strategies=[_BuyHoldCrypto()],
+            allocator=WeightAllocator(_portfolio_cfg()),
+            portfolio_config=_portfolio_cfg(),
+            instruments=_crypto_instruments(),
+            risk_config=_risk(),
+            cost_config=COST_CONFIG,
+            venue=Venue.BINANCE,
+            starting_cash=Decimal("1000000"),
+            funding=funding,
+        )
+
+    funded = await _run(FundingConfig(interval_hours=8, rate=Decimal("0.0001")))
+    assert funded.stats.funding_paid < 0  # a held long pays funding (rate > 0)
+    assert not funded.halted  # a light rate doesn't trip the gate
+
+    unfunded = await _run(None)
+    assert unfunded.stats.funding_paid == 0  # opt-in: None leaves the path unchanged
+
+
+@pytest.mark.asyncio
+async def test_portfolio_funding_bleed_trips_the_gate() -> None:
+    """A funding-bleed on the portfolio path feeds the daily-loss kill gate (R13),
+    exactly as on the single-strategy path — so portfolio rigor is honest on perps."""
+    risk = RiskConfig.model_validate(
+        {
+            "base_capital": "1000000",
+            "limits": {
+                "max_gross_exposure": "1.00",
+                "max_position_per_instrument": "0.60",
+                "max_concurrent_positions": 10,
+                "max_order_value": "0.60",
+                "max_orders_per_minute": 100000,
+                "max_daily_loss_halt": "0.02",  # tight -> the funding-bleed trips it
+                "max_loss_per_trade": "1.00",
+                "per_segment_exposure_cap": "1.00",
+            },
+        }
+    )
+    result = await run_portfolio_backtest(
+        bars=_crypto_flat_bars(48),
+        strategies=[_BuyHoldCrypto()],
+        allocator=WeightAllocator(_portfolio_cfg()),
+        portfolio_config=_portfolio_cfg(),
+        instruments=_crypto_instruments(),
+        risk_config=risk,
+        cost_config=COST_CONFIG,
+        venue=Venue.BINANCE,
+        starting_cash=Decimal("1000000"),
+        funding=FundingConfig(interval_hours=8, rate=Decimal("0.05")),
+    )
+    assert result.halted  # the funding-bleed tripped the daily-loss kill (R13)
+    assert result.stats.funding_paid < 0

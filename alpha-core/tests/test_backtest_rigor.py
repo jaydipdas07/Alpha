@@ -6,6 +6,8 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
+
 from alpha_core.backtest.rigor import audit_no_lookahead, stress_gate, walk_forward
 from alpha_core.core.enums import AssetClass, OrderType, Side, Venue
 from alpha_core.core.interfaces import Strategy
@@ -254,3 +256,40 @@ async def test_edge_robust_requires_walk_forward_stability() -> None:
     assert report.stress.survived is True  # profitable overall, survives 2x
     assert report.walk_forward_stable is False  # the middle window loses
     assert report.edge_robust is False  # ... so the gate must reject it
+
+
+# --- input-guard edge cases ----------------------------------------------------
+
+
+def test_audit_too_few_bars_passes_vacuously() -> None:
+    # Fewer than 2 bars: there is no future tail to perturb, so the audit passes
+    # by construction (a guard, not a verdict on the strategy).
+    report = audit_no_lookahead(lambda _b: PlaceholderStrategy(), _bars(["100"]))
+    assert report.passed is True
+    assert "too few bars" in report.detail
+
+
+async def test_walk_forward_rejects_non_positive_windows() -> None:
+    with pytest.raises(ValueError, match="n_windows must be >= 1"):
+        await walk_forward(
+            bars=_bars([str(100 + i) for i in range(4)]),
+            make_strategy=lambda _b: PlaceholderStrategy(quantity=Decimal("10")),
+            instruments=_instruments(),
+            risk_config=_risk(),
+            cost_config=COST_CONFIG,
+            n_windows=0,
+        )
+
+
+async def test_walk_forward_stops_when_a_window_is_empty() -> None:
+    # 2 bars across 3 windows: window size floors to 1, so windows 0 and 1 each get
+    # a bar and the 3rd is empty -> the loop breaks early and returns 2 results.
+    results = await walk_forward(
+        bars=_bars(["100", "101"]),
+        make_strategy=lambda _b: PlaceholderStrategy(quantity=Decimal("10")),
+        instruments=_instruments(),
+        risk_config=_risk(),
+        cost_config=COST_CONFIG,
+        n_windows=3,
+    )
+    assert len(results) == 2

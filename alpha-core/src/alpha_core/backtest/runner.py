@@ -229,6 +229,7 @@ async def run_portfolio_backtest(
     starting_cash: Decimal = Decimal("1000000"),
     stress: bool = False,
     overlay: PortfolioRiskOverlay | None = None,
+    funding: FundingConfig | None = None,
 ) -> BacktestResult:
     """Multi-instrument, multi-strategy backtest through the pure allocator (R5).
 
@@ -238,9 +239,11 @@ async def run_portfolio_backtest(
     Universe→Alpha→Portfolio→Risk→Execution stages all run through the SAME
     OMS/risk/cost path as live (ADR 0001), so a backtest and a live run agree.
 
-    NB: perp funding (R13) is NOT accrued here yet — that lands only in the
-    single-strategy ``run_backtest``; ``stats.funding_paid`` is 0 on this path.
-    TODO: thread funding through the portfolio rebalance loop before running perps here.
+    With ``funding`` set, perp funding (R13) accrues on held crypto positions at
+    each funding boundary a cross-section crosses — the SAME rule as the single-
+    strategy ``run_backtest`` (booked into P&L AND the daily-loss kill gate), so
+    portfolio rigor is correct for perps. ``funding=None`` leaves this path
+    unchanged (``stats.funding_paid`` stays 0).
     """
     broker = PaperBroker(
         cost_model=CostModel(cost_config),
@@ -256,6 +259,15 @@ async def run_portfolio_backtest(
     oms = OMS(adapter=broker, risk=risk, store=store, venue=venue, clock=clock)
     engines = [StrategyEngine(s) for s in strategies]
     book = SignalBook()
+
+    # Perp funding boundaries (R13): aligned to UTC-midnight multiples of the interval,
+    # the same rule as the single-strategy run_backtest so the two paths agree.
+    funding_interval = timedelta(hours=funding.interval_hours) if funding else None
+    next_funding: datetime | None = None
+    if funding and funding_interval and bars:
+        next_funding = start.replace(hour=0, minute=0, second=0, microsecond=0)
+        while next_funding <= start:  # first funding is strictly after the start
+            next_funding += funding_interval
 
     prices: dict[str, Decimal] = {}
     asset_class: dict[str, AssetClass] = {}
@@ -291,6 +303,16 @@ async def run_portfolio_backtest(
             overlay=overlay,
         )
         await oms.drain_events()
+        # Accrue perp funding on held crypto positions at each boundary this cross-section
+        # crosses, before the mark — so a funding-bleed feeds the daily-loss kill via mark() (R13).
+        if funding and funding_interval and next_funding is not None:
+            while close_ts >= next_funding:
+                for pos in oms.positions:
+                    if pos.asset_class is AssetClass.CRYPTO and pos.quantity != 0:
+                        mark = pos.last_price or pos.average_price or prices.get(pos.symbol)
+                        if mark is not None:
+                            oms.accrue_funding(funding_cash_flow(pos, mark, funding.rate))
+                next_funding += funding_interval
         oms.mark(dict(prices))
         equity_curve.append((close_ts, oms.total_realized_pnl() + oms.total_unrealized_pnl()))
         if risk.is_halted:
