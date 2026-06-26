@@ -4,10 +4,16 @@ judges.
 
 The discovery loop (``discovery.run_discovery_cycle``) takes an injected ``Backtester``; this is the
 real one. Per proposal it: builds the strategy from the vetted template + params, fetches the cell's
-**in-sample** bars (via an injected ``bars_for`` — the cold store in production, **holdout
-untouched**, TEST-3), runs the lifted engine (``run_backtest`` — same `StrategyEngine → OMS(risk) →
-PaperBroker → CostModel` path as live, with ``now`` injected from bar-time so backtest ≡ live), and
-derives the per-bar return series from the mark-to-market equity curve.
+bars (via an injected ``bars_for``), runs the lifted engine (``run_backtest`` — same
+`StrategyEngine → OMS(risk) → PaperBroker → CostModel` path as live, with ``now`` injected from
+bar-time so backtest ≡ live), and derives the per-bar return series from the mark-to-market equity.
+
+**Holdout isolation (TEST-3) is delegated to the ``bars_for`` boundary**, not enforced here: this
+adapter is a pure pass-through of whatever ``bars_for`` returns and adds no holdout guard. The
+production ``bars_for`` is the **no-ACL in-sample cold store** (R6), which is where the holdout is
+physically unreachable; ``bars_for`` MUST return in-sample-only bars. The adapter does, however,
+enforce that a cell has **enough** bars for the rigor gate (``>= 2 * cpcv.n_groups``), failing fast
+with a cell-identifying error rather than letting the quant-analyst raise on a thin window.
 
 Thin by construction: ``run_backtest`` wires the broker / OMS / risk / clock internally; this
 adapter only supplies the strategy + bars + configs and reduces the result to returns. It bridges
@@ -27,9 +33,13 @@ from alpha_core.backtest.runner import run_backtest
 from alpha_core.core.enums import AssetClass, Venue
 from alpha_core.core.models import Bar
 from alpha_core.execution.costs import InstrumentMeta
+from alpha_core.helpers.config import load_rigor_config
 from alpha_core.research.strategist import TEMPLATES, StrategyProposal
 from alpha_core.risk.limits import RiskConfig
 
+# Source the cell's in-sample bars for ``(market, window)``. CONTRACT: must return in-sample-only
+# bars — holdout isolation (TEST-3/R6) is enforced at this boundary (the no-ACL cold store), not in
+# the adapter, which is a pure pass-through.
 BarsFor = Callable[[AssetClass, str], list[Bar]]
 
 
@@ -69,12 +79,24 @@ class EngineBacktester:
         self._venue = venue
         self._starting_cash = starting_cash
         self._stress = stress
+        # the rigor gate needs >= 2*n_groups observations; one fewer return than bars, so require
+        # that many bars and fail fast on a thin cell (rather than crash later in `assess`).
+        self._min_bars = 2 * load_rigor_config().cpcv.n_groups
 
     def run(self, proposal: StrategyProposal) -> Sequence[float]:
         """Build the proposal's strategy, run it through the engine on the cell's in-sample bars,
-        and return the per-bar return series."""
-        strategy = TEMPLATES[proposal.template].build(proposal.params)
+        and return the per-bar return series. Raises ``ValueError`` for an unknown template or a
+        window with too few bars for the rigor gate."""
+        template = TEMPLATES.get(proposal.template)
+        if template is None:
+            raise ValueError(f"unknown template {proposal.template!r}; known: {sorted(TEMPLATES)}")
         bars = self._bars_for(proposal.market, proposal.window)
+        if len(bars) < self._min_bars:
+            raise ValueError(
+                f"too few in-sample bars for cell {proposal.market.value}/{proposal.window}: "
+                f"{len(bars)} < {self._min_bars} (need >= 2*cpcv.n_groups for the rigor gate)"
+            )
+        strategy = template.build(proposal.params)
         result = asyncio.run(
             run_backtest(
                 bars=bars,

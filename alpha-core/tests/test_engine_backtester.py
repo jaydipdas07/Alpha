@@ -5,13 +5,15 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
+
 from alpha_core.core.enums import AssetClass, Venue
 from alpha_core.core.models import Bar
 from alpha_core.execution.costs import InstrumentMeta
 from alpha_core.research.discovery import run_discovery_cycle
 from alpha_core.research.engine_backtester import EngineBacktester
 from alpha_core.research.proposal_ledger import ProposalLedger
-from alpha_core.research.quant_analyst import QuantAnalyst, Verdict
+from alpha_core.research.quant_analyst import QuantAnalyst
 from alpha_core.research.strategist import RandomProposer, Strategist, StrategyProposal
 from alpha_core.risk.limits import RiskConfig
 
@@ -115,7 +117,25 @@ def test_the_discovery_loop_runs_end_to_end_on_the_real_engine() -> None:
             n_candidates=4,
         )
     assert len(report.assessments) == 4
-    assert all(
-        a.verdict in (Verdict.PROMOTE, Verdict.REVISE, Verdict.REJECT)
-        for _, a in report.assessments
+    # a real edge reaches a promote through the REAL engine (not just "no crash"); seed=1 is
+    # deterministic: a fast/slow pair trades the rise-then-fall and clears the gate.
+    assert len(report.survivors) >= 1
+
+
+def test_a_too_short_window_raises_a_clear_cell_error() -> None:
+    # the adapter owns the ">= 2*n_groups bars" rigor precondition: a thin cell fails fast with a
+    # cell-identifying error, not a cryptic crash later inside the quant-analyst.
+    backtester = _backtester(_bars([str(100 + i) for i in range(5)]))  # 5 bars << 2*cpcv.n_groups
+    proposal = StrategyProposal(
+        "ma_crossover", {"fast_period": 2, "slow_period": 3}, AssetClass.EQUITY, "2026", 1, "fp"
     )
+    with pytest.raises(ValueError, match="too few in-sample bars"):
+        backtester.run(proposal)
+
+
+def test_an_unknown_template_raises() -> None:
+    # a hand-built proposal naming a template the registry doesn't hold fails clearly (the
+    # strategist never produces one, but the adapter shouldn't KeyError on a bad caller).
+    proposal = StrategyProposal("no_such_template", {}, AssetClass.EQUITY, "2026", 1, "fp")
+    with pytest.raises(ValueError, match="unknown template"):
+        _backtester(_rise_then_fall()).run(proposal)
