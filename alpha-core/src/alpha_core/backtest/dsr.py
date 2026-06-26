@@ -9,7 +9,7 @@ kernel and on the research box alike.
   kurtosis (a skewed or fat-tailed series needs a higher observed Sharpe to clear a bar).
 - ``expected_max_sharpe`` — SR₀, the Sharpe you'd expect to see *by chance* as the best
   of ``n_trials`` independent trials (the multiple-testing penalty); it grows with the
-  trial count supplied by the keyed trial ledger (R4).
+  per-cell trial count supplied by the keyed proposal ledger (R4).
 - ``deflated_sharpe_ratio`` — the PSR measured against that SR₀ benchmark: the
   probability the edge is real *after* deflating for how many trials were run. The trial
   count is per-cell ``(market, family, window)``, so the penalty is invariant to

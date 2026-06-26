@@ -94,8 +94,9 @@ class ProposalLedger:
         return RecordResult(is_new=is_new, count=int(count))
 
     def seen(self, market: AssetClass, family: str, window: str) -> set[str]:
-        """The set of fingerprints already tried in the cell (hydrates the strategist's originality
-        check across runs)."""
+        """The set of fingerprints already tried in the cell (for inspection / cross-run audit; the
+        strategist's own originality is enforced inline by ``record``'s idempotency, not by reading
+        this back)."""
         rows = self._conn.execute(
             "SELECT fingerprint FROM proposals WHERE cell_key = ?",
             (cell_key(market, family, window),),
