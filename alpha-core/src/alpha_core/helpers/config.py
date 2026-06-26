@@ -235,6 +235,11 @@ class DiscoveryCellConfig(BaseModel):
     symbol: str = Field(min_length=1)  # the cold-store series symbol (e.g. "BTCUSDT")
     venue: Venue  # the series venue
     interval_seconds: int = Field(gt=0)  # the bar interval
+    # discovery-run params (B1b.4): the backtest capital at this cell's market scale (crypto $ vs
+    # equity ₹) — the per-cell risk base_capital is aligned to it so limits scale with the cell;
+    # and which vetted templates to search here (omit / null = all registered templates).
+    starting_cash: Decimal = Field(default=Decimal("1000000"), gt=0)
+    templates: list[str] | None = None
 
     @field_validator("window")
     @classmethod
@@ -250,6 +255,7 @@ class DiscoveryConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     cells: list[DiscoveryCellConfig] = Field(min_length=1)  # an empty universe is a config error
+    n_candidates: int = Field(default=8, gt=1)  # proposals per (cell, template) discovery cycle
 
     @model_validator(mode="after")
     def _unique_cells(self) -> Self:

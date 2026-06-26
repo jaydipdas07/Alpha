@@ -11,16 +11,26 @@
 # hold it. So these entries name a series, never a holdout boundary.
 #
 # `window` is the cell's label (also the proposal-ledger cell key, <= 64 chars, no "|").
-# `venue`/`market` must be valid Venue/AssetClass enum values. Seeded with the two
-# series currently in the cold store (B1a.1b); add a row per series as data lands.
+# `venue`/`market` must be valid Venue/AssetClass enum values. `starting_cash` is the
+# backtest capital at the cell's market scale (crypto $ vs equity ₹; the per-cell risk
+# base_capital is aligned to it). `templates` (omitted = all registered templates)
+# scopes which vetted strategy families the nightly run searches in this cell. Seeded
+# with the two series currently in the cold store (B1a.1b); add a row per series as data
+# lands.
+
+# proposals per (cell, template) discovery cycle each run (B1b.4).
+n_candidates: 8
+
 cells:
   - market: CRYPTO
     window: "btcusdt-5m"
     symbol: "BTCUSDT"
     venue: BINANCE
     interval_seconds: 300
+    starting_cash: "1000000"   # USDT
   - market: EQUITY
     window: "reliance-1d"
     symbol: "NSE:RELIANCE"
     venue: NSE
     interval_seconds: 86400
+    starting_cash: "1000000"   # INR
