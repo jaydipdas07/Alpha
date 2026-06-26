@@ -1,21 +1,21 @@
-"""Persistent proposal-fingerprint ledger (B1b.3 precondition) — the originality store the
-strategist hydrates from, and the *idempotent* trial count the Deflated Sharpe Ratio deflates by.
+"""The keyed cell ledger (R4, B1a.5 + B1b.3b) — the single source of truth for the per-cell
+trial count the Deflated Sharpe Ratio deflates by, recorded as the set of distinct proposal
+fingerprints the strategist has tried in each ``(market, family, window)`` cell.
 
 The B1b.1b review flagged a desync hazard: the strategist's ``seen`` set was in-memory while the
-trial count was durable, so a discovery loop that forgot to hydrate ``seen`` would re-propose a
-config **and re-increment the trial count**, corrupting the per-cell multiple-testing penalty (R4).
-This store closes that by construction: a cell's trial count *is* the number of **distinct
-fingerprints** recorded for it, so recording the same proposal twice is a no-op. There is no
-counter to drift from the fingerprint set — they are the same thing.
+trial count was a separate durable counter, so a discovery loop that forgot to hydrate ``seen``
+would re-propose a config **and re-increment the count**, corrupting the per-cell multiple-testing
+penalty. This ledger closes that by construction — a cell's trial count *is* the number of
+**distinct fingerprints** recorded for it, so recording the same proposal twice is a no-op. There
+is no counter to drift from the fingerprint set; they are the same thing. (This supersedes the
+B1a.5 bare-counter ``TrialLedger``: one store, no two sources of a rigor-critical number.)
 
-Keyed by ``(market, family, window)`` (the same cell as the trial ledger, via ``cell_key``), so a
-cell's count is invariant to proposals in any *other* cell. SQLite (stdlib), WAL, one transaction
-per record (an idempotent insert + the authoritative count) — safe across the discovery pool's
-processes. No money, no clock — just the durable set of what's been tried.
-
-Wiring (B1b.3b): the ``strategist`` will ``record`` each candidate here (originality via
-``is_new``, the trial index via ``count``) instead of an in-memory ``seen`` + a bare counter, and
-the discovery loop reads ``count`` for the DSR deflation. This module is that store, landed first.
+Keyed by ``(market, family, window)`` via ``cell_key``, so a cell's count is invariant to
+proposals in any *other* cell (R4) — the property 1a.GATE ratified. SQLite (stdlib), WAL, one
+transaction per record (an idempotent insert + the authoritative count) — safe across the
+discovery pool's processes. No money, no clock — just the durable set of what's been tried. The
+``strategist`` records each candidate here (originality via ``is_new``, the trial index via the
+returned ``count``); the discovery loop reads ``count`` for the DSR deflation.
 """
 
 from __future__ import annotations
@@ -25,7 +25,27 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from alpha_core.core.enums import AssetClass
-from alpha_core.research.trial_ledger import CellCount, cell_key
+
+
+def cell_key(market: AssetClass, family: str, window: str) -> str:
+    """The composite cell key ``"market|family|window"`` (lowercase market, matching the pod
+    ``research_ledger`` ENUM). ``family`` / ``window`` may not contain ``|`` and must fit the pod's
+    64-char column limit (so the key round-trips on pod sync)."""
+    if "|" in family or "|" in window:
+        raise ValueError("family/window must not contain the '|' key separator")
+    if len(family) > 64 or len(window) > 64:
+        raise ValueError("family and window must each be <= 64 chars (the pod column limit)")
+    return f"{market.value.lower()}|{family}|{window}"
+
+
+@dataclass(frozen=True, slots=True)
+class CellCount:
+    """A ledger cell and its trial count (the number of distinct proposals recorded for it)."""
+
+    market: AssetClass
+    family: str
+    window: str
+    cumulative_trials: int
 
 
 @dataclass(frozen=True, slots=True)

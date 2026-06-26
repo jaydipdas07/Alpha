@@ -9,15 +9,11 @@ within a vetted range. Three guarantees fall out of the design:
   proposes configs only. It therefore has no path to the holdout (or to any bars) — the isolation
   is enforced by the absence of a data input, not by a runtime check. Evaluating a proposal on
   in-sample data is the quant-analyst's job (B1b.2).
-* **Originality.** Every accepted proposal is fingerprinted; the caller passes the cell's set of
-  already-tried fingerprints (``seen``), and the strategist never re-proposes one. **Contract — a
-  B1b.3 precondition (no such store exists yet):** ``seen`` MUST be hydrated from a *persistent*
-  fingerprint store kept in lock-step with the ledger. Calling ``propose`` with an un-hydrated
-  ``seen`` not only loses cross-run originality but **re-increments the ledger for an already-tried
-  config**, corrupting the per-cell trial count the DSR deflates by (R4). The fingerprint store
-  must land before the discovery loop runs.
-* **Trial accounting (R4).** Each accepted proposal increments the keyed trial ledger (B1a.5) for
-  its ``(market, family, window)`` cell — the count the Deflated Sharpe Ratio later deflates by.
+* **Originality + trial accounting (R4).** Every accepted proposal is fingerprinted and recorded in
+  the ``ProposalLedger``, which is *idempotent*: a fingerprint already tried in the cell is a no-op,
+  so the strategist never re-proposes one **and** the per-cell trial count the Deflated Sharpe Ratio
+  deflates by can never be inflated by a re-proposal. Originality holds across runs (the ledger is
+  durable) — there is no in-memory ``seen`` set to hydrate, and no separate counter to drift.
 
 The *proposer* — how parameter values are chosen — is injectable. The default ``RandomProposer``
 samples the bounded space (seeded → reproducible); the economic-rationale **LLM** proposer is the
@@ -38,7 +34,7 @@ from pydantic import BaseModel, ValidationError
 
 from alpha_core.core.enums import AssetClass
 from alpha_core.core.interfaces import Strategy
-from alpha_core.research.trial_ledger import TrialLedger, cell_key
+from alpha_core.research.proposal_ledger import ProposalLedger, cell_key
 from alpha_core.strategy.examples.ma_crossover import MaCrossover, MaCrossoverConfig
 from alpha_core.strategy.examples.momentum_roc import MomentumRoc, MomentumRocConfig
 from alpha_core.strategy.examples.opening_range_breakout import (
@@ -52,8 +48,8 @@ ParamValue = int | Decimal
 
 
 class StrategistError(RuntimeError):
-    """The strategist could not produce a valid, original proposal (unknown template, or the
-    bounded space is exhausted relative to ``seen``)."""
+    """The strategist could not produce a valid, original proposal (unknown template, an invalid
+    cell, or the cell's bounded space is saturated — every proposal already recorded)."""
 
 
 # --- the bounded param space (the vetted, whitelisted ranges the strategist may explore) -------
@@ -230,29 +226,28 @@ def proposal_fingerprint(template: str, params: Mapping[str, ParamValue]) -> str
 class Strategist:
     """Propose valid, original strategy configs by parameterizing vetted templates (B1b.1).
 
-    Takes only the trial ledger + a proposer — *never* any market data, so it cannot reach the
-    holdout (TEST-3 is structural). Each accepted proposal increments the ledger and is recorded
-    in the caller's ``seen`` set so it is never re-proposed.
+    Takes only the proposal ledger + a proposer — *never* any market data, so it cannot reach the
+    holdout (TEST-3 is structural). Each accepted proposal is recorded in the (idempotent, durable)
+    ledger, which both enforces originality across runs and is the trial count the DSR deflates by.
     """
 
     def __init__(
-        self, ledger: TrialLedger, *, proposer: Proposer | None = None, max_attempts: int = 50
+        self, ledger: ProposalLedger, *, proposer: Proposer | None = None, max_attempts: int = 50
     ) -> None:
         self._ledger = ledger
         self._proposer = proposer if proposer is not None else RandomProposer()
         self._max_attempts = max_attempts
 
-    def propose(
-        self, template_name: str, *, market: AssetClass, window: str, seen: set[str]
-    ) -> StrategyProposal:
-        """Return a valid, original proposal for ``template_name`` in the ``(market, window)``
-        cell, incrementing the trial ledger and adding its fingerprint to ``seen``. Raises
-        ``StrategistError`` for an unknown template, an invalid cell (e.g. a ``window`` the ledger
-        rejects), or if no original valid proposal is found within ``max_attempts``."""
+    def propose(self, template_name: str, *, market: AssetClass, window: str) -> StrategyProposal:
+        """Return a valid, original proposal for ``template_name`` in the ``(market, window)`` cell,
+        recording it in the proposal ledger (which both enforces originality across runs and is the
+        trial count the DSR deflates by). Raises ``StrategistError`` for an unknown template, an
+        invalid cell (e.g. a ``window`` the ledger rejects), or if no original valid proposal is
+        found within ``max_attempts`` (the cell is saturated)."""
         template = TEMPLATES.get(template_name)
         if template is None:
             raise StrategistError(f"unknown template {template_name!r}; known: {sorted(TEMPLATES)}")
-        try:  # fail fast (and in-contract) on a bad cell, before touching the proposer or seen
+        try:  # fail fast (and in-contract) on a bad cell, before touching the proposer
             cell_key(market, template.family, window)
         except ValueError as exc:
             raise StrategistError(f"invalid cell for {template_name!r}: {exc}") from exc
@@ -263,13 +258,15 @@ class Strategist:
             except (ValidationError, ValueError):
                 continue
             fingerprint = proposal_fingerprint(template_name, params)
-            if fingerprint in seen:
-                continue  # already tried in this cell — keep it original
-            # count first, then record in seen, so seen only ever holds counted proposals.
-            trial_index = self._ledger.increment(market, template.family, window)
-            seen.add(fingerprint)
-            return StrategyProposal(template_name, params, market, window, trial_index, fingerprint)
+            # record is idempotent: a fingerprint already tried in this cell is a no-op (is_new
+            # False, count unchanged), so re-proposals never inflate the DSR's trial count.
+            result = self._ledger.record(market, template.family, window, fingerprint)
+            if not result.is_new:
+                continue  # already tried in this cell — keep proposing for an original one
+            return StrategyProposal(
+                template_name, params, market, window, result.count, fingerprint
+            )
         raise StrategistError(
             f"no original valid proposal for {template_name!r} within {self._max_attempts} "
-            "attempts (the cell may be saturated relative to seen)"
+            "attempts (the cell is saturated)"
         )
