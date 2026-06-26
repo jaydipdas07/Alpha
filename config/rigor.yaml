@@ -26,9 +26,11 @@ pbo:
 # per-cell count from the keyed trial ledger, R4); DSR is the probability the edge is
 # real after that deflation. A candidate must clear `threshold` to be significant.
 dsr:
-  threshold: 0.90      # minimum DSR (probability) for a significant edge after deflation —
+  threshold: 0.92      # minimum DSR (probability) for a significant edge after deflation —
                        # loosened from 0.95 (B1a.9 calibration) so a realistic strong edge clears
-                       # the false-reject bound while noise/overfit stay rejected (false-promote ~0)
+                       # the false-reject bound. Picked at the HIGH (safe) end of the feasible
+                       # [0.90, 0.92] window: false-promote (the dangerous error) stays 0 here,
+                       # while 0.90 lets the worst noise candidate (DSR 0.909) slip through.
 
 # Roll-forward locked holdout (R5) in the no-ACL store (R6, TEST-3). The most recent
 # `fraction` of the data span is locked into a physically separate store the research

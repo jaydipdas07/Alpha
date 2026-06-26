@@ -24,26 +24,33 @@ from alpha_core.research.calibration import (
 def test_gate_meets_the_tier2_error_rate_thresholds() -> None:
     cfg = load_rigor_config()
     c = cfg.calibration
-    report = run_calibration(
-        n_candidates=c.n_candidates,
-        n_obs=c.n_obs,
-        edge_drift=c.edge_drift,
-        oos_fraction=c.oos_fraction,
-        dsr_threshold=cfg.dsr.threshold,
-        seed=1,
+    # The measured error RATE is the MEAN over a seed sweep, not a single (favorable) draw — the
+    # honest Done-when: the gate's true false-promote / false-reject rates meet the [You]-ratified
+    # Tier-2 bounds. (The B1a.4 lesson: never certify a statistic off one seed.)
+    reports = [
+        run_calibration(
+            n_candidates=c.n_candidates,
+            n_obs=c.n_obs,
+            edge_drift=c.edge_drift,
+            oos_fraction=c.oos_fraction,
+            dsr_threshold=cfg.dsr.threshold,
+            seed=s,
+        )
+        for s in range(20)
+    ]
+    mean_false_promote = statistics.fmean(r.false_promote_rate for r in reports)
+    mean_false_reject = statistics.fmean(r.false_reject_rate for r in reports)
+    assert mean_false_promote <= c.false_promote_max  # the dangerous error
+    assert mean_false_reject <= c.false_reject_max  # the cheaper error
+    # The dangerous error has FULL margin at threshold 0.92: no noise/overfit control is promoted
+    # on any seed (the deflation centers them at DSR ~0.5, well below the bar).
+    assert mean_false_promote == 0.0
+    assert all(r.edge.reject_rate == r.false_reject_rate for r in reports)
+    # at this operating point every seed individually clears both bounds, too.
+    assert all(
+        r.passes(false_promote_max=c.false_promote_max, false_reject_max=c.false_reject_max)
+        for r in reports
     )
-    # the dangerous error — promoting noise/overfit — stays under the strict bound...
-    assert report.false_promote_rate <= c.false_promote_max
-    # ...and the cheaper error — rejecting a real edge — under the looser bound.
-    assert report.false_reject_rate <= c.false_reject_max
-    assert report.passes(false_promote_max=c.false_promote_max, false_reject_max=c.false_reject_max)
-    # robust across seeds (not a single favorable draw): each control stays inside the bound it
-    # is judged by — noise/overfit under the false-promote bound, the edge above the implied
-    # promote floor (1 - the false-reject bound).
-    assert report.noise.promote_rate <= c.false_promote_max
-    assert report.overfit.promote_rate <= c.false_promote_max
-    assert report.edge.promote_rate >= 1.0 - c.false_reject_max
-    assert report.edge.reject_rate == report.false_reject_rate
 
 
 def test_overfit_control_is_genuinely_overfit_not_noise() -> None:

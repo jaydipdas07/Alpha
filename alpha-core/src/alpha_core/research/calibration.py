@@ -23,7 +23,10 @@ upper bound and the false-reject is a **lower bound** on the composed gate's. Th
 conservative **by design** (the R4 deflation refuses to confirm a marginal edge after many
 trials), so it is calibrated at a *realistic strong-edge / long-OOS* operating point ([You] chose
 to loosen the gate — a lower DSR threshold + a realistic horizon — so a Sharpe-~2.4 edge clears
-the false-reject bound while noise/overfit stay rejected). An OOS-only gate rejects an overfit
+the false-reject bound while noise/overfit stay rejected). **Sensitivity floor:** this certifies
+retention of *strong* edges only — at this operating point an annualized Sharpe >= ~2.4 clears,
+but weaker edges (Sharpe ~1-2) are rejected 48-92% of the time; read the result as "the gate
+retains strong edges", not "all real edges". An OOS-only gate rejects an overfit
 candidate for the same reason it rejects noise (poor OOS), so the overfit control's distinct value
 is ``population_pbo`` *confirming* it is genuinely overfit, not the (redundant) reject itself.
 
