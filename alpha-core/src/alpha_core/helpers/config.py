@@ -15,7 +15,9 @@ from pathlib import Path
 from typing import Any, Literal, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from alpha_core.core.enums import AssetClass, Venue
 
 
 class ConfigError(Exception):
@@ -218,3 +220,53 @@ class RigorConfig(BaseModel):
 def load_rigor_config() -> RigorConfig:
     """Load + validate ``config/rigor.yaml`` (honors ``ALPHA_CONFIG_DIR``)."""
     return RigorConfig.model_validate(load_yaml("rigor.yaml"))
+
+
+# --- Discovery universe (discovery.yaml) — the cell -> cold-store series map (B1b.3d) ----
+class DiscoveryCellConfig(BaseModel):
+    """One discovery cell: the ``(market, window)`` the loop searches mapped to the cold-store
+    series it backtests on. The bars are **in-sample only** — the cold store holds no holdout
+    (``seal_dataset`` routes it to the separate gate-only store), so this never names a holdout
+    boundary (TEST-3/R6)."""
+
+    model_config = ConfigDict(extra="forbid")
+    market: AssetClass  # the cell's asset class (matches the series' bars)
+    window: str = Field(min_length=1, max_length=64)  # the cell label (also the ledger cell key)
+    symbol: str = Field(min_length=1)  # the cold-store series symbol (e.g. "BTCUSDT")
+    venue: Venue  # the series venue
+    interval_seconds: int = Field(gt=0)  # the bar interval
+
+    @field_validator("window")
+    @classmethod
+    def _no_key_separator(cls, value: str) -> str:
+        # the window doubles as the proposal-ledger cell key, where "|" is the field separator.
+        if "|" in value:
+            raise ValueError("window must not contain the '|' cell-key separator")
+        return value
+
+
+class DiscoveryConfig(BaseModel):
+    """``discovery.yaml`` — the discovery universe: every research cell mapped to its series."""
+
+    model_config = ConfigDict(extra="forbid")
+    cells: list[DiscoveryCellConfig] = Field(min_length=1)  # an empty universe is a config error
+
+    @model_validator(mode="after")
+    def _unique_cells(self) -> Self:
+        """A ``(market, window)`` cell must resolve to exactly one series — reject duplicates at
+        load (else the adapter would silently shadow one mapping with another)."""
+        seen: set[tuple[AssetClass, str]] = set()
+        for cell in self.cells:
+            key = (cell.market, cell.window)
+            if key in seen:
+                raise ValueError(
+                    f"duplicate discovery cell {cell.market.value}/{cell.window!r}: "
+                    "each (market, window) must map to exactly one series"
+                )
+            seen.add(key)
+        return self
+
+
+def load_discovery_config() -> DiscoveryConfig:
+    """Load + validate ``config/discovery.yaml`` (honors ``ALPHA_CONFIG_DIR``)."""
+    return DiscoveryConfig.model_validate(load_yaml("discovery.yaml"))
