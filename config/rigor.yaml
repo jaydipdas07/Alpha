@@ -50,4 +50,16 @@ cpcv_budget:
   budget_seconds: 28800   # 8h — a night's compute budget
   pool_size: 4            # parallel CPCV workers (processes in production)
 
+# Population-calibration error-rate gate (R14) — the [You]-ratified Tier-2 thresholds the rigor
+# gate must meet against control populations before the strategist is trusted (the Phase-1b gate).
+# The dangerous error is promoting noise/overfit, so its bound is strict; rejecting a real edge
+# is the cheaper error, so its bound is looser.
+calibration:
+  false_promote_max: 0.05   # max rate of promoting a noise/overfit control
+  false_reject_max: 0.25    # max rate of rejecting a genuine planted edge
+  n_candidates: 40          # candidates per synthetic population
+  n_obs: 400                # return-series length per candidate
+  edge_drift: 0.5           # the planted edge's per-bar mean (Sharpe ~ drift)
+  oos_fraction: 0.5         # the out-of-sample slice the gate judges on (50/50 IS/OOS split)
+
 
