@@ -162,14 +162,24 @@ class HoldoutConfig(BaseModel):
     fraction: float = Field(gt=0, lt=1)  # most-recent fraction of the span locked away
 
 
+class PrescreenConfig(BaseModel):
+    """vectorbt coarse pre-screen upstream of CPCV (R7, B1a.8)."""
+
+    model_config = ConfigDict(extra="forbid")
+    min_sharpe: float  # cull below this median coarse OOS per-bar Sharpe
+    n_windows: int = Field(gt=0)  # coarse out-of-sample walk-forward windows
+
+
 class RigorConfig(BaseModel):
-    """``rigor.yaml`` — the statistical-rigor tunables (CPCV embargo + PBO + DSR + holdout)."""
+    """``rigor.yaml`` — the statistical-rigor tunables (CPCV embargo + PBO + DSR + holdout +
+    the vectorbt pre-screen)."""
 
     model_config = ConfigDict(extra="forbid")
     cpcv: CPCVConfig
     pbo: PBOConfig
     dsr: DSRConfig
     holdout: HoldoutConfig
+    prescreen: PrescreenConfig
 
 
 def load_rigor_config() -> RigorConfig:

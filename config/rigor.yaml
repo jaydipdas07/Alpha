@@ -35,3 +35,12 @@ dsr:
 holdout:
   fraction: 0.2        # last 20% of the time span is the locked holdout
 
+# vectorbt coarse pre-screen (R7) — a fast, float, vectorized walk-forward run UPSTREAM of
+# CPCV to cull obvious losers cheaply, so the expensive CPCV/PBO only runs on survivors. A
+# candidate passes iff its median per-bar Sharpe over `n_windows` out-of-sample windows
+# clears `min_sharpe`. Coarse by design (no full cost model / Decimal) — CPCV is the real gate.
+prescreen:
+  min_sharpe: 0.0      # cull a candidate whose median coarse OOS per-bar Sharpe is below this
+  n_windows: 3         # coarse out-of-sample walk-forward windows
+
+
