@@ -148,13 +148,21 @@ class PBOConfig(BaseModel):
         return self
 
 
+class DSRConfig(BaseModel):
+    """Deflated Sharpe Ratio threshold (Bailey & López de Prado 2014, B1a.5)."""
+
+    model_config = ConfigDict(extra="forbid")
+    threshold: float = Field(gt=0, lt=1)  # minimum DSR (probability) to be significant
+
+
 class RigorConfig(BaseModel):
-    """``rigor.yaml`` — the statistical-rigor tunables (CPCV embargo + PBO; DSR/holdout
-    cadence join as later increments land)."""
+    """``rigor.yaml`` — the statistical-rigor tunables (CPCV embargo + PBO + DSR; holdout
+    cadence joins as later increments land)."""
 
     model_config = ConfigDict(extra="forbid")
     cpcv: CPCVConfig
     pbo: PBOConfig
+    dsr: DSRConfig
 
 
 def load_rigor_config() -> RigorConfig:
