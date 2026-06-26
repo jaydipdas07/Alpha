@@ -72,7 +72,7 @@ def test_strategist_takes_no_data_so_the_holdout_is_unreachable() -> None:
     sig_params = set(inspect.signature(Strategist.propose).parameters) - {"self"}
     assert sig_params == {"template_name", "market", "window", "seen"}
     src = inspect.getsource(strategist_module)
-    assert "from alpha_core.data" not in src  # no cold store / holdout reader imported
+    assert "alpha_core.data" not in src  # no cold store / holdout reader (either import form)
     assert "HoldoutStore" not in src and "read_bars" not in src
 
 
@@ -150,9 +150,20 @@ def test_exhausted_space_raises_when_every_proposal_is_seen() -> None:
     with TrialLedger() as ledger:
         strategist = Strategist(ledger, proposer=_ConstantProposer(params), max_attempts=5)
         seen = {proposal_fingerprint("vwap_reversion", params)}
-        with pytest.raises(StrategistError, match="bounded space exhausted"):
+        with pytest.raises(StrategistError, match="the cell may be saturated"):
             strategist.propose("vwap_reversion", market=AssetClass.CRYPTO, window="w", seen=seen)
         assert ledger.count(AssetClass.CRYPTO, "vwap_reversion", "w") == 0  # nothing counted
+
+
+def test_invalid_cell_raises_strategist_error_without_polluting_seen() -> None:
+    # a window the ledger's cell_key rejects (contains the '|' delimiter) surfaces as a
+    # StrategistError (the documented contract), not a bare ValueError, and leaves seen untouched.
+    seen: set[str] = set()
+    with TrialLedger() as ledger, pytest.raises(StrategistError, match="invalid cell"):
+        Strategist(ledger).propose(
+            "ma_crossover", market=AssetClass.CRYPTO, window="2020|2024", seen=seen
+        )
+    assert seen == set()
 
 
 # --- the param space + fingerprint -------------------------------------------------------------
@@ -171,6 +182,9 @@ def test_fingerprint_is_stable_order_independent_and_value_sensitive() -> None:
     base: Mapping[str, ParamValue] = {"a": 1, "b": Decimal("2.0")}
     reordered: Mapping[str, ParamValue] = {"b": Decimal("2.0"), "a": 1}
     assert proposal_fingerprint("x", base) == proposal_fingerprint("x", reordered)  # order-free
+    # Decimal is canonicalized: 2.0 and 2 are the same logical value (a future LLM proposer that
+    # emits Decimal('2') must not fork originality from RandomProposer's Decimal('2.0')).
+    assert proposal_fingerprint("x", base) == proposal_fingerprint("x", {"a": 1, "b": Decimal("2")})
     assert proposal_fingerprint("x", base) != proposal_fingerprint(
         "x", {"a": 1, "b": Decimal("2.5")}
     )

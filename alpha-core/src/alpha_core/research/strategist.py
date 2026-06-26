@@ -10,8 +10,12 @@ within a vetted range. Three guarantees fall out of the design:
   is enforced by the absence of a data input, not by a runtime check. Evaluating a proposal on
   in-sample data is the quant-analyst's job (B1b.2).
 * **Originality.** Every accepted proposal is fingerprinted; the caller passes the cell's set of
-  already-tried fingerprints (``seen``), and the strategist never re-proposes one. The discovery
-  loop (B1b.3) hydrates ``seen`` from persistence so originality holds across runs.
+  already-tried fingerprints (``seen``), and the strategist never re-proposes one. **Contract — a
+  B1b.3 precondition (no such store exists yet):** ``seen`` MUST be hydrated from a *persistent*
+  fingerprint store kept in lock-step with the ledger. Calling ``propose`` with an un-hydrated
+  ``seen`` not only loses cross-run originality but **re-increments the ledger for an already-tried
+  config**, corrupting the per-cell trial count the DSR deflates by (R4). The fingerprint store
+  must land before the discovery loop runs.
 * **Trial accounting (R4).** Each accepted proposal increments the keyed trial ledger (B1a.5) for
   its ``(market, family, window)`` cell — the count the Deflated Sharpe Ratio later deflates by.
 
@@ -34,7 +38,7 @@ from pydantic import BaseModel, ValidationError
 
 from alpha_core.core.enums import AssetClass
 from alpha_core.core.interfaces import Strategy
-from alpha_core.research.trial_ledger import TrialLedger
+from alpha_core.research.trial_ledger import TrialLedger, cell_key
 from alpha_core.strategy.examples.ma_crossover import MaCrossover, MaCrossoverConfig
 from alpha_core.strategy.examples.momentum_roc import MomentumRoc, MomentumRocConfig
 from alpha_core.strategy.examples.opening_range_breakout import (
@@ -169,7 +173,13 @@ TEMPLATES: dict[str, StrategyTemplate] = {
 
 
 class Proposer(Protocol):
-    """Chooses parameter values for a template's bounded space."""
+    """Chooses parameter values for a template's bounded space.
+
+    Contract: return a dict over the space's parameter names whose values match each spec's type
+    (``int`` for ``IntRange``, ``Decimal`` for ``DecimalRange``). The strategist's validate-by-build
+    catches *domain*-invalid combinations (it resamples them), not *type/contract* violations — a
+    proposer returning the wrong type is a bug, not a resample case.
+    """
 
     def propose(self, space: ParamSpace) -> dict[str, ParamValue]: ...
 
@@ -199,10 +209,21 @@ class StrategyProposal:
     fingerprint: str  # stable hash of (template, params) — the originality key
 
 
+def _canonical(value: ParamValue) -> str:
+    """Representation-independent rendering of a param value: a ``Decimal`` via its *normalized*
+    form so ``Decimal('2')``, ``Decimal('2.0')`` and ``Decimal('2.00')`` all render ``'2'`` —
+    the RandomProposer (which emits ``'2.0'``) and a future LLM proposer (which might emit ``'2'``)
+    can never disagree about the same logical value, so the fingerprint can't leak originality or
+    double-count the ledger. ``int`` via ``str``."""
+    if isinstance(value, Decimal):
+        return format(value.normalize(), "f")  # 'f' expands the exponent: 2E+2 -> '200'
+    return str(value)
+
+
 def proposal_fingerprint(template: str, params: Mapping[str, ParamValue]) -> str:
-    """A stable, order-independent fingerprint of a (template, params) proposal. ``Decimal`` is
-    rendered as its canonical string so ``2`` and ``2.0`` never collide nor falsely differ."""
-    payload = {"t": template, "p": {k: str(params[k]) for k in sorted(params)}}
+    """A stable, order-independent fingerprint of a (template, params) proposal (see
+    ``_canonical`` for why ``Decimal`` values are normalized first)."""
+    payload = {"t": template, "p": {k: _canonical(params[k]) for k in sorted(params)}}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -226,11 +247,15 @@ class Strategist:
     ) -> StrategyProposal:
         """Return a valid, original proposal for ``template_name`` in the ``(market, window)``
         cell, incrementing the trial ledger and adding its fingerprint to ``seen``. Raises
-        ``StrategistError`` for an unknown template or if no original valid proposal is found
-        within ``max_attempts`` (the bounded space is exhausted relative to ``seen``)."""
+        ``StrategistError`` for an unknown template, an invalid cell (e.g. a ``window`` the ledger
+        rejects), or if no original valid proposal is found within ``max_attempts``."""
         template = TEMPLATES.get(template_name)
         if template is None:
             raise StrategistError(f"unknown template {template_name!r}; known: {sorted(TEMPLATES)}")
+        try:  # fail fast (and in-contract) on a bad cell, before touching the proposer or seen
+            cell_key(market, template.family, window)
+        except ValueError as exc:
+            raise StrategistError(f"invalid cell for {template_name!r}: {exc}") from exc
         for _ in range(self._max_attempts):
             params = self._proposer.propose(template.param_space)
             try:
@@ -240,10 +265,11 @@ class Strategist:
             fingerprint = proposal_fingerprint(template_name, params)
             if fingerprint in seen:
                 continue  # already tried in this cell — keep it original
-            seen.add(fingerprint)
+            # count first, then record in seen, so seen only ever holds counted proposals.
             trial_index = self._ledger.increment(market, template.family, window)
+            seen.add(fingerprint)
             return StrategyProposal(template_name, params, market, window, trial_index, fingerprint)
         raise StrategistError(
-            f"no original valid proposal for {template_name!r} after {self._max_attempts} "
-            "attempts (bounded space exhausted relative to seen)"
+            f"no original valid proposal for {template_name!r} within {self._max_attempts} "
+            "attempts (the cell may be saturated relative to seen)"
         )
