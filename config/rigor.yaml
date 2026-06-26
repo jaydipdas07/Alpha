@@ -27,3 +27,11 @@ pbo:
 # real after that deflation. A candidate must clear `threshold` to be significant.
 dsr:
   threshold: 0.95      # minimum DSR (probability) for a significant, non-overfit edge
+
+# Roll-forward locked holdout (R5) in the no-ACL store (R6, TEST-3). The most recent
+# `fraction` of the data span is locked into a physically separate store the research
+# surface (strategist / RAG / table-read agents) is never handed; it rolls forward as
+# new data arrives, so the loop can never reach the present. Used once, as the final gate.
+holdout:
+  fraction: 0.2        # last 20% of the time span is the locked holdout
+
