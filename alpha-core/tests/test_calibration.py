@@ -37,10 +37,12 @@ def test_gate_meets_the_tier2_error_rate_thresholds() -> None:
     # ...and the cheaper error — rejecting a real edge — under the looser bound.
     assert report.false_reject_rate <= c.false_reject_max
     assert report.passes(false_promote_max=c.false_promote_max, false_reject_max=c.false_reject_max)
-    # concretely: the gate rejects every noise/overfit control and promotes ~all the edge.
-    assert report.noise.promote_rate == 0.0
-    assert report.overfit.promote_rate == 0.0
-    assert report.edge.promote_rate >= 0.9
+    # robust across seeds (not a single favorable draw): each control stays inside the bound it
+    # is judged by — noise/overfit under the false-promote bound, the edge above the implied
+    # promote floor (1 - the false-reject bound).
+    assert report.noise.promote_rate <= c.false_promote_max
+    assert report.overfit.promote_rate <= c.false_promote_max
+    assert report.edge.promote_rate >= 1.0 - c.false_reject_max
     assert report.edge.reject_rate == report.false_reject_rate
 
 

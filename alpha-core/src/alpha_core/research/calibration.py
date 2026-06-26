@@ -16,6 +16,17 @@ an overfit candidate's OOS slice is bad, so the deflated-OOS gate rejects it jus
 noise. ``population_pbo`` (CSCV) is the separate population-level overfitting diagnostic that
 *confirms* the overfit control really is overfit (high PBO) versus a genuine edge.
 
+**Scope (honest framing):** this calibrates the per-candidate **DSR-on-OOS** filter — the
+statistical-significance gate — not the full composed pipeline (pre-screen → CPCV/PBO → DSR →
+holdout). Composing the omitted filters only *rejects more*, so the measured false-promote is an
+upper bound and the false-reject is a **lower bound** on the composed gate's. The gate is
+conservative **by design** (the R4 deflation refuses to confirm a marginal edge after many
+trials), so it is calibrated at a *realistic strong-edge / long-OOS* operating point ([You] chose
+to loosen the gate — a lower DSR threshold + a realistic horizon — so a Sharpe-~2.4 edge clears
+the false-reject bound while noise/overfit stay rejected). An OOS-only gate rejects an overfit
+candidate for the same reason it rejects noise (poor OOS), so the overfit control's distinct value
+is ``population_pbo`` *confirming* it is genuinely overfit, not the (redundant) reject itself.
+
 Pure-stdlib (seeded ``random``; reuses the B1a.4/B1a.5 rigor). Research-plane only. The Tier-2
 error-rate thresholds the measured rates must meet ([You]-ratified) live in ``config/rigor.yaml``.
 """

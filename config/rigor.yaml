@@ -26,7 +26,9 @@ pbo:
 # per-cell count from the keyed trial ledger, R4); DSR is the probability the edge is
 # real after that deflation. A candidate must clear `threshold` to be significant.
 dsr:
-  threshold: 0.95      # minimum DSR (probability) for a significant, non-overfit edge
+  threshold: 0.90      # minimum DSR (probability) for a significant edge after deflation —
+                       # loosened from 0.95 (B1a.9 calibration) so a realistic strong edge clears
+                       # the false-reject bound while noise/overfit stay rejected (false-promote ~0)
 
 # Roll-forward locked holdout (R5) in the no-ACL store (R6, TEST-3). The most recent
 # `fraction` of the data span is locked into a physically separate store the research
@@ -58,8 +60,8 @@ calibration:
   false_promote_max: 0.05   # max rate of promoting a noise/overfit control
   false_reject_max: 0.25    # max rate of rejecting a genuine planted edge
   n_candidates: 40          # candidates per synthetic population
-  n_obs: 400                # return-series length per candidate
-  edge_drift: 0.5           # the planted edge's per-bar mean (Sharpe ~ drift)
+  n_obs: 2400               # return-series length — a realistic ~5y daily OOS evaluation horizon
+  edge_drift: 0.15          # the planted edge's per-bar mean (annualized Sharpe ~2.4 — realistic)
   oos_fraction: 0.5         # the out-of-sample slice the gate judges on (50/50 IS/OOS split)
 
 
