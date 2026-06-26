@@ -15,6 +15,7 @@ from alpha_core.research import strategist as strategist_module
 from alpha_core.research.proposal_ledger import ProposalLedger
 from alpha_core.research.strategist import (
     TEMPLATES,
+    CellSaturated,
     DecimalRange,
     IntRange,
     ParamSpace,
@@ -164,7 +165,7 @@ def test_exhausted_space_raises_when_every_proposal_is_already_recorded() -> Non
             _CRYPTO, "vwap_reversion", "w", proposal_fingerprint("vwap_reversion", params)
         )
         strategist = Strategist(ledger, proposer=_ConstantProposer(params), max_attempts=5)
-        with pytest.raises(StrategistError, match="the cell is saturated"):
+        with pytest.raises(CellSaturated, match="the cell is saturated"):
             strategist.propose("vwap_reversion", market=_CRYPTO, window="w")
         assert ledger.count(_CRYPTO, "vwap_reversion", "w") == 1  # unchanged — idempotent no-ops
 

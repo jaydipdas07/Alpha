@@ -109,6 +109,12 @@ class QuantAnalyst:
         self._pbo = cfg.pbo
         self._qa = cfg.quant_analyst
 
+    @property
+    def oos_fraction(self) -> float:
+        """The out-of-sample slice this analyst judges on — callers (the discovery loop) compute
+        the cell's ``deflation_inputs`` on the *same* slice, so the deflation can't desync."""
+        return self._qa.oos_fraction
+
     def assess(
         self,
         returns: Sequence[float],
