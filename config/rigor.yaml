@@ -43,4 +43,11 @@ prescreen:
   min_sharpe: 0.0      # cull a candidate whose median coarse OOS per-bar Sharpe is below this
   n_windows: 3         # coarse out-of-sample walk-forward windows
 
+# CPCV compute budget + carry-forward (R7) — run a night's CPCV queue (the pre-screen
+# survivors) within a wall-clock budget across a parallel pool; the unfinished rest is
+# CARRIED to the next run, never truncated.
+cpcv_budget:
+  budget_seconds: 28800   # 8h — a night's compute budget
+  pool_size: 4            # parallel CPCV workers (processes in production)
+
 

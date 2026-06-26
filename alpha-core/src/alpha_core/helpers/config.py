@@ -170,9 +170,17 @@ class PrescreenConfig(BaseModel):
     n_windows: int = Field(gt=0)  # coarse out-of-sample walk-forward windows
 
 
+class CpcvBudgetConfig(BaseModel):
+    """CPCV compute budget + parallel pool (R7, B1a.8)."""
+
+    model_config = ConfigDict(extra="forbid")
+    budget_seconds: float = Field(gt=0)  # a night's wall-clock compute budget
+    pool_size: int = Field(gt=0)  # parallel CPCV workers
+
+
 class RigorConfig(BaseModel):
     """``rigor.yaml`` — the statistical-rigor tunables (CPCV embargo + PBO + DSR + holdout +
-    the vectorbt pre-screen)."""
+    the vectorbt pre-screen + the CPCV compute budget)."""
 
     model_config = ConfigDict(extra="forbid")
     cpcv: CPCVConfig
@@ -180,6 +188,7 @@ class RigorConfig(BaseModel):
     dsr: DSRConfig
     holdout: HoldoutConfig
     prescreen: PrescreenConfig
+    cpcv_budget: CpcvBudgetConfig
 
 
 def load_rigor_config() -> RigorConfig:
