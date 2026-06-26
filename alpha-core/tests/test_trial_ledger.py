@@ -19,6 +19,8 @@ def test_cell_key_matches_pod_format() -> None:
     assert cell_key(AssetClass.INDEX_OPTION, "x", "w") == "index_option|x|w"
     with pytest.raises(ValueError, match="separator"):
         cell_key(AssetClass.EQUITY, "a|b", "w")
+    with pytest.raises(ValueError, match="64 chars"):
+        cell_key(AssetClass.EQUITY, "f" * 65, "w")  # exceeds the pod column limit
 
 
 def test_increment_and_count() -> None:
