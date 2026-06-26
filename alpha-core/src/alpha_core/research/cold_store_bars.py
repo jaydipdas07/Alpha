@@ -46,7 +46,8 @@ class SeriesCoord:
 
 
 # A discovery cell as the ``bars_for`` seam sees it: (market, window). The family is not part of the
-# data coordinate — every strategy family in a cell is backtested on the same series.
+# data coordinate — every strategy family in a cell is backtested on the same series. ``window`` is
+# the cell's *label* (not a time-slice): the adapter reads the whole sealed in-sample series for it.
 CellKey = tuple[AssetClass, str]
 
 
@@ -79,9 +80,15 @@ class ColdStoreBarsFor:
         return dict(self._cells)
 
     def __call__(self, market: AssetClass, window: str) -> list[Bar]:
-        """Return the cell's in-sample bars from the cold store (sorted by start). Raises
-        ``ValueError`` for a cell with no configured series — a config gap fails fast and
-        cell-identifying, never a silent empty result that the rigor gate would misread."""
+        """Return the cell's in-sample bars from the cold store (sorted by start).
+
+        An **unmapped** cell raises ``ValueError`` (a config gap — fail fast + cell-identifying)
+        rather than returning ``[]``. A mapped-but-not-yet-ingested series legitimately returns
+        ``[]``; the empty cell is surfaced downstream by ``EngineBacktester``'s ``>= 2*n_groups``
+        bars guard, not masked here. Also fails fast if the resolved series' asset class doesn't
+        match the cell's ``market`` — a config mismap that would otherwise feed the wrong
+        instrument's bars through the cost model unnoticed.
+        """
         coord = self._cells.get((market, window))
         if coord is None:
             known = sorted(f"{m.value}/{w}" for m, w in self._cells)
@@ -89,8 +96,15 @@ class ColdStoreBarsFor:
                 f"no discovery cell mapped for {market.value}/{window!r}; known cells: {known}. "
                 "Add it to config/discovery.yaml."
             )
-        return self._store.read_bars(
+        bars = self._store.read_bars(
             symbol=coord.symbol,
             venue=coord.venue,
             interval_seconds=coord.interval_seconds,
         )
+        if bars and bars[0].asset_class != market:
+            raise ValueError(
+                f"discovery cell {market.value}/{window!r} maps to {coord.symbol}@"
+                f"{coord.venue.value}, whose bars are {bars[0].asset_class.value}, not "
+                f"{market.value} — fix the cell's market in config/discovery.yaml."
+            )
+        return bars

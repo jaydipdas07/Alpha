@@ -120,6 +120,33 @@ def test_cells_property_is_a_copy(tmp_path: Path) -> None:
     assert (AssetClass.EQUITY, "w") in adapter.cells
 
 
+def test_mapped_but_absent_series_returns_empty(tmp_path: Path) -> None:
+    # a mapped cell whose series isn't ingested yet returns [] (EngineBacktester's >= 2*n_groups
+    # bars guard surfaces the thin cell downstream) — not masked, not an error here.
+    adapter = ColdStoreBarsFor(BarStore(tmp_path / "cold"), _equity_cell())
+    assert adapter(AssetClass.EQUITY, "w") == []
+
+
+def test_asset_class_mismatch_raises(tmp_path: Path) -> None:
+    # a config row mapping a cell's market to a series of a *different* asset class is caught at
+    # read — else it would feed the wrong instrument's bars through the cost model unnoticed.
+    cold = BarStore(tmp_path / "cold")
+    cold.write_bars(
+        _series(
+            [100 + i for i in range(5)],
+            symbol="BTCUSDT",
+            venue=Venue.BINANCE,
+            asset_class=AssetClass.CRYPTO,
+            interval=timedelta(minutes=5),
+        )
+    )
+    adapter = ColdStoreBarsFor(
+        cold, {(AssetClass.EQUITY, "w"): SeriesCoord("BTCUSDT", Venue.BINANCE, 300)}
+    )
+    with pytest.raises(ValueError, match="not EQUITY"):
+        adapter(AssetClass.EQUITY, "w")
+
+
 # --- from_config wires the committed discovery universe ------------------------------------------
 
 
@@ -138,6 +165,12 @@ def test_load_discovery_config_is_valid() -> None:
 
 
 # --- the discovery-universe config validation ----------------------------------------------------
+
+
+def test_config_rejects_empty_universe() -> None:
+    # an empty discovery universe is a config error — fail at load, not at first lookup.
+    with pytest.raises(ValidationError, match="at least 1"):
+        DiscoveryConfig.model_validate({"cells": []})
 
 
 def test_config_rejects_duplicate_cells() -> None:

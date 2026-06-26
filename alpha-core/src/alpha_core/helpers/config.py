@@ -249,7 +249,7 @@ class DiscoveryConfig(BaseModel):
     """``discovery.yaml`` — the discovery universe: every research cell mapped to its series."""
 
     model_config = ConfigDict(extra="forbid")
-    cells: list[DiscoveryCellConfig]
+    cells: list[DiscoveryCellConfig] = Field(min_length=1)  # an empty universe is a config error
 
     @model_validator(mode="after")
     def _unique_cells(self) -> Self:
