@@ -138,11 +138,42 @@ def test_drain_with_a_real_parallel_pool_completes_within_budget() -> None:
     assert sorted(ran) == sorted(f"c{i}" for i in range(8))
 
 
-def test_drain_rejects_bad_concurrency() -> None:
-    with CpcvQueue() as q, pytest.raises(ValueError, match="max_in_flight"):
-        drain_within_budget(
-            q, lambda c, p: None, budget_seconds=1.0, executor=SerialExecutor(), max_in_flight=0
+def test_a_failing_candidate_is_quarantined_not_a_stall(tmp_path: Path) -> None:
+    db = tmp_path / "q.db"
+
+    def run_one(cid: str, _payload: dict[str, Any]) -> None:
+        if cid == "b":
+            raise RuntimeError("boom")  # a poison candidate
+
+    with CpcvQueue(db) as q:
+        for c in "abc":
+            q.enqueue(c, {})
+        result = drain_within_budget(
+            q,
+            run_one,
+            budget_seconds=1e9,
+            executor=SerialExecutor(),
+            max_in_flight=1,
+            clock=time.monotonic,
         )
+        assert result.completed == ("a", "c")  # a and c ran despite b failing (no abort/stall)
+        assert result.failed == ("b",)  # b is quarantined...
+        assert result.carried == ()
+        assert q.pending() == []
+    with CpcvQueue(db) as q:  # ... and the next night does not resurrect the poison candidate
+        assert q.pending() == []
+
+
+def test_drain_rejects_bad_budget_and_concurrency() -> None:
+    with CpcvQueue() as q:
+        with pytest.raises(ValueError, match="max_in_flight"):
+            drain_within_budget(
+                q, lambda c, p: None, budget_seconds=1.0, executor=SerialExecutor(), max_in_flight=0
+            )
+        with pytest.raises(ValueError, match="budget_seconds"):
+            drain_within_budget(
+                q, lambda c, p: None, budget_seconds=0.0, executor=SerialExecutor(), max_in_flight=1
+            )
 
 
 # --- config --------------------------------------------------------------------
