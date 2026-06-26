@@ -14,9 +14,9 @@
 
 | Phase | What | Owner | Status |
 |---|---|---|---|
-| **0** | Foundation + **engine bake-off** (Nautilus-shell vs lift-Vega) → engine chosen | [CC]/[You] | ⏳ |
-| **1a** | Rigor crown-jewel + data plane (+ population calibration) | [CC] | ⏳ |
-| **1b** | AI discovery — constrained track (strategist + quant-analyst + Workflow A) | [CC] | ⏳ |
+| **0** | Foundation + **engine bake-off** (Nautilus-shell vs lift-Vega) → engine chosen | [CC]/[You] | ✅ (0.GATE, ADR 0001) |
+| **1a** | Rigor crown-jewel + data plane (+ population calibration) | [CC] | ✅ (1a.GATE, ADR 0002) |
+| **1b** | AI discovery — constrained track (strategist + quant-analyst + Workflow A) | [CC] | 🔶 next |
 | **2** | Cockpit + copilot + Telegram surface | [CC] | ⏳ |
 | **3** | Paper + approval gate + worker (paper) + **deadman** | [CC]/[You] | ⏳ |
 | **4** | First real money — Delta live (staged) + start SEBI long-poles | [You]+[CC] | ⏳ |
@@ -58,7 +58,7 @@ Goal: a trusted single backtester with full statistical rigor + population calib
 | B1a.7 | Reproducibility ledger: record strategy/dataset/engine/cost versions + RNG seed per backtest | [CC] | ✅ (#40) `research/reproducibility.py`: `ReproRecord` captures **all** of `run_backtest`'s inputs (engine/dataset/instruments/risk/cost/strategy+params/seed/venue/cash/stress/funding) → a `fingerprint`; `ReproLedger` (SQLite) persists record+result hash and **enforces** reproducibility (same inputs, different result → raises). `run_and_record` binds the record to the run. Proven: a seeded stochastic strategy re-runs bit-for-bit; any input change flips the fingerprint. |
 | B1a.8 | vectorbt pre-screen (coarse walk-forward) upstream of CPCV; CPCV compute budget + parallel pool + carry-forward (R7) | [CC] | ✅ **B1a.8a** (#42) `research/prescreen.py` — vectorbt coarse walk-forward (faithful event-driven signals → vbt sim, `direction='both'` for short alpha) culls losers below a Sharpe floor before CPCV; **B1a.8b** (#43) `research/cpcv_budget.py` — persistent `CpcvQueue` + `drain_within_budget` (budget-aware over any Executor; poison-candidate quarantine) carries the unfinished queue, never truncates. vectorbt in the dev group only. |
 | B1a.9 | Population calibration harness (R14): synthetic noise / overfit / planted-signal populations; measure false-promote & false-reject rates | [You]+[CC] | ✅ (#45) `research/calibration.py` — noise/overfit/edge controls through the DSR-on-OOS gate. [You] ratified the Tier-2 bounds (false-promote ≤5%, false-reject ≤25%); measured (mean over 20 seeds) **false-promote 0.0, false-reject 0.056** at a realistic strong edge (Sharpe ~2.4, ~5y OOS). Review caught + fixed a rigged false-reject → gate loosened to `dsr.threshold` 0.92 (safe end). The gate is **conservative by design** — it certifies STRONG edges (Sharpe ~2.4+); weaker edges rejected (documented floor). |
-| **1a.GATE** | error-rate thresholds met; holdout/ledger unreachable by agents (TEST-3); DSR cell-invariance; reproducibility | [You]+[CC] | ⏳ all four hold |
+| **1a.GATE** | error-rate thresholds met; holdout/ledger unreachable by agents (TEST-3); DSR cell-invariance; reproducibility | [You]+[CC] | ✅ **[You] ratified 2026-06-26** (`docs/adr/0002`) — all four hold: error rates (B1a.9 — false-promote 0 / false-reject 0.056 at a realistic strong edge) + TEST-3 (B1a.6) + DSR cell-invariance (B1a.5) + reproducibility (B1a.7). **Conservative gate accepted** (`dsr.threshold` 0.92; certifies Sharpe ~2.4+ edges). **Phase 1a COMPLETE → Phase 1b open.** |
 
 ---
 
@@ -131,15 +131,15 @@ Goal: additive, last — the riskiest discovery track, hard-gated on isolation.
 > it here. Update via `/session-wrap` at the end of every session.
 
 ### 🟢 Unblocked — ready to start now
-- *(none — **all pure-`[CC]` Phase-1a BUILD work is done: B1a.1–B1a.9 ✅**. The only item left is **1a.GATE** ([You] ratification, below). After it ratifies, the next pure-`[CC]` work is **Phase 1b** — AI discovery.)*
+- **B1b.1 — `strategist` agent (constrained), the start of Phase 1b (AI discovery).** Parameterize vetted templates (**seed from Vega's ~7 example strategies** — the deferred `strategy/registry` + examples lift rejoins here) + whitelisted primitives; an economic-rationale prompt; **in-sample only, never sees the holdout** (TEST-3, enforced structurally by the B1a.6 no-ACL store); an originality check + a keyed-trial-ledger increment (B1a.5). Done-when: proposes a valid strategy config with the holdout untouched. Then **B1b.2** (`quant-analyst` agent: CPCV/PBO + DSR vs trial count + look-ahead/cost/regime → promote/reject/revise — *rejects a planted overfit, promotes a planted edge*) → **B1b.3** (Workflow A `discovery-cycle`) → **B1b.4** (`nightly-discovery` schedule + `/knowledge` RAG) → **1b.GATE**. All pure-`[CC]`, on the research box, under the **PR norm**, atop the now-trusted Phase-1a rigor gate. *(Environment note: the agents/pod live in the **Mac-CLI session** — pod + `lemma` CLI + research box; a cloud clone can't reach them.)*
 
 ### 🟡 Blocked — needs [You]
-- **1a.GATE — `[You]` ratification (the [CC] build is complete).** All four conditions are built + verified; `[You]` ratifies (or adjusts the calibration framing): **(1) error-rate thresholds met** — B1a.9 (#45): false-promote **0.0** ≤ 5%, false-reject **0.056** ≤ 25% at a realistic strong edge. *Caveat for ratification:* the gate is **conservative by design** — it certifies STRONG edges (annualized Sharpe ~2.4+, ~5y OOS); weaker edges (Sharpe 1–2) are rejected, and `dsr.threshold` was loosened 0.95 → **0.92** (the high/safe end of the feasible window) to meet the false-reject bound while keeping false-promote at 0. **(2) TEST-3** — holdout/ledger unreadable by agents via any tool (B1a.6, #38). **(3) DSR cell-invariance** (B1a.5, #36). **(4) reproducibility** — bit-for-bit from the record (B1a.7, #40). On ratification → **Phase 1b** (AI discovery: strategist + quant-analyst agents + Workflow A).
+- *(none — 1a.GATE is ratified. Phase 1b is pure-`[CC]` until **1b.GATE** + the Phase-3/4 money/live gates.)*
 
 ### ▶️ Next action for a cold session
-**Phase 0 COMPLETE (B0.1–B0.10 + 0.GATE ✅) + namespacing (#27). Phase 1a BUILD COMPLETE — B1a.1–B1a.9 ✅** — the full rigor crown-jewel: cold store + ingest (#28/#30), perp funding (#32), lifted rigor + portfolio funding (#34), CPCV+embargo+PBO (#35), DSR + keyed trial ledger (#36), no-ACL holdout → TEST-3 (#38), reproducibility ledger (#40), vectorbt pre-screen + CPCV budget (#42/#43), population-calibration harness (#45). **500 tests, ≥94% cov (all new rigor/research modules 100%); `main` clean, 0 open PRs.**
+**Phase 0 ✅ + Phase 1a ✅ (B1a.1–B1a.9 + 1a.GATE ratified, `docs/adr/0002`).** The full rigor crown-jewel is built, calibrated, and **trusted**: cold store + ingest (#28/#30), perp funding (#32), lifted rigor + portfolio funding (#34), CPCV+embargo+PBO (#35), DSR + keyed trial ledger (#36), no-ACL holdout → TEST-3 (#38), reproducibility ledger (#40), vectorbt pre-screen + CPCV budget (#42/#43), population-calibration (#45). **500 tests, ≥94% cov; `main` clean, 0 open PRs.**
 
-**Next: 1a.GATE — `[You]` ratification** (the four conditions are built + verified; see the 🟡 Blocked section). On ratification → **Phase 1b** (AI discovery). Note the conservative-gate caveat: the rigor gate certifies STRONG edges (Sharpe ~2.4+) and was loosened to `dsr.threshold` 0.92 to meet the false-reject bound.
+**Next: B1b.1 — the `strategist` agent (Phase 1b, AI discovery).** Pure-`[CC]`, on the research box, atop the trusted rigor gate (see the 🟢 Unblocked section). Then B1b.2 (`quant-analyst`) → B1b.3 (Workflow A) → B1b.4 (nightly schedule + RAG) → 1b.GATE. **Conservative-gate note:** the live `dsr.threshold` is **0.92** (certifies Sharpe ~2.4+ edges) — revisit if real candidates show it discards too much genuine edge.
 
 **Next: B1a.9 / 1a.GATE — needs `[You]`.** All pure-`[CC]` Phase-1a work is done. B1a.9 (population-calibration harness, R14) + 1a.GATE need `[You]`'s **Tier-2 params** (error-rate thresholds, DSR search-cell taxonomy, CPCV embargo size, synthetic-population defs). `[CC]` builds the harness once `[You]` set them; 1a.GATE then ratifies the four conditions (error rates · TEST-3 holdout/ledger isolation · DSR cell-invariance · reproducibility). After 1a.GATE → **Phase 1b** (AI discovery, pure `[CC]`).
 
