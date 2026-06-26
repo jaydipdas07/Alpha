@@ -190,9 +190,19 @@ class CalibrationConfig(BaseModel):
     oos_fraction: float = Field(gt=0, lt=1)  # the OOS slice the gate judges on
 
 
+class QuantAnalystConfig(BaseModel):
+    """Quant-analyst verdict thresholds (B1b.2) — the promote/reject/revise call."""
+
+    model_config = ConfigDict(extra="forbid")
+    min_oos_sharpe: float  # coarse OOS-edge screen: reject a candidate whose OOS Sharpe is <= this
+    fold_consistency_min: float = Field(ge=0, le=1)  # min positive-fold fraction to promote
+    oos_fraction: float = Field(gt=0, lt=1)  # the out-of-sample slice the verdict judges
+
+
 class RigorConfig(BaseModel):
     """``rigor.yaml`` — the statistical-rigor tunables (CPCV embargo + PBO + DSR + holdout +
-    the vectorbt pre-screen + the CPCV compute budget + population calibration)."""
+    the vectorbt pre-screen + the CPCV compute budget + population calibration + the
+    quant-analyst verdict)."""
 
     model_config = ConfigDict(extra="forbid")
     cpcv: CPCVConfig
@@ -202,6 +212,7 @@ class RigorConfig(BaseModel):
     prescreen: PrescreenConfig
     cpcv_budget: CpcvBudgetConfig
     calibration: CalibrationConfig
+    quant_analyst: QuantAnalystConfig
 
 
 def load_rigor_config() -> RigorConfig:
