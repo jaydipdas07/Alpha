@@ -1,0 +1,16 @@
+# Opening-range breakout (ORB) — intraday. ADR 0011: this file is the single
+# home for every ORB tunable. Editing one value here retunes the strategy; no
+# magic numbers live in code.
+strategy_id: opening_range_breakout
+
+# Length of the opening range, in minutes from the session's first bar. The high
+# and low printed in this window define the breakout levels.
+opening_range_minutes: 15
+
+# A close must clear the range edge by this many basis points to count as a
+# breakout (anti-whipsaw). 10 bps = 0.10%.
+breakout_buffer_bps: "10"
+
+# Fixed order size per entry (instrument units). The risk gate does final sizing
+# and can veto; this is the strategy's intended quantity.
+quantity: "1"

@@ -1,0 +1,4 @@
+# config/strategies/vwap_reversion.yaml — intraday VWAP reversion (R7, ADR 0011).
+strategy_id: vwap_reversion
+band_bps: "50"      # distance from VWAP (basis points) to act
+quantity: "1"

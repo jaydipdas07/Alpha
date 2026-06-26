@@ -1,0 +1,8 @@
+# config/strategies/rsi_bollinger.yaml — RSI/Bollinger mean-reversion (R7, ADR 0011).
+strategy_id: rsi_bollinger
+rsi_period: 14
+oversold: "30"      # RSI below this + below lower band -> long
+overbought: "70"    # RSI above this + above upper band -> short
+bollinger_period: 20
+num_std: "2"        # band width in standard deviations
+quantity: "1"
