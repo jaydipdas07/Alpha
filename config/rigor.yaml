@@ -1,0 +1,22 @@
+# config/rigor.yaml — statistical-rigor tunables (B1a.4+).
+# CLAUDE.md: no magic numbers in code — tweaking a rigor metric means editing
+# one value here, validated by RigorConfig (alpha_core.helpers.config).
+
+# Combinatorial Purged Cross-Validation (CPCV) — López de Prado, AFML ch. 12.
+# The in-sample series is split into `n_groups` contiguous groups; every choice of
+# `n_test_groups` groups is one test fold (C(n_groups, n_test_groups) backtest
+# paths), with observations within `embargo_frac` of a test block purged from the
+# training set so a label adjacent to the test cannot leak across the boundary.
+cpcv:
+  n_groups: 6          # N
+  n_test_groups: 2     # k  ->  C(6,2) = 15 paths
+  embargo_frac: 0.01   # fraction of observations purged/embargoed around each test block
+
+# Probability of Backtest Overfitting (PBO) via CSCV — Bailey, Borwein,
+# López de Prado & Zhu (2017), "The Probability of Backtest Overfitting".
+# The (time x trial) performance matrix is split into `n_splits` row-subsets; over
+# all C(n_splits, n_splits/2) in-sample/out-of-sample partitions, PBO is the
+# fraction in which the in-sample-best trial lands below the out-of-sample median.
+pbo:
+  n_splits: 10         # S (must be even)  ->  C(10,5) = 252 partitions
+  threshold: 0.5       # PBO above this flags selection overfitting (reject)

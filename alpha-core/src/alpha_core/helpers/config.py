@@ -113,3 +113,50 @@ class PortfolioConfig(BaseModel):
 def load_portfolio_config() -> PortfolioConfig:
     """Load + validate ``config/portfolio.yaml`` (honors ``ALPHA_CONFIG_DIR``)."""
     return PortfolioConfig.model_validate(load_yaml("portfolio.yaml"))
+
+
+# --- Statistical-rigor config (rigor.yaml) — CPCV + PBO (B1a.4) ---------------------
+class CPCVConfig(BaseModel):
+    """Combinatorial Purged Cross-Validation parameters (López de Prado, AFML ch. 12)."""
+
+    model_config = ConfigDict(extra="forbid")
+    n_groups: int = Field(gt=1)  # N: contiguous groups the in-sample series is split into
+    n_test_groups: int = Field(gt=0)  # k: groups held out per combinatorial test fold
+    embargo_frac: float = Field(ge=0, le=1)  # fraction purged/embargoed around each test block
+
+    @model_validator(mode="after")
+    def _check_test_groups(self) -> Self:
+        if self.n_test_groups >= self.n_groups:
+            raise ValueError(
+                f"n_test_groups={self.n_test_groups} must be < n_groups={self.n_groups} "
+                "(at least one group must remain for training)"
+            )
+        return self
+
+
+class PBOConfig(BaseModel):
+    """Probability-of-Backtest-Overfitting parameters (Bailey et al. 2017, CSCV)."""
+
+    model_config = ConfigDict(extra="forbid")
+    n_splits: int = Field(gt=1)  # S: row-subsets of the performance matrix (must be even)
+    threshold: float = Field(ge=0, le=1)  # PBO above this flags selection overfitting
+
+    @model_validator(mode="after")
+    def _check_even_splits(self) -> Self:
+        if self.n_splits % 2 != 0:
+            raise ValueError(f"n_splits={self.n_splits} must be even (CSCV uses S/2 in-sample)")
+        return self
+
+
+class RigorConfig(BaseModel):
+    """``rigor.yaml`` — the statistical-rigor tunables (CPCV embargo + PBO; DSR/holdout
+    cadence join as later increments land)."""
+
+    model_config = ConfigDict(extra="forbid")
+    cpcv: CPCVConfig
+    pbo: PBOConfig
+
+
+def load_rigor_config() -> RigorConfig:
+    """Load + validate ``config/rigor.yaml`` (honors ``ALPHA_CONFIG_DIR``)."""
+    return RigorConfig.model_validate(load_yaml("rigor.yaml"))
