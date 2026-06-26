@@ -333,12 +333,14 @@ async def test_portfolio_backtest_empty_bars() -> None:
 # --- perp funding on the portfolio path (R13) ----------------------------------
 
 CRYPTO_SYM = "BTCUSDT"
-CRYPTO_START = datetime(2026, 6, 26, tzinfo=UTC)  # UTC midnight, on the 8h funding grid
+EQUITY_SYM = "NSE:RELIANCE"
+FUNDING_START = datetime(2026, 6, 26, tzinfo=UTC)  # UTC midnight, on the 8h funding grid
 ONE_HOUR = timedelta(hours=1)
 
 
-class _BuyHoldCrypto(Strategy):
-    """Scored BUY on the first bar, then hold — so the perp accrues funding (R13)."""
+class _BuyHold(Strategy):
+    """Scored BUY on the first bar (for the bar's own asset class), then hold — so a
+    held perp accrues funding (R13) and a held equity is exercised against the filter."""
 
     def __init__(self) -> None:
         self._opened = False
@@ -351,7 +353,7 @@ class _BuyHoldCrypto(Strategy):
             Signal(
                 strategy_id="hold",
                 symbol=bar.symbol,
-                asset_class=AssetClass.CRYPTO,
+                asset_class=bar.asset_class,
                 side=Side.BUY,
                 quantity=Decimal("1"),
                 order_type=OrderType.MARKET,
@@ -364,14 +366,16 @@ class _BuyHoldCrypto(Strategy):
         return []
 
 
-def _crypto_flat_bars(hours: int) -> list[Bar]:
-    px = Decimal("30000")  # flat -> no churn, so funding is the only P&L driver
+def _flat_bars(
+    symbol: str, venue: Venue, asset_class: AssetClass, price: str, hours: int
+) -> list[Bar]:
+    px = Decimal(price)  # flat -> no churn, so funding is the only P&L driver
     return [
         Bar(
-            symbol=CRYPTO_SYM,
-            venue=Venue.BINANCE,
-            asset_class=AssetClass.CRYPTO,
-            start=CRYPTO_START + i * ONE_HOUR,
+            symbol=symbol,
+            venue=venue,
+            asset_class=asset_class,
+            start=FUNDING_START + i * ONE_HOUR,
             interval=ONE_HOUR,
             open=px,
             high=px,
@@ -381,6 +385,10 @@ def _crypto_flat_bars(hours: int) -> list[Bar]:
         )
         for i in range(hours)
     ]
+
+
+def _crypto_flat_bars(hours: int) -> list[Bar]:
+    return _flat_bars(CRYPTO_SYM, Venue.BINANCE, AssetClass.CRYPTO, "30000", hours)
 
 
 def _crypto_instruments() -> dict[str, InstrumentMeta]:
@@ -395,7 +403,7 @@ async def test_portfolio_funding_accrues_on_held_perp() -> None:
     async def _run(funding: FundingConfig | None) -> BacktestResult:
         return await run_portfolio_backtest(
             bars=_crypto_flat_bars(48),  # 2 days -> crosses six 8h funding boundaries
-            strategies=[_BuyHoldCrypto()],
+            strategies=[_BuyHold()],
             allocator=WeightAllocator(_portfolio_cfg()),
             portfolio_config=_portfolio_cfg(),
             instruments=_crypto_instruments(),
@@ -435,7 +443,7 @@ async def test_portfolio_funding_bleed_trips_the_gate() -> None:
     )
     result = await run_portfolio_backtest(
         bars=_crypto_flat_bars(48),
-        strategies=[_BuyHoldCrypto()],
+        strategies=[_BuyHold()],
         allocator=WeightAllocator(_portfolio_cfg()),
         portfolio_config=_portfolio_cfg(),
         instruments=_crypto_instruments(),
@@ -447,3 +455,24 @@ async def test_portfolio_funding_bleed_trips_the_gate() -> None:
     )
     assert result.halted  # the funding-bleed tripped the daily-loss kill (R13)
     assert result.stats.funding_paid < 0
+
+
+@pytest.mark.asyncio
+async def test_portfolio_funding_skips_non_crypto() -> None:
+    """Funding (R13) accrues ONLY on crypto perps: an equity held across the funding
+    boundaries pays none — even at a high rate that would bleed a perp — so the
+    asset-class filter on the portfolio path is honest (no phantom equity funding)."""
+    result = await run_portfolio_backtest(
+        bars=_flat_bars(EQUITY_SYM, Venue.NSE, AssetClass.EQUITY, "2000", 48),
+        strategies=[_BuyHold()],
+        allocator=WeightAllocator(_portfolio_cfg()),
+        portfolio_config=_portfolio_cfg(),
+        instruments={EQUITY_SYM: InstrumentMeta(asset_class=AssetClass.EQUITY)},
+        risk_config=_risk(),
+        cost_config=COST_CONFIG,
+        venue=Venue.NSE,
+        starting_cash=Decimal("1000000"),
+        funding=FundingConfig(interval_hours=8, rate=Decimal("0.05")),  # perp-bleeding rate
+    )
+    assert result.stats.funding_paid == 0  # equities never accrue perp funding
+    assert not result.halted  # ... so the perp-bleeding rate causes no equity halt
