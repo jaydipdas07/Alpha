@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
+from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol
 
 from alpha_core.core.enums import AssetClass, OrderState, OrderType, Side, Venue
@@ -210,6 +211,28 @@ class CcxtAdapter(BrokerAdapter):
             return  # idempotent: nothing we placed -> safe no-op
         vid, symbol = known.venue_order_id, known.symbol
         await self._call(lambda: self._ex.cancel_order(vid, symbol), idempotent=True)
+
+    async def cancel_all(self) -> list[str]:
+        """Cancel every open order against **broker truth** — independent-deadman safe.
+
+        Unlike ``cancel`` (which resolves a client id through the local ``_known``
+        map), this fetches the venue's open orders and cancels each by its venue id,
+        so a *fresh* adapter instance — e.g. the independent deadman's, whose
+        ``_known`` is empty for orders the worker placed — can still cancel them
+        (TEST-5). Returns the cancelled client ids; an order already gone at the
+        venue (``UnknownOrder``) is a safe skip, so it is idempotent."""
+        raw = await self._call(self._ex.fetch_open_orders, idempotent=True)
+        cancelled: list[str] = []
+        for o in raw:
+            vid = str(o["id"])
+            symbol = str(o["symbol"])
+            cid = str(o.get("clientOrderId") or vid)
+            try:
+                await self._call(partial(self._ex.cancel_order, vid, symbol), idempotent=True)
+            except UnknownOrder:
+                continue  # already terminal/gone -> safe no-op
+            cancelled.append(cid)
+        return cancelled
 
     async def modify(
         self,

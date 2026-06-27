@@ -35,6 +35,7 @@ from typing import Protocol, runtime_checkable
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alpha_core.core.enums import OrderState, OrderType, Side, Venue
+from alpha_core.core.errors import BrokerError
 from alpha_core.core.interfaces import BrokerAdapter
 from alpha_core.core.models import Order, Position
 from alpha_core.helpers.config import load_yaml
@@ -69,6 +70,8 @@ class HeartbeatFile:
         self._path = Path(path)
 
     def beat(self, now: datetime) -> None:
+        if now.tzinfo is None:  # a naive datetime would be silently localized on read-back
+            raise ValueError("heartbeat time must be tz-aware UTC")
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(self._path.suffix + ".tmp")
         tmp.write_text(now.astimezone(UTC).isoformat())
@@ -122,6 +125,7 @@ class DeadmanReport:
     first_trip: bool = False
     cancelled: list[str] = field(default_factory=list)
     flattened: list[Order] = field(default_factory=list)
+    failed: list[str] = field(default_factory=list)  # symbols a venue rejection blocked
 
 
 def _flatten_id(pos: Position, venue: Venue, episode: str) -> str:
@@ -156,6 +160,7 @@ class Deadman:
         self._log = get_logger("deadman")
         self._tripped = False
         self._episode: str | None = None
+        self._flatten_failures: set[str] = set()  # symbols already alerted this episode
         self._started = self._clock.now()
 
     def _trip_reason(self, now: datetime) -> str | None:
@@ -180,6 +185,9 @@ class Deadman:
         reason = self._trip_reason(now)
         if reason is None:
             if self._tripped:
+                # The worker is beating again — release. We don't re-confirm the book
+                # is flat here: the recovered worker's mandatory startup reconcile
+                # (broker = truth) adopts whatever the deadman's flatten fills did.
                 self._log.info("deadman_recovered")
                 self._notifier.send(
                     "deadman: worker recovered, releasing", severity=Severity.WARNING
@@ -191,20 +199,23 @@ class Deadman:
         first_trip = not self._tripped
         if first_trip:
             self._episode = now.isoformat()
+            self._flatten_failures = set()  # fresh per episode (alert each symbol once)
             self._log.error("deadman_trip", reason=reason)
             self._notifier.send(
                 f"DEADMAN TRIP: {reason} — flattening book", severity=Severity.CRITICAL
             )
         self._tripped = True
+        episode = self._episode or now.isoformat()  # always set on first_trip; fallback for typing
 
         cancelled = await self._adapter.cancel_all()
-        flattened = await self._flatten_positions(now)
-        if cancelled or flattened:
+        flattened, failed = await self._flatten_positions(now, episode)
+        if cancelled or flattened or failed:
             self._log.warning(
                 "deadman_flatten",
                 reason=reason,
                 cancelled=len(cancelled),
                 flattened=[o.symbol for o in flattened],
+                failed=failed,
             )
         return DeadmanReport(
             tripped=True,
@@ -212,18 +223,27 @@ class Deadman:
             first_trip=first_trip,
             cancelled=cancelled,
             flattened=flattened,
+            failed=failed,
         )
 
-    async def _flatten_positions(self, now: datetime) -> list[Order]:
-        """Close every open position with an opposing market order (broker truth)."""
-        assert self._episode is not None  # set on trip before this is called
+    async def _flatten_positions(
+        self, now: datetime, episode: str
+    ) -> tuple[list[Order], list[str]]:
+        """Close every open position with an opposing market order (broker truth).
+
+        Each position is isolated: a venue rejection on one symbol (dust residual
+        below min-notional, a transient error, a margin quirk) is logged + alerted
+        (once per symbol per episode, no spam) and the loop **continues** to the
+        rest — one bad symbol must never leave the others exposed. Returns the
+        orders successfully placed and the symbols that failed."""
         placed: list[Order] = []
+        failed: list[str] = []
         for pos in await self._adapter.get_positions():
             if pos.quantity == 0:
                 continue
             side = Side.SELL if pos.quantity > 0 else Side.BUY
             order = Order(
-                client_order_id=_flatten_id(pos, self._venue, self._episode),
+                client_order_id=_flatten_id(pos, self._venue, episode),
                 symbol=pos.symbol,
                 venue=self._venue,
                 asset_class=pos.asset_class,
@@ -235,9 +255,20 @@ class Deadman:
                 created_at=now,
                 updated_at=now,
             )
-            await self._adapter.place_order(order)
+            try:
+                await self._adapter.place_order(order)
+            except BrokerError as exc:
+                failed.append(pos.symbol)
+                self._log.error("deadman_flatten_failed", symbol=pos.symbol, error=str(exc))
+                if pos.symbol not in self._flatten_failures:  # alert once per symbol per episode
+                    self._flatten_failures.add(pos.symbol)
+                    self._notifier.send(
+                        f"DEADMAN could not flatten {pos.symbol}: {exc}",
+                        severity=Severity.CRITICAL,
+                    )
+                continue
             placed.append(order)
-        return placed
+        return placed, failed
 
     async def run(self) -> None:
         """Poll liveness forever; never die on a transient error (last line of defence)."""

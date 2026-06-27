@@ -11,6 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from alpha_core.core.enums import AssetClass, OrderState, OrderType, Side, Venue
+from alpha_core.core.errors import OrderRejected
 from alpha_core.core.interfaces import BrokerAdapter, BrokerOrderEvent
 from alpha_core.core.models import Order, Position, Tick
 from alpha_core.execution.deadman import (
@@ -187,6 +188,11 @@ def test_heartbeat_file_tolerates_garbage(tmp_path) -> None:  # type: ignore[no-
     assert HeartbeatFile(path).last_beat() is None
 
 
+def test_heartbeat_file_rejects_naive_time(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ValueError, match="tz-aware"):
+        HeartbeatFile(tmp_path / "hb.txt").beat(datetime(2026, 6, 28, 12, 0))  # naive
+
+
 # --- healthy worker: no action -------------------------------------------------
 
 
@@ -325,6 +331,58 @@ async def test_zero_quantity_position_is_skipped() -> None:
     dm = _deadman(adapter, _FakeLiveness(beat=T0 - timedelta(seconds=30)), clock)
     report = await dm.check()
     assert [o.symbol for o in report.flattened] == ["BTC/USDT"]  # the flat one is not traded
+
+
+async def test_one_rejected_symbol_does_not_block_the_others() -> None:
+    # B1: a venue rejection on one position must not leave the rest exposed.
+    clock = _FakeClock(T0)
+
+    class _PartialReject(_FakeAdapter):
+        async def place_order(self, order: Order) -> str:
+            if order.symbol == "BTC/USDT":
+                raise OrderRejected("min notional")  # a dust residual, say
+            return await super().place_order(order)
+
+    adapter = _PartialReject([_pos("BTC/USDT", "1"), _pos("ETH/USDT", "2")])
+    notifier = _RecordingNotifier()
+    dm = _deadman(adapter, _FakeLiveness(beat=T0 - timedelta(seconds=30)), clock, notifier=notifier)
+    report = await dm.check()
+    assert [o.symbol for o in report.flattened] == ["ETH/USDT"]  # ETH still flattened
+    assert report.failed == ["BTC/USDT"]
+    # the failure is alerted (loud), once
+    assert sum("could not flatten BTC/USDT" in m for m, _ in notifier.sent) == 1
+
+
+async def test_rejected_symbol_alerts_once_per_episode() -> None:
+    clock = _FakeClock(T0)
+
+    class _AlwaysReject(_FakeAdapter):
+        async def place_order(self, order: Order) -> str:
+            raise OrderRejected("min notional")
+
+    adapter = _AlwaysReject([_pos("BTC/USDT", "1")])
+    notifier = _RecordingNotifier()
+    dm = _deadman(adapter, _FakeLiveness(beat=T0 - timedelta(seconds=30)), clock, notifier=notifier)
+    await dm.check()
+    clock.advance(2)
+    await dm.check()
+    # two polls, both fail, but only one "could not flatten" alert for the episode
+    assert sum("could not flatten BTC/USDT" in m for m, _ in notifier.sent) == 1
+
+
+async def test_shrinking_residual_gets_a_new_flatten_id() -> None:
+    # qty-in-key: as a position reduces across polls the flatten id changes, so the
+    # residual is (re)targeted rather than dedup-suppressed by the prior larger order.
+    clock = _FakeClock(T0)
+    adapter = _FakeAdapter([_pos("BTC/USDT", "10")], auto_fill=False)
+    dm = _deadman(adapter, _FakeLiveness(beat=T0 - timedelta(seconds=30)), clock)
+    await dm.check()
+    id_full = adapter.placed[-1].client_order_id
+    adapter._positions = [_pos("BTC/USDT", "6")]  # partially reduced
+    clock.advance(2)
+    await dm.check()
+    id_residual = adapter.placed[-1].client_order_id
+    assert id_full != id_residual
 
 
 async def test_run_swallows_a_check_error_and_keeps_polling(monkeypatch) -> None:  # type: ignore[no-untyped-def]

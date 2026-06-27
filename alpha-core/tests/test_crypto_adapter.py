@@ -255,6 +255,37 @@ async def test_cancel_known_calls_exchange() -> None:
     assert ex.cancelled[0] == (vid, "BTC/USDT")
 
 
+async def test_cancel_all_cancels_by_venue_id_without_local_map() -> None:
+    # The independent deadman's adapter never placed these orders, so its _known is
+    # empty — cancel_all must still cancel them by venue id (broker truth), not no-op.
+    ex = FakeExchange()
+    ex._open = [
+        _ccxt_order(id="V1", clientOrderId="alpha-a", symbol="BTC/USDT", status="open"),
+        _ccxt_order(id="V2", clientOrderId="alpha-b", symbol="ETH/USDT", status="open"),
+    ]
+    adapter = CcxtAdapter(exchange=ex)  # fresh instance, empty _known
+    cancelled = await adapter.cancel_all()
+    assert set(cancelled) == {"alpha-a", "alpha-b"}
+    assert ex.cancelled == [("V1", "BTC/USDT"), ("V2", "ETH/USDT")]
+
+
+async def test_cancel_all_skips_an_already_gone_order() -> None:
+    class _Ex(FakeExchange):
+        async def cancel_order(self, id: str, symbol: str) -> dict[str, Any]:
+            if id == "V1":
+                raise OrderNotFound("already gone")  # ccxt name -> UnknownOrder
+            return await super().cancel_order(id, symbol)
+
+    ex = _Ex()
+    ex._open = [
+        _ccxt_order(id="V1", clientOrderId="alpha-a", symbol="BTC/USDT", status="open"),
+        _ccxt_order(id="V2", clientOrderId="alpha-b", symbol="ETH/USDT", status="open"),
+    ]
+    adapter = CcxtAdapter(exchange=ex)
+    cancelled = await adapter.cancel_all()
+    assert cancelled == ["alpha-b"]  # the gone one is skipped, the live one cancelled
+
+
 async def test_modify_requires_a_field() -> None:
     adapter = CcxtAdapter(exchange=FakeExchange())
     with pytest.raises(InvalidOrder):
