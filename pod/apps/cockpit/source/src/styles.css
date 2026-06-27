@@ -328,6 +328,9 @@ code,
 .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
+/* lightweight-charts fills its container (height set inline by the component) */
+.chart { width: 100%; }
+
 /* ---------- key/value rows ---------- */
 
 .kv {

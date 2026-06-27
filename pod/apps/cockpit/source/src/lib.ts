@@ -19,3 +19,39 @@ export function getItems<T>(value: unknown): T[] {
 export function errMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
+
+// --- display formatting -----------------------------------------------------
+// Money/price/qty arrive as string-encoded Decimal (B5). The cockpit is a read
+// surface: it parses to a JS number ONLY for visual display (charts, labels) and
+// never does money arithmetic — all P&L math lives in alpha-core. Never write a
+// derived money value back to the pod from here.
+
+/** Parse a string-Decimal / number for display. Non-finite → 0. */
+export function parseNum(value: unknown): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : 0
+  }
+  return 0
+}
+
+/** ISO/DATETIME string → unix seconds (UTC). Unparseable → 0. */
+export function toUnixSeconds(value: unknown): number {
+  if (typeof value !== 'string') return 0
+  const t = Date.parse(value)
+  return Number.isNaN(t) ? 0 : Math.floor(t / 1000)
+}
+
+/** Format a money value for display (thousands sep, 2dp). */
+export function fmtMoney(value: unknown): string {
+  return parseNum(value).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+}
+
+/** Compact integer for count tiles. `null` while loading → "…". */
+export function fmtInt(value: number | null): string {
+  return value === null ? '…' : value.toLocaleString('en-US')
+}

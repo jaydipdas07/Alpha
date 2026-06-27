@@ -58,6 +58,9 @@ export default defineConfig(({ mode }) => {
             target: proxyTarget,
             changeOrigin: true,
             secure: false,
+            // Proxy the datastore change-stream WebSocket too, so watchChanges /
+            // useLiveRecords are live in dev-proxy mode (not just the HTTP fetch).
+            ws: true,
             rewrite: (path: string) => path.replace(/^\/api/, ''),
           },
         },

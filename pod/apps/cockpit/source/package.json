@@ -12,6 +12,7 @@
   "dependencies": {
     "@tanstack/react-query": "^5",
     "lemma-sdk": "^0.5.2",
+    "lightweight-charts": "^5.2.0",
     "lucide-react": "^0.561.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
