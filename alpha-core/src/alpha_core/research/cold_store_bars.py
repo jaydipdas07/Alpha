@@ -7,9 +7,9 @@ delegated to *this* boundary. ``ColdStoreBarsFor`` is that production boundary: 
 discovery cell ``(market, window)`` to its configured cold-store series and reads it back.
 
 **Why this is in-sample-only — and why the adapter adds no holdout filter.** The cold store is the
-no-ACL *research* store. ``data.holdout.seal_dataset`` partitions the canonical dataset before the
+no-ACL *research* store. ``data.holdout.seal_cold_store`` seals the cold store per series before the
 research loop ever runs: research bars are written to the cold store, the rolled-forward holdout
-tail is written to a *physically separate* :class:`~alpha_core.data.holdout.HoldoutStore` at a
+tail is written to a *physically separate* holdout store at a
 disjoint root. So the cold store **does not contain the holdout** — isolation is structural, a
 property of where the bytes live, not a runtime check that could fail open. This adapter therefore
 reads the whole mapped series and passes it through: it deliberately does **not** re-apply a holdout

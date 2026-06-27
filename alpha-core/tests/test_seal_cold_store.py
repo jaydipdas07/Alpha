@@ -18,6 +18,7 @@ from alpha_core.core.enums import AssetClass, Venue
 from alpha_core.core.models import Bar
 from alpha_core.data.holdout import seal_cold_store
 from alpha_core.data.store import BarStore
+from alpha_core.research.cold_store_bars import ColdStoreBarsFor, SeriesCoord
 
 
 def _series(
@@ -101,6 +102,29 @@ def test_seal_reserves_each_series_own_holdout(tmp_path: Path) -> None:
     manifest = json.loads((holdout.root / "_windows.json").read_text())
     assert set(manifest) == set(windows)
     assert manifest["BINANCE|BTCUSDT|300"]["version"] == wa.version
+
+
+def test_cold_store_bars_reads_the_sealed_research_store_holdout_free(tmp_path: Path) -> None:
+    # the PRODUCTION path: seal_cold_store -> research store -> ColdStoreBarsFor (what the nightly
+    # uses). Every cell the adapter serves must be holdout-free (TEST-3 at the real boundary).
+    source = BarStore(tmp_path / "raw")
+    source.write_bars(_recent_crypto(100) + _old_equity(200))
+    research = BarStore(tmp_path / "research")
+    windows = seal_cold_store(
+        source, research=research, holdout=BarStore(tmp_path / "holdout"), fraction=0.25
+    )
+    adapter = ColdStoreBarsFor(
+        research,
+        {
+            (AssetClass.CRYPTO, "btc"): SeriesCoord("BTCUSDT", Venue.BINANCE, 300),
+            (AssetClass.EQUITY, "rel"): SeriesCoord("NSE:RELIANCE", Venue.NSE, 86400),
+        },
+    )
+    crypto = adapter(AssetClass.CRYPTO, "btc")
+    equity = adapter(AssetClass.EQUITY, "rel")
+    assert crypto and equity  # the adapter serves in-sample bars from the sealed store
+    assert all(b.start < windows["BINANCE|BTCUSDT|300"].start for b in crypto)
+    assert all(b.start < windows["NSE|NSE:RELIANCE|86400"].start for b in equity)
 
 
 def test_seal_rejects_non_disjoint_roots(tmp_path: Path) -> None:
