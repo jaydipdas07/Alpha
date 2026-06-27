@@ -71,11 +71,20 @@ def test_crossing_into_new_bucket_emits_prior_bar() -> None:
         Decimal("110"),
         Decimal("110"),
     )
+    assert emitted.volume == Decimal("2")  # the rolling tick's volume is NOT folded in
     # the new bar is forming; flush it
     nxt = bb.flush("BTC/USDT")
-    assert (
-        nxt is not None and nxt.start == T0 + timedelta(seconds=60) and nxt.open == Decimal("111")
-    )
+    assert nxt is not None and nxt.start == T0 + timedelta(seconds=60)
+    assert nxt.open == Decimal("111") and nxt.volume == Decimal("1")  # the rolling tick opened it
+
+
+def test_tick_exactly_on_boundary_opens_the_new_bucket() -> None:
+    bb = BarBuilder(60)
+    bb.add(_tick(sec=30, price="100"))
+    emitted = bb.add(_tick(sec=60, price="120"))  # exactly the boundary -> new bucket
+    assert emitted is not None and emitted.start == T0 and emitted.close == Decimal("100")
+    nxt = bb.flush("BTC/USDT")
+    assert nxt is not None and nxt.start == T0 + timedelta(seconds=60)
 
 
 def test_bucket_alignment_floors_to_interval() -> None:

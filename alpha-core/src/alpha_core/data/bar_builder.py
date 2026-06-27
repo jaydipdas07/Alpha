@@ -10,6 +10,15 @@ A bar is emitted (returned closed) when a tick arrives in a *later* bucket; the
 still-forming current bar is held until then. ``flush`` force-closes it (shutdown).
 Money is ``Decimal``; time is tz-aware UTC. No magic numbers — the interval is the
 caller's (from ``config/<env>.yaml`` ``bar_interval_seconds``).
+
+**Contract — tick-driven, one bar per *active* interval.** An interval that
+receives no tick produces no bar (the builder never invents a flat bar from a
+stale price — after a feed outage that would feed the strategy fiction). Cold-store
+klines are continuous, so for a bar-*count* strategy to stay backtest≡live (TEST-1)
+on a gappy instrument, the worker loop supplies continuous-bar semantics via a
+per-interval timer flush — not the builder. For the liquid seconds-to-minutes
+crypto cadence this is moot (no empty intervals). Bucket alignment assumes a
+sub-daily interval (``floor(epoch / interval)``), which is the live loop's range.
 """
 
 from __future__ import annotations
