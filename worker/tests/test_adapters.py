@@ -16,10 +16,13 @@ def _env(**over: object) -> EnvConfig:
         "allow_live": False,
         "worker_id": "w1",
         "venue": "v",
+        "strategy": "idle",
         "symbols": ["BTC/USDT"],
         "bar_interval_seconds": 60,
+        "state_db": "sqlite:///:memory:",
         "heartbeat_path": "var/run/hb",
         "command_poll_seconds": 1.0,
+        "reconcile_interval_seconds": 30,
     }
     base.update(over)
     return EnvConfig.model_validate(base)
