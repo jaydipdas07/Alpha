@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Alpha Cockpit Lemma app app.",
+  "description": "Alpha mission-control cockpit — a Lemma app.",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
