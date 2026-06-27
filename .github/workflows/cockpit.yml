@@ -1,0 +1,46 @@
+name: Cockpit
+
+# Guards the Phase-2 cockpit app (pod/apps/cockpit). The main CI workflow is
+# Python-only; this one typechecks + builds the Vite + lemma-sdk frontend so a
+# broken app can't merge. Path-filtered so Python-only PRs don't pay for it.
+
+on:
+  pull_request:
+    paths:
+      - "pod/apps/cockpit/**"
+      - ".github/workflows/cockpit.yml"
+  push:
+    branches: [main]
+    paths:
+      - "pod/apps/cockpit/**"
+      - ".github/workflows/cockpit.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cockpit-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: pod/apps/cockpit/source
+
+jobs:
+  typecheck-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: pod/apps/cockpit/source/package-lock.json
+
+      - name: Install (clean, from lockfile)
+        run: npm ci
+
+      - name: Typecheck + build (tsc -b && vite build)
+        run: npm run build

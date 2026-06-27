@@ -16,10 +16,12 @@ the pod holds no logic that can't be re-hosted in ~a week (TEST-8 / CLAUDE.md).
 - `pod.json` — bundle manifest (`format_version` 2: `name` + `description`); the pod identity.
 - `tables/<name>/<name>.json` — the 15 table schemas (B0.4). Money/price/qty columns are `TEXT` (B5).
 - `seed/seed.sh` — coherent demo seed (records don't round-trip through import; run once after import).
+- `apps/cockpit/` — the Phase-2 **cockpit** app: `cockpit.json` (manifest) + `source/` (a Vite +
+  `lemma-sdk` project). `source/` is built (`npm ci && npm run build` → `dist/`) on import. See **Apps** below.
 
-Further resources (functions, agents, workflows, schedules, surfaces, app) are authored with the Lemma
+Further resources (functions, agents, workflows, schedules, surfaces) are authored with the Lemma
 CLI — `lemma schema <resource>` / `lemma <resource> init` print the canonical shapes (see the
-`lemma-builder` skill) — in later phases (1b / Phase 2).
+`lemma-builder` skill) — as their phases land (the cockpit app began in Phase 2 / M2.1).
 
 ## Tables (B0.4)
 
@@ -36,9 +38,32 @@ composite keys are synthetic unique `TEXT` columns (`cell_key`, `dedup_key`, `po
 
 ```bash
 lemma pods import pod/ --dry-run --pod 019ef606-7b77-76f1-853a-978ddf819415   # validate
-lemma pods import pod/ --pod 019ef606-7b77-76f1-853a-978ddf819415             # upsert tables
+lemma pods import pod/ --pod 019ef606-7b77-76f1-853a-978ddf819415             # upsert tables (+ build the app)
 bash pod/seed/seed.sh                                                          # demo seed (run once)
 ```
+
+> A full `lemma pods import pod/` also **builds the cockpit app** (`apps/cockpit/source/` → `dist/`).
+> For a tables-only change, scope it: `lemma pods import pod/tables/<name>` (skips the app build).
+
+## Apps — cockpit (Phase 2)
+
+The **cockpit** (`apps/cockpit/`) is Alpha's mission-control dashboard — a Vite + `lemma-sdk` app that
+reads the pod's tables live (`watchChanges`) and renders system health, discovery, backtests (incl.
+**rejected** candidates), approvals, and risk. It is a **read + governance-command** surface only: it
+never places a live order (the worker executes — **TEST-8**) and never surfaces the holdout
+(**TEST-3**). Plan: `apps/cockpit/DESIGN.md`.
+
+```bash
+cd pod/apps/cockpit/source && npm install && npm run dev    # dev (auto-authed via the dev-token plugin)
+#   agent/headless browser → same-origin proxy (no CORS in dev):
+#   VITE_LEMMA_API_URL=/api LEMMA_DEV_PROXY_TARGET="https://api.lemma.work" npm run dev
+npm run build                                               # tsc -b && vite build → dist/  (CI + import run this)
+```
+
+**Deploy is operator-authorized** (outward-facing, like the B1b.4 nightly deploy): either the whole
+bundle (`lemma pods import pod/` rebuilds the app) or just the app
+(`lemma apps deploy cockpit --source-dir pod/apps/cockpit/source`), then `lemma apps open cockpit` to
+view it served. CC does **not** deploy the cockpit unattended.
 
 ## Status (Phase 0)
 
