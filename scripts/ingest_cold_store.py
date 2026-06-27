@@ -1,11 +1,18 @@
-"""B1a.1b — free-data ingest into the Parquet/DuckDB cold store.
+"""B1a.1b (+ richer-data) — free-data ingest into the Parquet/DuckDB cold store.
 
-Fetches a **fixed past window** of (1) Binance **BTC-perp 5m** and (2) a
-**NIFTY-constituent daily** (RELIANCE, via Yahoo), normalizes to core ``Bar``s,
-and writes them to the ``BarStore``. The load is **reproducible**: a fixed window
-+ the store's idempotent writes mean re-running never duplicates and is byte-stable.
+Loads a **richer** research dataset from public endpoints (no keys):
 
-Mac-CLI / network (public endpoints, no keys) — not a CI test. Run:
+- Binance **BTC-perp 5m** over ~7 weeks (paginated, <=1500 klines/request) + **BTC-perp daily** over
+  ~3 years — the intraday and daily crypto series.
+- Four **NIFTY-constituent daily** series (RELIANCE, TCS, INFY, HDFCBANK) over ~3 years via Yahoo.
+
+Fixed past windows + the store's idempotent, deterministic writes mean re-running never duplicates
+and is byte-stable (reproducibility, B1a.7). The store root defaults to the repo's gitignored
+``data_cold/`` but can be overridden with ``ALPHA_COLD_ROOT`` (so the same script loads whichever
+cold store the research box / nightly run reads).
+
+Mac-CLI / network — **not a CI test** (the pure transforms in ``data/ingest/`` are the tested part;
+this is the network glue). Run:
 
     uv run python scripts/ingest_cold_store.py
 """
@@ -13,18 +20,36 @@ Mac-CLI / network (public endpoints, no keys) — not a CI test. Run:
 from __future__ import annotations
 
 import json
+import os
+import time
 import urllib.request
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from alpha_core.core.enums import Venue
+from alpha_core.core.models import Bar
 from alpha_core.data.ingest.binance import klines_to_bars
 from alpha_core.data.ingest.yahoo import chart_to_bars
 from alpha_core.data.store import BarStore
 
-STORE_ROOT = Path(__file__).resolve().parents[1] / "data_cold"  # gitignored
+# The store root: ALPHA_COLD_ROOT, else the repo's gitignored data_cold/.
+STORE_ROOT = Path(
+    os.environ.get("ALPHA_COLD_ROOT") or (Path(__file__).resolve().parents[1] / "data_cold")
+)
 _HEADERS = {"User-Agent": "Mozilla/5.0 (alpha-research cold-store ingest)"}
+
+# Fixed past windows (reproducible — a fixed end, never "now").
+_END = datetime(2026, 6, 21, tzinfo=UTC)  # recent boundary (covers the B1a.1b seed -> contiguous)
+_3Y = datetime(2023, 6, 1, tzinfo=UTC)  # ~3 years of daily history
+_INTRADAY_START = datetime(2026, 5, 1, tzinfo=UTC)  # ~7 weeks of 5-minute intraday
+
+# (yahoo_symbol, store_symbol) NIFTY constituents — store symbols match instruments.yaml.
+_EQUITIES = [
+    ("RELIANCE.NS", "NSE:RELIANCE"),
+    ("TCS.NS", "NSE:TCS"),
+    ("INFY.NS", "NSE:INFY"),
+    ("HDFCBANK.NS", "NSE:HDFCBANK"),
+]
 
 
 def _get(url: str) -> Any:
@@ -41,53 +66,80 @@ def _s(dt: datetime) -> int:
     return int(dt.timestamp())
 
 
+def _binance_klines(
+    symbol: str, *, interval: str, interval_seconds: int, start: datetime, end: datetime
+) -> list[Bar]:
+    """Paginate Binance futures klines over ``[start, end)`` — the API caps a request at 1500 bars,
+    so step the cursor past the last bar until the window is covered (or a short page signals the
+    end). A hard request cap means a non-advancing cursor can never loop forever; the store dedups,
+    so overlapping pages are harmless."""
+    bars: list[Bar] = []
+    cursor = start
+    for _ in range(200):  # hard bound — ~a year of 5m is < 130 pages
+        url = (
+            f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={interval}"
+            f"&startTime={_ms(cursor)}&endTime={_ms(end)}&limit=1500"
+        )
+        klines = _get(url)
+        if not klines:
+            break
+        bars.extend(klines_to_bars(klines, symbol=symbol, interval_seconds=interval_seconds))
+        cursor = datetime.fromtimestamp(int(klines[-1][0]) / 1000, tz=UTC) + timedelta(
+            seconds=interval_seconds
+        )
+        if len(klines) < 1500 or cursor >= end:
+            break
+        time.sleep(0.2)  # polite to the public endpoint
+    return bars
+
+
 def ingest_binance(store: BarStore) -> int:
-    """BTC-perp 5m for a fixed UTC day from Binance's public futures API."""
-    start, end = datetime(2026, 6, 20, tzinfo=UTC), datetime(2026, 6, 21, tzinfo=UTC)
-    url = (
-        "https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=5m"
-        f"&startTime={_ms(start)}&endTime={_ms(end)}&limit=1500"
-    )
-    bars = klines_to_bars(_get(url), symbol="BTCUSDT", interval_seconds=300)
-    on_disk = store.write_bars(bars)
-    print(f"[binance] BTCUSDT 5m {start.date()}: fetched {len(bars)} bars -> {on_disk} on disk")
-    return store.write_bars(bars)  # re-write the same window -> idempotent (count unchanged)
+    """BTC-perp 5m (~7 weeks, paginated) + BTC-perp daily (~3y) from Binance's public API."""
+    total = 0
+    for interval, seconds, start, label in (
+        ("5m", 300, _INTRADAY_START, "5m ~7wk"),
+        ("1d", 86400, _3Y, "1d ~3y"),
+    ):
+        bars = _binance_klines(
+            "BTCUSDT", interval=interval, interval_seconds=seconds, start=start, end=_END
+        )
+        on_disk = store.write_bars(bars)
+        print(f"[binance] BTCUSDT {label}: fetched {len(bars)} bars -> {on_disk} on disk")
+        total += len(bars)
+    return total
 
 
 def ingest_nse(store: BarStore) -> int:
-    """A NIFTY constituent (RELIANCE) daily for a fixed month via Yahoo v8 chart."""
-    start, end = datetime(2026, 5, 1, tzinfo=UTC), datetime(2026, 6, 1, tzinfo=UTC)
-    url = (
-        "https://query1.finance.yahoo.com/v8/finance/chart/RELIANCE.NS"
-        f"?period1={_s(start)}&period2={_s(end)}&interval=1d"
-    )
-    bars = chart_to_bars(_get(url), symbol="NSE:RELIANCE")
-    on_disk = store.write_bars(bars)
-    print(
-        f"[nse]     NSE:RELIANCE 1d {start.date()}..{end.date()}: fetched {len(bars)} -> {on_disk}"
-    )
-    return store.write_bars(bars)  # deliberate re-write -> idempotent (count unchanged)
+    """Four NIFTY constituents, daily ~3y, via the Yahoo v8 chart endpoint."""
+    total = 0
+    for yahoo_symbol, store_symbol in _EQUITIES:
+        url = (
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}"
+            f"?period1={_s(_3Y)}&period2={_s(_END)}&interval=1d"
+        )
+        bars = chart_to_bars(_get(url), symbol=store_symbol)
+        on_disk = store.write_bars(bars)
+        print(f"[nse]     {store_symbol} 1d ~3y: fetched {len(bars)} -> {on_disk} on disk")
+        total += len(bars)
+        time.sleep(0.2)
+    return total
 
 
 def main() -> None:
     store = BarStore(STORE_ROOT)
-    print(f"=== B1a.1b cold-store ingest -> {STORE_ROOT} ===")
-    btc = ingest_binance(store)
-    nse = ingest_nse(store)
+    print(f"=== cold-store ingest (richer dataset) -> {STORE_ROOT} ===")
+    crypto = ingest_binance(store)
+    equity = ingest_nse(store)
 
-    # read-back proof + the DuckDB analytical layer over the cold store
-    got = store.read_bars(symbol="BTCUSDT", venue=Venue.BINANCE, interval_seconds=300)
-    print(
-        f"[verify]  BTCUSDT round-trip read: {len(got)} bars (== {btc} on disk: {len(got) == btc})"
-    )
+    # the DuckDB analytical layer over the cold store — one row per series, with span.
     con = store.connect()
     rows = con.execute(
-        "SELECT venue, asset_class, count(*) n, min(start) lo, max(start) hi "
-        "FROM bars GROUP BY venue, asset_class ORDER BY venue"
+        "SELECT symbol, venue, asset_class, interval_seconds, count(*) n, "
+        "min(start) lo, max(start) hi FROM bars GROUP BY 1, 2, 3, 4 ORDER BY 2, 1, 4"
     ).fetchall()
-    for venue, asset, n, lo, hi in rows:
-        print(f"[duckdb]  {venue}/{asset}: {n} bars  {lo} .. {hi}")
-    print(f"=== done — {btc + nse} bars in the cold store, reproducible (idempotent re-write) ===")
+    for symbol, venue, _asset, interval_s, n, lo, hi in rows:
+        print(f"[duckdb]  {venue}/{symbol} {interval_s}s: {n} bars  {lo} .. {hi}")
+    print(f"=== done — {crypto + equity} bars ingested, reproducible (idempotent re-write) ===")
 
 
 if __name__ == "__main__":
