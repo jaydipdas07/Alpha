@@ -387,6 +387,59 @@ code,
   color: var(--ink-2);
 }
 
+/* ---------- health strip (M2.2) ---------- */
+
+.health-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.ht-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ht-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+.ht-label svg {
+  color: var(--ink-2);
+}
+
+.ht-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 46px;
+}
+
+.ht-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ht-sub {
+  font-size: 12px;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------- status badge ---------- */
 
 .badge {

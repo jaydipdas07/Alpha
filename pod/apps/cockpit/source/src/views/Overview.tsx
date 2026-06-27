@@ -7,6 +7,7 @@ import { useCount } from '../hooks'
 import { parseNum, toUnixSeconds, fmtMoney, fmtInt, errMessage } from '../lib'
 import { Panel, Metric, EmptyState, StatusBadge, type StatusKind } from '../ui'
 import { EquityChart, type EquityPoint } from '../components/EquityChart'
+import { HealthStrip } from '../components/HealthStrip'
 
 // Overview — the live default screen. M2.1 completed here: the equity curve
 // streams from `pnl_snapshots` via watchChanges (`useLiveRecords`, merged in
@@ -61,7 +62,8 @@ export function Overview() {
   const strategies = useCount('strategies')
   const backtests = useCount('backtests')
   const discovery = useCount('discovery_runs')
-  const riskEvents = useCount('risk_events')
+  // risk is covered by the health strip above; show deployments here instead.
+  const deployments = useCount('deployments')
 
   // Most-recent window, newest first (buildEquity re-sorts ascending for display).
   const pnl = useLiveRecords({
@@ -72,14 +74,17 @@ export function Overview() {
   })
   const points = useMemo(() => buildEquity(pnl.records), [pnl.records])
   const latestEquity = points.length ? points[points.length - 1].value : null
+  const dataAsOf = points.length ? (points[points.length - 1].time as number) : null
 
   return (
     <div className="stack">
+      <HealthStrip dataAsOf={dataAsOf} />
+
       <div className="grid cols-4">
         <Metric label="Strategies" value={fmtInt(strategies)} />
         <Metric label="Backtests" value={fmtInt(backtests)} />
         <Metric label="Discovery runs" value={fmtInt(discovery)} />
-        <Metric label="Risk events" value={fmtInt(riskEvents)} />
+        <Metric label="Deployments" value={fmtInt(deployments)} />
       </div>
 
       <Panel
