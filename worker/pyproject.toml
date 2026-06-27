@@ -7,6 +7,9 @@ license = { text = "Proprietary" }
 authors = [{ name = "Jaydip Das" }]
 dependencies = [
     "alpha-core",
+    # The crypto execution venue SDK (Binance/Delta) — the worker is the sole
+    # executor, so ccxt lives here, never in alpha-core (no broker SDK in the kernel).
+    "ccxt>=4.5.0",
 ]
 
 [build-system]

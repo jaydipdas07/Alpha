@@ -80,6 +80,14 @@ module = ["vectorbt.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 
+# ccxt (the worker's crypto venue SDK) ships partial/untyped APIs; treat it as
+# untyped so --strict doesn't flag every call. The adapter's own boundary types
+# (Order/Fill/Position in/out) stay fully checked. Worker dep, never the kernel.
+[[tool.mypy.overrides]]
+module = ["ccxt.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
 [tool.pytest.ini_options]
 testpaths = ["alpha-core/tests", "worker/tests"]
 addopts = "-q"

@@ -1,0 +1,62 @@
+"""Adapter-factory tests (M3.1) — the live-gate guard + ccxt construction."""
+
+from __future__ import annotations
+
+import pytest
+
+from alpha_core.adapters.crypto_ccxt import CcxtAdapter
+from worker.adapters import build_adapter
+from worker.config import EnvConfig, VenueConfig
+
+
+def _env(**over: object) -> EnvConfig:
+    base: dict[str, object] = {
+        "env": "paper",
+        "mode": "paper",
+        "allow_live": False,
+        "worker_id": "w1",
+        "venue": "v",
+        "symbols": ["BTC/USDT"],
+        "bar_interval_seconds": 60,
+        "heartbeat_path": "var/run/hb",
+        "command_poll_seconds": 1.0,
+    }
+    base.update(over)
+    return EnvConfig.model_validate(base)
+
+
+def _venue(**over: object) -> VenueConfig:
+    base: dict[str, object] = {
+        "adapter": "ccxt",
+        "exchange": "binance",
+        "venue": "BINANCE",
+        "market_type": "spot",
+        "testnet": True,
+        "streaming": True,
+        "key_env": "TESTKEY",
+    }
+    base.update(over)
+    return VenueConfig.model_validate(base)
+
+
+def test_build_refuses_live_venue_when_gate_shut() -> None:
+    # A non-testnet venue under a paper env must be refused before any key/ccxt touch.
+    with pytest.raises(PermissionError, match="live gate is shut"):
+        build_adapter(_venue(testnet=False), _env())
+
+
+def test_build_requires_keys(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("TESTKEY_API_KEY", raising=False)
+    monkeypatch.delenv("TESTKEY_API_SECRET", raising=False)
+    with pytest.raises(RuntimeError, match="missing TESTKEY_API_KEY"):
+        build_adapter(_venue(), _env())
+
+
+async def test_build_testnet_adapter_with_keys(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("TESTKEY_API_KEY", "k")
+    monkeypatch.setenv("TESTKEY_API_SECRET", "s")
+    adapter = build_adapter(_venue(), _env())
+    try:
+        assert isinstance(adapter, CcxtAdapter)
+    finally:
+        await adapter.aclose()  # release the ccxt aiohttp session
