@@ -20,11 +20,12 @@ lean worker kernel and on the research box alike:
 from __future__ import annotations
 
 import math
-import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import combinations
 from math import ceil
+
+from alpha_core.backtest.metrics import sharpe
 
 
 def _contiguous_groups(n: int, k: int) -> list[range]:
@@ -95,15 +96,6 @@ def cpcv_splits(
     return splits
 
 
-def _sharpe(returns: Sequence[float]) -> float:
-    """Per-bucket Sharpe (mean / population stdev) — the CSCV selection metric; 0 when
-    there is no dispersion or too few points to define one."""
-    if len(returns) < 2:
-        return 0.0
-    sd = statistics.pstdev(returns)
-    return statistics.fmean(returns) / sd if sd > 0 else 0.0
-
-
 @dataclass(frozen=True, slots=True)
 class PBOResult:
     """The CSCV verdict — Probability of Backtest Overfitting."""
@@ -149,8 +141,8 @@ def probability_of_backtest_overfitting(
         is_set = {t for s in combo for t in subsets[s]}
         is_rows = sorted(is_set)
         oos_rows = [t for t in range(n_time) if t not in is_set]
-        is_perf = [_sharpe([performance[t][n] for t in is_rows]) for n in range(n_trials)]
-        oos_perf = [_sharpe([performance[t][n] for t in oos_rows]) for n in range(n_trials)]
+        is_perf = [sharpe([performance[t][n] for t in is_rows]) for n in range(n_trials)]
+        oos_perf = [sharpe([performance[t][n] for t in oos_rows]) for n in range(n_trials)]
         best = is_perf.index(max(is_perf))  # in-sample-best trial (first on ties)
         # Relative rank of the IS-best trial among OOS performances, mapped into (0, 1):
         # rank = how many trials it is >= to (1..N), normalized by N+1 to avoid 0 and 1.

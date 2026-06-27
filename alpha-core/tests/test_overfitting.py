@@ -14,7 +14,6 @@ from pydantic import ValidationError
 
 from alpha_core.backtest.overfitting import (
     _contiguous_groups,
-    _sharpe,
     cpcv_splits,
     probability_of_backtest_overfitting,
 )
@@ -158,16 +157,6 @@ def test_rigor_config_rejects_invalid() -> None:
         CPCVConfig(n_groups=4, n_test_groups=4, embargo_frac=0.0)  # k >= N
     with pytest.raises(ValidationError, match="even"):
         PBOConfig(n_splits=7, threshold=0.5)  # odd
-
-
-# --- helper contracts ----------------------------------------------------------
-
-
-def test_sharpe_degenerate_cases() -> None:
-    assert _sharpe([]) == 0.0  # no points
-    assert _sharpe([1.0]) == 0.0  # too few to define dispersion
-    assert _sharpe([3.0, 3.0, 3.0]) == 0.0  # no dispersion (a flat trial)
-    assert _sharpe([1.0, 2.0, 3.0]) > 0.0  # positive mean, real dispersion
 
 
 def test_contiguous_groups_rejects_bad_k() -> None:

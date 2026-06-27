@@ -46,6 +46,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from alpha_core.backtest.dsr import deflated_sharpe_ratio
+from alpha_core.backtest.metrics import sharpe
 from alpha_core.backtest.overfitting import (
     cpcv_splits,
     probability_of_backtest_overfitting,
@@ -74,14 +75,6 @@ class Assessment:
     pbo: float | None = None  # cell-level PBO, when the cell trial matrix was supplied
 
 
-def _sharpe(returns: Sequence[float]) -> float:
-    """Per-series Sharpe (mean / population stdev); 0 with too few points or no dispersion."""
-    if len(returns) < 2:
-        return 0.0
-    sd = statistics.pstdev(returns)
-    return statistics.fmean(returns) / sd if sd > 0 else 0.0
-
-
 def _oos(returns: Sequence[float], oos_fraction: float) -> list[float]:
     """The trailing ``oos_fraction`` of the series (>= 2 points) — the same slice the B1a.9
     calibration judges on."""
@@ -94,7 +87,7 @@ def deflation_inputs(
     """The DSR deflation inputs for a cell's trial population — the trial count and the cross-trial
     OOS Sharpe variance — computed *exactly* as the B1a.9 calibration does, so the discovery-loop
     caller and the calibration can never diverge. Feed the result to ``assess``."""
-    sharpes = [_sharpe(_oos(trial, oos_fraction)) for trial in population]
+    sharpes = [sharpe(_oos(trial, oos_fraction)) for trial in population]
     variance = statistics.pvariance(sharpes) if sharpes else 0.0
     return len(population), variance
 
@@ -140,7 +133,7 @@ class QuantAnalyst:
             raise ValueError(f"need >= {min_obs} observations to assess; got {len(returns)}")
 
         oos = _oos(returns, of)
-        oos_sharpe = _sharpe(oos)
+        oos_sharpe = sharpe(oos)
 
         # 1. coarse OOS-edge screen — no OOS edge (incl. a high-IS/poor-OOS overfit): reject.
         if oos_sharpe <= self._qa.min_oos_sharpe:
@@ -219,5 +212,5 @@ class QuantAnalyst:
             n_test_groups=self._cpcv.n_test_groups,
             embargo_frac=self._cpcv.embargo_frac,
         )  # always >= 1 split once len(returns) >= 2 * n_groups (validated in assess)
-        positive = sum(1 for sp in splits if _sharpe([returns[i] for i in sp.test]) > 0)
+        positive = sum(1 for sp in splits if sharpe([returns[i] for i in sp.test]) > 0)
         return positive / len(splits)

@@ -9,7 +9,6 @@ from pydantic import ValidationError
 
 from alpha_core.helpers.config import CalibrationConfig, load_rigor_config
 from alpha_core.research.calibration import (
-    _sharpe,
     calibrate,
     edge_population,
     noise_population,
@@ -82,12 +81,6 @@ def test_population_shapes_and_determinism() -> None:
 def test_calibrate_rejects_too_few_candidates() -> None:
     with pytest.raises(ValueError, match=">= 2 candidates"):
         calibrate([[0.1, 0.2, 0.3]], oos_fraction=0.5, dsr_threshold=0.95)
-
-
-def test_sharpe_degenerate_cases() -> None:
-    assert _sharpe([]) == 0.0  # too few points
-    assert _sharpe([5.0, 5.0, 5.0]) == 0.0  # no dispersion
-    assert _sharpe([1.0, 2.0, 3.0]) > 0.0  # positive mean + real dispersion
 
 
 # --- config --------------------------------------------------------------------
