@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-27T16:20:51+00:00",
+  "source": "config/*.yaml — regenerate via scripts/snapshot_cockpit_config.py",
   "files": {
     "risk": {
       "base_capital": 25000,

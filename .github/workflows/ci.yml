@@ -39,3 +39,8 @@ jobs:
 
       - name: Pytest (with coverage gate)
         run: uv run --no-sync pytest --cov --cov-report=term-missing
+
+      - name: Cockpit config snapshot is fresh
+        run: |
+          uv run --no-sync python scripts/snapshot_cockpit_config.py
+          git diff --exit-code pod/apps/cockpit/source/src/generated/config.json

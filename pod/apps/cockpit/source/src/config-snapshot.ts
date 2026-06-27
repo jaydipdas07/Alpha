@@ -6,7 +6,7 @@ import snapshot from './generated/config.json'
 // scripts/snapshot_cockpit_config.py. The cockpit NEVER edits config.
 
 export interface ConfigSnapshot {
-  generated_at: string
+  source: string
   files: Record<string, unknown>
 }
 
@@ -22,6 +22,7 @@ export function flatten(value: unknown, prefix = ''): Array<[string, unknown]> {
   const entries: Array<[string, unknown]> = Array.isArray(value)
     ? value.map((v, i) => [String(i), v])
     : Object.entries(value)
+  if (!entries.length) return [[prefix, Array.isArray(value) ? '[]' : '{}']]
   const out: Array<[string, unknown]> = []
   for (const [k, v] of entries) {
     const path = prefix ? `${prefix}.${k}` : k

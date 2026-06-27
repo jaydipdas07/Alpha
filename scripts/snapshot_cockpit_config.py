@@ -17,7 +17,6 @@ in code); this is a read-only mirror, clearly labelled with its source + time.
 
 from __future__ import annotations
 
-import datetime
 import json
 import pathlib
 
@@ -38,8 +37,10 @@ def main() -> None:
         path = CONFIG_DIR / f"{name}.yaml"
         files[name] = yaml.safe_load(path.read_text()) if path.exists() else None
 
+    # Deterministic output (no wall-clock) so CI can assert config.json is in sync
+    # with config/ via a regenerate + `git diff --exit-code`.
     snapshot = {
-        "generated_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+        "source": "config/*.yaml — regenerate via scripts/snapshot_cockpit_config.py",
         "files": files,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)

@@ -12,6 +12,7 @@ const SECTIONS: { file: string; title: string }[] = [
   { file: 'rigor', title: 'Rigor gate' },
   { file: 'discovery', title: 'Discovery' },
   { file: 'portfolio', title: 'Portfolio' },
+  { file: 'research', title: 'Research box' },
 ]
 
 function fmtVal(v: unknown): string {
@@ -42,8 +43,8 @@ export function Config() {
     <div className="stack">
       <div className="snapshot-note">
         Read-only snapshot of <code>config/</code> — the single source of truth. Edits happen in
-        config + PR review, never in the cockpit. Generated{' '}
-        <span className="mono">{CONFIG.generated_at}</span>.
+        config + PR review, never in the cockpit; regenerate via{' '}
+        <span className="mono">scripts/snapshot_cockpit_config.py</span>.
       </div>
 
       {sections.length ? (
