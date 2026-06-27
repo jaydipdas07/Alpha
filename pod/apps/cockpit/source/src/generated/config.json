@@ -1,0 +1,457 @@
+{
+  "generated_at": "2026-06-27T16:20:51+00:00",
+  "files": {
+    "risk": {
+      "base_capital": 25000,
+      "currency": "INR",
+      "limits": {
+        "max_gross_exposure": 1.0,
+        "max_position_per_instrument": 0.2,
+        "max_concurrent_positions": 5,
+        "max_order_value": 0.25,
+        "max_orders_per_minute": 10,
+        "max_daily_loss_halt": 0.02,
+        "max_loss_per_trade": 0.01,
+        "per_segment_exposure_cap": 0.6
+      },
+      "kill_switch": {
+        "triggers": {
+          "daily_loss_breach": true,
+          "consecutive_errors": 3,
+          "feed_stale_seconds": 60,
+          "reconciliation_mismatch": true,
+          "manual": true
+        },
+        "on_trip": {
+          "cancel_all_orders": true,
+          "flatten_positions": true,
+          "alert": true
+        },
+        "rearm": "manual"
+      },
+      "margin": {
+        "enabled": true,
+        "leverage": {
+          "equity": 5,
+          "index_option": 8,
+          "crypto": 3
+        }
+      },
+      "portfolio": {
+        "max_gross_weight": "1.0",
+        "max_weight_per_name": "0.15",
+        "max_weight_per_sector": "0.40"
+      }
+    },
+    "costs": {
+      "slippage": {
+        "equity": {
+          "type": "bps",
+          "value": 5
+        },
+        "crypto": {
+          "type": "bps",
+          "value": 8
+        },
+        "index_option": {
+          "type": "ticks",
+          "value": 2
+        },
+        "default_spread": {
+          "equity": 0.0005,
+          "crypto": 0.0008,
+          "index_option_ticks": 1
+        },
+        "stress_multiplier": 2
+      },
+      "segments": {
+        "equity_intraday": {
+          "brokerage": {
+            "pct": 0.0003,
+            "flat": 20,
+            "mode": "min"
+          },
+          "stt": {
+            "pct": 0.00025,
+            "side": "sell"
+          },
+          "exchange_txn": {
+            "pct": 2.97e-05
+          },
+          "sebi": {
+            "pct": 1e-06
+          },
+          "gst": {
+            "pct": 0.18,
+            "true": [
+              "brokerage",
+              "exchange_txn",
+              "sebi"
+            ]
+          },
+          "stamp_duty": {
+            "pct": 3e-05,
+            "side": "buy"
+          }
+        },
+        "index_option": {
+          "brokerage": {
+            "flat": 20,
+            "mode": "flat"
+          },
+          "stt": {
+            "pct": 0.000625,
+            "side": "sell",
+            "true": "premium"
+          },
+          "exchange_txn": {
+            "pct": 0.0003503,
+            "true": "premium"
+          },
+          "sebi": {
+            "pct": 1e-06
+          },
+          "gst": {
+            "pct": 0.18,
+            "true": [
+              "brokerage",
+              "exchange_txn",
+              "sebi"
+            ]
+          },
+          "stamp_duty": {
+            "pct": 3e-05,
+            "side": "buy",
+            "true": "premium"
+          }
+        },
+        "crypto": {
+          "trading_fee": {
+            "pct": 0.001,
+            "side": "both"
+          },
+          "tds": {
+            "pct": 0.01,
+            "side": "sell"
+          }
+        }
+      },
+      "funding": {
+        "crypto": {
+          "interval_hours": 8,
+          "rate": "0.0001"
+        }
+      }
+    },
+    "rigor": {
+      "cpcv": {
+        "n_groups": 6,
+        "n_test_groups": 2,
+        "embargo_frac": 0.01
+      },
+      "pbo": {
+        "n_splits": 10,
+        "threshold": 0.5
+      },
+      "dsr": {
+        "threshold": 0.92
+      },
+      "holdout": {
+        "fraction": 0.2
+      },
+      "prescreen": {
+        "min_sharpe": 0.0,
+        "n_windows": 3
+      },
+      "cpcv_budget": {
+        "budget_seconds": 28800,
+        "pool_size": 4
+      },
+      "calibration": {
+        "false_promote_max": 0.05,
+        "false_reject_max": 0.25,
+        "n_candidates": 40,
+        "n_obs": 2400,
+        "edge_drift": 0.15,
+        "oos_fraction": 0.5
+      },
+      "quant_analyst": {
+        "min_oos_sharpe": 0.0,
+        "fold_consistency_min": 0.6,
+        "oos_fraction": 0.5
+      }
+    },
+    "instruments": {
+      "segments": {
+        "equity": {
+          "session": {
+            "open": "09:15",
+            "close": "15:30",
+            "tz": "Asia/Kolkata"
+          },
+          "no_new_entry_time": "15:10",
+          "square_off_time": "15:15"
+        },
+        "crypto": {
+          "clock": "24x7",
+          "funding": true
+        },
+        "index_option": {
+          "session": {
+            "open": "09:15",
+            "close": "15:30",
+            "tz": "Asia/Kolkata"
+          },
+          "no_new_entry_time": "15:10",
+          "square_off_time": "15:15",
+          "rollover_before": "1d"
+        }
+      },
+      "instruments": {
+        "NSE:RELIANCE": {
+          "segment": "equity",
+          "asset_class": "EQUITY",
+          "quote_currency": "INR",
+          "lot_size": 1,
+          "tick_size": "0.05",
+          "circuit_band_pct": "0.10"
+        },
+        "NSE:TCS": {
+          "segment": "equity",
+          "asset_class": "EQUITY",
+          "quote_currency": "INR",
+          "lot_size": 1,
+          "tick_size": "0.05",
+          "circuit_band_pct": "0.10"
+        },
+        "NSE:INFY": {
+          "segment": "equity",
+          "asset_class": "EQUITY",
+          "quote_currency": "INR",
+          "lot_size": 1,
+          "tick_size": "0.05",
+          "circuit_band_pct": "0.10"
+        },
+        "NSE:HDFCBANK": {
+          "segment": "equity",
+          "asset_class": "EQUITY",
+          "quote_currency": "INR",
+          "lot_size": 1,
+          "tick_size": "0.05",
+          "circuit_band_pct": "0.10"
+        },
+        "NFO:NIFTY-EXAMPLE-CE": {
+          "segment": "index_option",
+          "asset_class": "INDEX_OPTION",
+          "quote_currency": "INR",
+          "lot_size": 75,
+          "tick_size": "0.05"
+        },
+        "BTC/USDT": {
+          "segment": "crypto",
+          "asset_class": "CRYPTO",
+          "venues": [
+            "BINANCE",
+            "BYBIT"
+          ],
+          "quote_currency": "USDT",
+          "lot_size": "0.00001",
+          "tick_size": "0.01"
+        },
+        "ETH/USDT": {
+          "segment": "crypto",
+          "asset_class": "CRYPTO",
+          "venues": [
+            "BINANCE",
+            "BYBIT"
+          ],
+          "quote_currency": "USDT",
+          "lot_size": "0.0001",
+          "tick_size": "0.01"
+        },
+        "SOL/USDT": {
+          "segment": "crypto",
+          "asset_class": "CRYPTO",
+          "venues": [
+            "BINANCE",
+            "BYBIT"
+          ],
+          "quote_currency": "USDT",
+          "lot_size": "0.001",
+          "tick_size": "0.01"
+        },
+        "BTC/USD:USD": {
+          "segment": "crypto",
+          "asset_class": "CRYPTO",
+          "venues": [
+            "DELTA"
+          ],
+          "quote_currency": "USD",
+          "lot_size": "1",
+          "tick_size": "0.5"
+        },
+        "ETH/USD:USD": {
+          "segment": "crypto",
+          "asset_class": "CRYPTO",
+          "venues": [
+            "DELTA"
+          ],
+          "quote_currency": "USD",
+          "lot_size": "1",
+          "tick_size": "0.05"
+        },
+        "SOL/USD:USD": {
+          "segment": "crypto",
+          "asset_class": "CRYPTO",
+          "venues": [
+            "DELTA"
+          ],
+          "quote_currency": "USD",
+          "lot_size": "1",
+          "tick_size": "0.0001"
+        },
+        "XRP/USD:USD": {
+          "segment": "crypto",
+          "asset_class": "CRYPTO",
+          "venues": [
+            "DELTA"
+          ],
+          "quote_currency": "USD",
+          "lot_size": "1",
+          "tick_size": "0.0001"
+        },
+        "BNB/USD:USD": {
+          "segment": "crypto",
+          "asset_class": "CRYPTO",
+          "venues": [
+            "DELTA"
+          ],
+          "quote_currency": "USD",
+          "lot_size": "1",
+          "tick_size": "0.001"
+        },
+        "DOGE/USD:USD": {
+          "segment": "crypto",
+          "asset_class": "CRYPTO",
+          "venues": [
+            "DELTA"
+          ],
+          "quote_currency": "USD",
+          "lot_size": "1",
+          "tick_size": "0.000001"
+        },
+        "UNI/USD:USD": {
+          "segment": "crypto",
+          "asset_class": "CRYPTO",
+          "venues": [
+            "DELTA"
+          ],
+          "quote_currency": "USD",
+          "lot_size": "1",
+          "tick_size": "0.0001"
+        },
+        "PAXG/USD:USD": {
+          "segment": "crypto",
+          "asset_class": "CRYPTO",
+          "venues": [
+            "DELTA"
+          ],
+          "quote_currency": "USD",
+          "lot_size": "1",
+          "tick_size": "0.01"
+        },
+        "XAUT/USD:USD": {
+          "segment": "crypto",
+          "asset_class": "CRYPTO",
+          "venues": [
+            "DELTA"
+          ],
+          "quote_currency": "USD",
+          "lot_size": "1",
+          "tick_size": "0.01"
+        },
+        "ZEC/USD:USD": {
+          "segment": "crypto",
+          "asset_class": "CRYPTO",
+          "venues": [
+            "DELTA"
+          ],
+          "quote_currency": "USD",
+          "lot_size": "1",
+          "tick_size": "0.01"
+        }
+      }
+    },
+    "venues": null,
+    "discovery": {
+      "n_candidates": 8,
+      "cells": [
+        {
+          "market": "CRYPTO",
+          "window": "btcusdt-5m",
+          "symbol": "BTCUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 300,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "btcusdt-1d",
+          "symbol": "BTCUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 86400,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "EQUITY",
+          "window": "reliance-1d",
+          "symbol": "NSE:RELIANCE",
+          "venue": "NSE",
+          "interval_seconds": 86400,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "EQUITY",
+          "window": "tcs-1d",
+          "symbol": "NSE:TCS",
+          "venue": "NSE",
+          "interval_seconds": 86400,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "EQUITY",
+          "window": "infy-1d",
+          "symbol": "NSE:INFY",
+          "venue": "NSE",
+          "interval_seconds": 86400,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "EQUITY",
+          "window": "hdfcbank-1d",
+          "symbol": "NSE:HDFCBANK",
+          "venue": "NSE",
+          "interval_seconds": 86400,
+          "starting_cash": "1000000"
+        }
+      ]
+    },
+    "portfolio": {
+      "allocation": {
+        "method": "equal_weight",
+        "top_k": 5,
+        "max_weight_per_name": "0.15",
+        "gross_cap": "1.0"
+      },
+      "rebalance": {
+        "no_trade_band": "0.02",
+        "turnover_cap": "1.0",
+        "min_position_weight": "0.05"
+      }
+    },
+    "research": {
+      "heartbeat_timeout_seconds": 120,
+      "lease_ttl_seconds": 1800
+    }
+  }
+}

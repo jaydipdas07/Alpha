@@ -71,6 +71,11 @@ bundle (`lemma pods import pod/` rebuilds the app) or just the app
 (`lemma apps deploy cockpit --source-dir pod/apps/cockpit/source`), then `lemma apps open cockpit` to
 view it served. CC does **not** deploy the cockpit unattended.
 
+The **Config + Exchanges** views render a committed, read-only snapshot of `config/*.yaml`
+(`source/src/generated/config.json`) — the cockpit is a pod app and can't read the repo's config at
+runtime. Regenerate it when config changes: `uv run python scripts/snapshot_cockpit_config.py`. The
+cockpit never edits config (single source of truth; no magic numbers in code).
+
 ## Status (Phase 0)
 
 - **B0.1: ✅** bundle scaffolded (manifest + this README).
