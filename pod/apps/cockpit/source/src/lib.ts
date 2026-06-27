@@ -56,6 +56,20 @@ export function fmtInt(value: number | null): string {
   return value === null ? '…' : value.toLocaleString('en-US')
 }
 
+/** Fixed-decimal number for display; null/undefined/empty/NaN → "—". */
+export function fmtNum(value: unknown, dp = 2): string {
+  if (value === null || value === undefined || value === '') return '—'
+  const n = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(n) ? n.toFixed(dp) : '—'
+}
+
+/** A 0..1 fraction as a percent; null/NaN → "—". */
+export function fmtPct(value: unknown, dp = 1): string {
+  if (value === null || value === undefined || value === '') return '—'
+  const n = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(n) ? `${(n * 100).toFixed(dp)}%` : '—'
+}
+
 /** Seconds since an ISO/DATETIME timestamp (for fresh/stale logic). `null` if unparseable. */
 export function secondsAgo(iso: unknown, now: number = Date.now()): number | null {
   if (typeof iso !== 'string') return null
