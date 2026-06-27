@@ -15,6 +15,10 @@ Mac-CLI / network — **not a CI test** (the pure transforms in ``data/ingest/``
 this is the network glue). Run:
 
     uv run python scripts/ingest_cold_store.py
+
+**The cold store this writes is RAW (unsealed).** Before a real 1b.GATE the dataset must be sealed
+(``data.holdout.seal_dataset`` — the research/holdout split, B1a.6) and the nightly pointed at the
+sealed *research* store, so the discovery loop never sees the rolled-forward holdout (TEST-3/R6).
 """
 
 from __future__ import annotations
@@ -69,13 +73,13 @@ def _s(dt: datetime) -> int:
 def _binance_klines(
     symbol: str, *, interval: str, interval_seconds: int, start: datetime, end: datetime
 ) -> list[Bar]:
-    """Paginate Binance futures klines over ``[start, end)`` — the API caps a request at 1500 bars,
-    so step the cursor past the last bar until the window is covered (or a short page signals the
-    end). A hard request cap means a non-advancing cursor can never loop forever; the store dedups,
-    so overlapping pages are harmless."""
+    """Paginate Binance futures klines over ``[start, end]`` (Binance's ``endTime`` is inclusive, so
+    a bar opening exactly at ``end`` is returned) — the API caps a request at 1500 bars, so step the
+    cursor past the last bar until the window is covered (or a short page ends it). The store dedups
+    by ``start``, so overlapping pages are harmless."""
     bars: list[Bar] = []
     cursor = start
-    for _ in range(200):  # hard bound — ~a year of 5m is < 130 pages
+    for _ in range(200):  # hard bound against a non-advancing cursor
         url = (
             f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={interval}"
             f"&startTime={_ms(cursor)}&endTime={_ms(end)}&limit=1500"
@@ -90,6 +94,8 @@ def _binance_klines(
         if len(klines) < 1500 or cursor >= end:
             break
         time.sleep(0.2)  # polite to the public endpoint
+    else:  # ran the full page cap without finishing -> window too wide; fail loud, never truncate
+        raise RuntimeError(f"{symbol} {interval}: window exceeds the 200-page ingest cap")
     return bars
 
 
