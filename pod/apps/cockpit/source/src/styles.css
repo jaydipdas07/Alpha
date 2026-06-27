@@ -812,6 +812,20 @@ code,
   color: var(--ok);
 }
 
+.evidence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.evidence .mono {
+  color: var(--ink);
+}
+
 .muted { color: var(--muted); }
 .stack { display: flex; flex-direction: column; gap: 12px; }
 .row { display: flex; align-items: center; gap: 10px; }
