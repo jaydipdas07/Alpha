@@ -5,8 +5,10 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
+
 from alpha_core.core.enums import AssetClass, Venue
-from alpha_core.data.ingest.binance import kline_to_bar, klines_to_bars
+from alpha_core.data.ingest.binance import aggtrades_to_bars, kline_to_bar, klines_to_bars
 from alpha_core.data.ingest.yahoo import chart_to_bars
 
 # A real-shaped Binance fapi 5m kline (openTime ms, then string OHLCV, closeTime, ...).
@@ -36,6 +38,87 @@ def test_binance_klines_to_bars_pages() -> None:
         datetime(2024, 6, 26, 0, 0, tzinfo=UTC),
         datetime(2024, 6, 26, 0, 5, tzinfo=UTC),
     ]
+
+
+# A real-shaped archive kline CSV (string fields) with a header row to skip.
+_ARCHIVE_KLINE_CSV = [
+    ["open_time", "open", "high", "low", "close", "volume", "close_time"],  # header
+    ["1719360000000", "60000.00", "60100.50", "59900.10", "60050.25", "123.456", "1719360000999"],
+]
+
+# A real-shaped archive aggTrade block: [aggId, price, qty, firstId, lastId, ts_ms, isBuyerMaker].
+_AGGTRADES = [
+    [
+        "agg_trade_id",
+        "price",
+        "quantity",
+        "first",
+        "last",
+        "transact_time",
+        "is_buyer_maker",
+    ],  # header
+    ["1", "100.0", "1.0", "10", "10", "1719360000100", "true"],  # bucket A (00:00:00)
+    ["2", "101.0", "2.0", "11", "11", "1719360000500", "false"],
+    ["3", "99.5", "0.5", "12", "12", "1719360000900", "true"],
+    ["4", "99.5", "1.0", "13", "13", "1719360001000", "false"],  # bucket B (00:00:01)
+    ["5", "100.5", "1.5", "14", "14", "1719360001800", "true"],
+]
+
+
+def test_klines_to_bars_skips_archive_csv_header() -> None:
+    bars = klines_to_bars(_ARCHIVE_KLINE_CSV, symbol="BTCUSDT", interval_seconds=1)
+    assert len(bars) == 1  # the header row is skipped, the data row parsed
+    assert bars[0].close == Decimal("60050.25") and isinstance(bars[0].close, Decimal)
+
+
+def test_aggtrades_to_bars_folds_ohlcv_per_bucket() -> None:
+    bars = aggtrades_to_bars(_AGGTRADES, symbol="BTCUSDT", interval_seconds=1)
+    assert len(bars) == 2
+    a, b = bars
+    assert a.start == datetime(2024, 6, 26, 0, 0, 0, tzinfo=UTC)
+    assert (a.open, a.high, a.low, a.close, a.volume) == (
+        Decimal("100.0"),
+        Decimal("101.0"),
+        Decimal("99.5"),
+        Decimal("99.5"),
+        Decimal("3.5"),
+    )
+    assert b.start == datetime(2024, 6, 26, 0, 0, 1, tzinfo=UTC)
+    assert (b.open, b.high, b.low, b.close, b.volume) == (
+        Decimal("99.5"),
+        Decimal("100.5"),
+        Decimal("99.5"),
+        Decimal("100.5"),
+        Decimal("2.5"),
+    )
+    assert a.interval == timedelta(seconds=1)
+    assert all(isinstance(x, Decimal) for x in (a.open, a.volume))  # money never float
+
+
+def test_aggtrades_to_bars_empty_is_empty() -> None:
+    assert aggtrades_to_bars([], symbol="BTCUSDT", interval_seconds=1) == []
+    # a header-only stream yields no bars either
+    assert aggtrades_to_bars([_AGGTRADES[0]], symbol="BTCUSDT", interval_seconds=1) == []
+
+
+def test_aggtrades_to_bars_gap_makes_no_phantom_bar() -> None:
+    # Trades only at second 0 and second 5 -> exactly 2 bars, no empty buckets in between.
+    rows = [
+        ["1", "100", "1", "0", "0", "1719360000000", "true"],  # 00:00:00
+        ["2", "105", "2", "0", "0", "1719360005000", "true"],  # 00:00:05 (4s gap)
+    ]
+    bars = aggtrades_to_bars(rows, symbol="BTCUSDT", interval_seconds=1)
+    assert [b.start.second for b in bars] == [0, 5]  # no phantom 1..4
+    assert bars[0].volume == Decimal("1") and bars[1].open == Decimal("105")  # single-trade bucket
+
+
+def test_aggtrades_to_bars_rejects_out_of_order() -> None:
+    rows = [
+        ["1", "100", "1", "0", "0", "1719360005000", "true"],  # 00:00:05
+        ["2", "101", "1", "0", "0", "1719360000000", "true"],  # 00:00:00 — goes backwards
+    ]
+    with pytest.raises(ValueError, match="time-ordered"):
+        aggtrades_to_bars(rows, symbol="BTCUSDT", interval_seconds=1)
 
 
 def test_yahoo_chart_to_bars_skips_null_days() -> None:
