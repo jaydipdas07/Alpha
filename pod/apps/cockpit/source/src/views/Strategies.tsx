@@ -72,7 +72,12 @@ export function Strategies() {
     limit: 500,
     sort: [{ field: 'created_at', direction: 'desc' }],
   })
-  const deps = useLiveRecords({ client: lemmaClient, tableName: 'deployments', limit: 500 })
+  const deps = useLiveRecords({
+    client: lemmaClient,
+    tableName: 'deployments',
+    limit: 500,
+    sort: [{ field: 'created_at', direction: 'desc' }],
+  })
 
   const depCount = useMemo(() => {
     const m = new Map<string, number>()
@@ -118,8 +123,10 @@ export function Strategies() {
         </div>
       }
     >
-      {strat.error ? (
-        <div className="alert">Could not load strategies: {errMessage(strat.error)}</div>
+      {strat.error || deps.error ? (
+        <div className="alert">
+          Could not load strategies: {errMessage(strat.error || deps.error)}
+        </div>
       ) : strat.isLoading ? (
         <div className="skeleton" style={{ height: 200 }} />
       ) : (

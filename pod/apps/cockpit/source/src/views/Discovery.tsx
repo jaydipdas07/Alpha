@@ -34,7 +34,22 @@ function noteOf(detail: unknown): string {
   const d = detail as Record<string, unknown>
   if (typeof d.error === 'string') return `error: ${d.error}`
   if (typeof d.note === 'string') return d.note
-  if (Array.isArray(d.promoted) && d.promoted.length) return `promoted: ${d.promoted.join(', ')}`
+  if (Array.isArray(d.promoted) && d.promoted.length) {
+    // The nightly emits promoted as objects ({fingerprint, …}); the seed uses
+    // plain names. Render whichever is present, never "[object Object]".
+    const names = d.promoted
+      .map((p) => {
+        if (typeof p === 'string') return p
+        if (p && typeof p === 'object') {
+          const o = p as Record<string, unknown>
+          if (typeof o.name === 'string') return o.name
+          if (typeof o.fingerprint === 'string') return o.fingerprint.slice(0, 8)
+        }
+        return ''
+      })
+      .filter(Boolean)
+    if (names.length) return `promoted: ${names.join(', ')}`
+  }
   return ''
 }
 
