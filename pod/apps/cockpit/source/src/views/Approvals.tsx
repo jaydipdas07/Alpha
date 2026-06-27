@@ -47,7 +47,12 @@ export function Approvals() {
     sort: [{ field: 'created_at', direction: 'desc' }],
   })
   const strat = useLiveRecords({ client: lemmaClient, tableName: 'strategies', limit: 500 })
-  const bt = useLiveRecords({ client: lemmaClient, tableName: 'backtests', limit: 500 })
+  const bt = useLiveRecords({
+    client: lemmaClient,
+    tableName: 'backtests',
+    limit: 500,
+    sort: [{ field: 'created_at', direction: 'desc' }],
+  })
 
   const stratById = useMemo(() => {
     const m = new Map<string, Record<string, unknown>>()
@@ -55,13 +60,13 @@ export function Approvals() {
     return m
   }, [strat.records])
 
-  // latest backtest per strategy (records arrive newest-first if sorted; we just
-  // keep the first seen per strategy_id as the representative evidence)
+  // latest COMPLETE backtest per strategy as the review evidence (fetched
+  // created_at desc → the first complete one seen is the most recent).
   const btByStrategy = useMemo(() => {
     const m = new Map<string, Record<string, unknown>>()
     for (const b of bt.records) {
       const sid = String(b.strategy_id ?? '')
-      if (sid && !m.has(sid)) m.set(sid, b)
+      if (sid && b.status === 'complete' && !m.has(sid)) m.set(sid, b)
     }
     return m
   }, [bt.records])
@@ -82,7 +87,13 @@ export function Approvals() {
           venue: text(d.venue),
           mode: text(d.mode) || 'paper',
           capital: text(d.capital),
-          riskLimits: Object.entries(limits).map(([k, v]) => [k, String(v)] as [string, string]),
+          riskLimits: Object.entries(limits).map(
+            ([k, v]) =>
+              [k, typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)] as [
+                string,
+                string,
+              ],
+          ),
           sharpe: b ? num(b.sharpe) : null,
           dsr: b ? num(b.deflated_sharpe) : null,
           pbo: b ? num(b.cpcv_pbo) : null,
@@ -104,7 +115,7 @@ export function Approvals() {
         <Panel title="Approvals" icon={ClipboardCheck}>
           <div className="alert">Could not load approvals: {errMessage(error)}</div>
         </Panel>
-      ) : deps.isLoading ? (
+      ) : deps.isLoading || strat.isLoading || bt.isLoading ? (
         <Panel title="Approvals" icon={ClipboardCheck}>
           <div className="skeleton" style={{ height: 120 }} />
         </Panel>
