@@ -677,6 +677,54 @@ code,
   color: var(--accent);
 }
 
+/* ---------- config snapshot + exchanges (M2.4) ---------- */
+
+.snapshot-note {
+  font-size: 12px;
+  color: var(--ink-2);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  line-height: 1.55;
+}
+
+.cfg-grid {
+  margin: 0;
+}
+
+.cfg-grid-row {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) auto;
+  gap: 16px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.cfg-grid-row:last-child {
+  border-bottom: 0;
+}
+
+.cfg-grid dt {
+  color: var(--ink-2);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.cfg-grid dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.venue-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .muted { color: var(--muted); }
 .stack { display: flex; flex-direction: column; gap: 12px; }
 .row { display: flex; align-items: center; gap: 10px; }
