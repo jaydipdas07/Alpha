@@ -1,0 +1,12 @@
+# Worker + deadman runtime tunables (Phase 3). The worker is the sole live
+# executor; the deadman is its INDEPENDENT watchdog (TEST-5 / R1). No magic
+# numbers in code — every budget lives here (CLAUDE.md: single source of truth).
+
+deadman:
+  enabled: true
+  # Recovery-time objective: if the worker hasn't beaten within this many seconds
+  # the deadman declares it dead and flattens the book via broker REST. Paper
+  # default is generous; the live value is tuned against measured flatten latency.
+  rto_seconds: 15
+  # How often the deadman re-checks liveness (must be <= rto so it reacts in time).
+  poll_interval_seconds: 2

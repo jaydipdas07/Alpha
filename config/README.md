@@ -16,6 +16,7 @@ Files land with the task that first needs them:
 | `portfolio.yaml` | pure allocator — scored signals → target weights (D6) | Phase 1a |
 | `instruments.yaml` | tradable universe, lot/tick sizes | Phase 1+ |
 | `venues.yaml` | adapter registry (Delta / Binance / Kite / Dhan / Upstox) | Phase 1+ |
+| `worker.yaml` | worker + **deadman** runtime budgets (RTO, poll cadence; TEST-5) | Phase 3 (B3.1) |
 | `strategies/<name>.yaml` | per-strategy parameters | B0.7+ |
 | `<env>.yaml` (`dev` / `paper` / `live`) | infra: active adapters, DB, log level, the live gate | Phase 0+ |
 
