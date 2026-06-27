@@ -382,7 +382,28 @@
         }
       }
     },
-    "venues": null,
+    "venues": {
+      "venues": {
+        "binance-spot-testnet": {
+          "adapter": "ccxt",
+          "exchange": "binance",
+          "venue": "BINANCE",
+          "market_type": "spot",
+          "testnet": true,
+          "streaming": true,
+          "key_env": "BINANCE_TESTNET"
+        },
+        "delta-testnet": {
+          "adapter": "ccxt",
+          "exchange": "delta",
+          "venue": "DELTA",
+          "market_type": "swap",
+          "testnet": true,
+          "streaming": false,
+          "key_env": "DELTA_TESTNET"
+        }
+      }
+    },
     "discovery": {
       "n_candidates": 8,
       "cells": [
