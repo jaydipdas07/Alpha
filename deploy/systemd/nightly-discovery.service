@@ -1,0 +1,26 @@
+# B1b.4b — the nightly strategy-discovery run on the research box (AWS).
+#
+# A oneshot unit that runs the portable discovery sweep (scripts/nightly_discovery.py) over the
+# local cold store and writes a per-run JSON record under discovery_runs/. Research-plane only:
+# no broker keys, no network, no live orders. Fired by nightly-discovery.timer.
+#
+# WHY a research-box cron (not a Lemma-triggered pod function): the cold store is local Parquet on
+# the research box, not in the pod — a pod function can't read it. The box runs discovery; the pod
+# only receives the result records (synced from discovery_runs/, see docs/nightly-discovery.md).
+#
+# Adjust User / WorkingDirectory / the uv path to the box (defaults match docs/research-host.md:
+# ubuntu@<elastic-ip>, the repo at ~/alpha). Deploy + verify: docs/nightly-discovery.md.
+[Unit]
+Description=Alpha nightly strategy-discovery run (research-plane)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/alpha
+# `uv run` syncs the venv to the lockfile then runs the script (self-healing if deps drift).
+ExecStart=/home/ubuntu/.local/bin/uv run python scripts/nightly_discovery.py
+# Never hang the box: a stuck run is killed far inside the day's window.
+TimeoutStartSec=3h
+Nice=10

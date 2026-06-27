@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from alpha_core.core.enums import AssetClass
@@ -79,6 +80,45 @@ class NightlyReport:
     def survivors(self) -> list[StrategyProposal]:
         """Every promoted candidate across all cells/templates."""
         return [survivor for report in self.reports for survivor in report.survivors]
+
+    def summary(self, *, generated_at: datetime) -> dict[str, object]:
+        """A JSON-safe record of the night, shaped to sync to the pod ``discovery_runs`` table (one
+        entry per cycle: market / family / window / trial_count / survivors + detail).
+        ``generated_at`` is injected (tz-aware UTC — the edge supplies it, never a wall-clock read
+        here); ``Decimal`` params are str-encoded so the record round-trips JSON without loss."""
+        return {
+            "generated_at": generated_at.isoformat(),
+            "cycles": len(self.reports),
+            "survivor_count": len(self.survivors),
+            "quarantined_count": len(self.quarantined),
+            "reports": [
+                {
+                    "market": report.market.value,
+                    "family": report.template,
+                    "window": report.window,
+                    "trial_count": len(report.assessments),
+                    "survivors": len(report.survivors),
+                    "promoted": [
+                        {
+                            "params": {k: str(v) for k, v in survivor.params.items()},
+                            "trial_index": survivor.trial_index,
+                            "fingerprint": survivor.fingerprint,
+                        }
+                        for survivor in report.survivors
+                    ],
+                }
+                for report in self.reports
+            ],
+            "quarantined": [
+                {
+                    "market": q.market.value,
+                    "family": q.template,
+                    "window": q.window,
+                    "error": q.error,
+                }
+                for q in self.quarantined
+            ],
+        }
 
 
 def _templates_for(cell: DiscoveryCellConfig) -> Sequence[str]:
