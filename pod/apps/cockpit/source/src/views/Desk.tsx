@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Sparkles, Send, Bot, User } from 'lucide-react'
 import { AgentThread } from 'lemma-sdk/react'
 import { lemmaClient } from '../lemma-client'
@@ -40,22 +40,30 @@ export function Desk() {
 
 function DeskChat({ thread }: { thread: Thread }) {
   const [input, setInput] = useState('')
+  const logRef = useRef<HTMLDivElement>(null)
   // One turn emits several assistant messages by kind; show the user's messages
-  // and the assistant's final `text` answers (skip thinking/tool chatter).
+  // and the assistant's final `TEXT` answers (skip THINKING/TOOL chatter). Kind is
+  // UPPERCASE in the SDK; role is lowercase.
   const visible = (thread.messages as Msg[]).filter(
-    (m) => m.role === 'user' || (m.role === 'assistant' && m.kind === 'text'),
+    (m) => m.role === 'user' || (m.role === 'assistant' && m.kind === 'TEXT'),
   )
+
+  // Follow the conversation: scroll to newest on new messages / streaming.
+  useEffect(() => {
+    const el = logRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [visible.length, thread.streamingText, thread.isStreaming])
 
   function send() {
     const t = input.trim()
     if (!t || thread.isRunning) return
     setInput('')
-    void thread.sendMessage(t)
+    thread.sendMessage(t).catch(() => setInput(t)) // restore the text if the send fails
   }
 
   return (
     <div className="desk">
-      <div className="desk-log">
+      <div className="desk-log" ref={logRef}>
         {thread.error ? (
           <div className="alert">
             Desk is unavailable: {errMessage(thread.error)}. The <code>desk</code> agent + its grants must
