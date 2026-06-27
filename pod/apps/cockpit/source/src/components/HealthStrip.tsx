@@ -11,9 +11,11 @@ import { StatusBadge, type StatusKind } from '../ui'
 // watchChanges. A dead heartbeat ages into "stale" because useNow ticks a local
 // clock (no API polling). All read-only (TEST-8).
 
-// A heartbeat older than this (seconds) renders stale. DISPLAY heuristic only —
-// the authoritative liveness lease + halt is enforced in alpha-core (R8), not here.
+// DISPLAY heuristics only — the authoritative liveness lease + halt is enforced in
+// alpha-core (R8), not here. A heartbeat beats every few seconds; reconcile runs
+// periodically, so it gets a looser threshold.
 const STALE_AFTER_SECONDS = 90
+const RECONCILE_STALE_AFTER_SECONDS = 900
 
 const SEV_RANK: Record<string, number> = { info: 1, warning: 2, critical: 3 }
 const SEV_LABEL: Record<number, string> = { 1: 'info', 2: 'warning', 3: 'critical' }
@@ -27,6 +29,10 @@ const RES_KIND: Record<string, StatusKind> = {
 
 function text(v: unknown): string {
   return typeof v === 'string' ? v : ''
+}
+
+function detailOf(r: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
+  return r && typeof r.detail === 'object' && r.detail ? (r.detail as Record<string, unknown>) : null
 }
 
 function freshest(
@@ -73,37 +79,70 @@ export function HealthStrip({ dataAsOf }: { dataAsOf: number | null }) {
   const now = useNow()
   const workers = useLiveRecords({ client: lemmaClient, tableName: 'worker_status', limit: 50 })
   const research = useLiveRecords({ client: lemmaClient, tableName: 'research_status', limit: 50 })
-  const risk = useLiveRecords({ client: lemmaClient, tableName: 'risk_events', limit: 200 })
+  const risk = useLiveRecords({
+    client: lemmaClient,
+    tableName: 'risk_events',
+    limit: 200,
+    sort: [{ field: 'ts', direction: 'desc' }],
+  })
 
+  // --- worker (a stale worker → danger: it is the money path) ---
   const worker = freshest(workers.records, 'last_seen')
   const wAge = worker ? secondsAgo(worker.last_seen, now) : null
   const wFresh = wAge !== null && wAge <= STALE_AFTER_SECONDS
   const wMode = text(worker?.mode) || 'paper'
   const wArmed = Boolean(worker?.armed)
-  const detail =
-    worker && typeof worker.detail === 'object' && worker.detail
-      ? (worker.detail as Record<string, unknown>)
-      : null
-  const reconciledAt = detail?.reconciled_at
+  const reconciledAt = detailOf(worker)?.reconciled_at
+  const wDot: StatusKind = workers.error
+    ? 'danger'
+    : worker
+      ? wFresh
+        ? 'ok'
+        : 'danger'
+      : 'neutral'
 
+  // --- research (a stale research box → warn: off the money path) ---
   const res = freshest(research.records, 'last_seen')
   const rAge = res ? secondsAgo(res.last_seen, now) : null
   const rStatus = text(res?.status) || 'unknown'
   const rTask = text(res?.current_task)
-  const rDot: StatusKind = res
-    ? rAge !== null && rAge > STALE_AFTER_SECONDS
-      ? 'warn'
-      : (RES_KIND[rStatus] ?? 'neutral')
-    : 'neutral'
+  const rDot: StatusKind = research.error
+    ? 'danger'
+    : res
+      ? rAge !== null && rAge > STALE_AFTER_SECONDS
+        ? 'warn'
+        : (RES_KIND[rStatus] ?? 'neutral')
+      : 'neutral'
 
-  const events = risk.records
-  const worst = events.reduce((acc, e) => Math.max(acc, SEV_RANK[text(e.severity)] ?? 0), 0)
-  const riskDot: StatusKind = worst > 0 ? SEV_KIND[worst] : events.length ? 'info' : 'ok'
+  // --- reconcile + data freshness ---
+  const recAge = secondsAgo(reconciledAt, now)
+  const recDot: StatusKind =
+    recAge === null ? 'neutral' : recAge <= RECONCILE_STALE_AFTER_SECONDS ? 'ok' : 'warn'
+
+  // --- risk: "open" = unresolved (risk_events is append-only; resolution is
+  // carried in detail.resolved), most-recent first ---
+  const openEvents = risk.records.filter((e) => detailOf(e)?.resolved !== true)
+  const worst = openEvents.reduce((acc, e) => Math.max(acc, SEV_RANK[text(e.severity)] ?? 0), 0)
+  const riskDot: StatusKind = risk.error
+    ? 'danger'
+    : worst > 0
+      ? SEV_KIND[worst]
+      : risk.isLoading
+        ? 'neutral'
+        : openEvents.length
+          ? 'info'
+          : 'ok'
 
   return (
     <div className="grid cols-4">
-      <HealthTile icon={Cpu} label="Worker" dot={worker ? (wFresh ? 'ok' : 'danger') : 'neutral'}>
-        {worker ? (
+      <HealthTile icon={Cpu} label="Worker" dot={wDot}>
+        {workers.error ? (
+          <span className="ht-sub" style={{ color: 'var(--danger)' }}>
+            health unavailable
+          </span>
+        ) : workers.isLoading && !worker ? (
+          <span className="ht-sub muted">loading…</span>
+        ) : worker ? (
           <>
             <div className="row">
               <StatusBadge kind={wMode === 'live' ? 'danger' : 'info'}>{wMode}</StatusBadge>
@@ -119,7 +158,13 @@ export function HealthStrip({ dataAsOf }: { dataAsOf: number | null }) {
       </HealthTile>
 
       <HealthTile icon={Microscope} label="Research" dot={rDot}>
-        {res ? (
+        {research.error ? (
+          <span className="ht-sub" style={{ color: 'var(--danger)' }}>
+            health unavailable
+          </span>
+        ) : research.isLoading && !res ? (
+          <span className="ht-sub muted">loading…</span>
+        ) : res ? (
           <>
             <StatusBadge kind={RES_KIND[rStatus] ?? 'neutral'}>{rStatus}</StatusBadge>
             <span className="ht-sub mono">
@@ -132,7 +177,7 @@ export function HealthStrip({ dataAsOf }: { dataAsOf: number | null }) {
         )}
       </HealthTile>
 
-      <HealthTile icon={RefreshCw} label="Reconcile" dot={reconciledAt ? 'ok' : 'neutral'}>
+      <HealthTile icon={RefreshCw} label="Reconcile" dot={recDot}>
         <span className="ht-value mono">{reconciledAt ? timeAgo(reconciledAt, now) : '—'}</span>
         <span className="ht-sub muted">
           data {dataAsOf ? timeAgo(new Date(dataAsOf * 1000).toISOString(), now) : '—'}
@@ -141,12 +186,12 @@ export function HealthStrip({ dataAsOf }: { dataAsOf: number | null }) {
 
       <HealthTile icon={ShieldAlert} label="Risk" dot={riskDot}>
         <span className="ht-value mono">
-          {risk.isLoading ? '…' : events.length} open
+          {risk.error ? '—' : risk.isLoading ? '…' : openEvents.length} open
         </span>
         {worst > 0 ? (
           <StatusBadge kind={SEV_KIND[worst]}>{SEV_LABEL[worst]}</StatusBadge>
         ) : (
-          <span className="ht-sub muted">all clear</span>
+          <span className="ht-sub muted">{risk.error ? 'unavailable' : 'all clear'}</span>
         )}
       </HealthTile>
     </div>

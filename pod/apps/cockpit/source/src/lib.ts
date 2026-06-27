@@ -69,9 +69,9 @@ export function timeAgo(iso: unknown, now: number = Date.now()): string {
   const s = secondsAgo(iso, now)
   if (s === null) return '—'
   if (s < 60) return `${s}s ago`
-  const m = Math.round(s / 60)
+  const m = Math.floor(s / 60)
   if (m < 60) return `${m}m ago`
-  const h = Math.round(m / 60)
+  const h = Math.floor(m / 60)
   if (h < 24) return `${h}h ago`
-  return `${Math.round(h / 24)}d ago`
+  return `${Math.floor(h / 24)}d ago`
 }

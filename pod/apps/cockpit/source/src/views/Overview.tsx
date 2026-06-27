@@ -62,7 +62,8 @@ export function Overview() {
   const strategies = useCount('strategies')
   const backtests = useCount('backtests')
   const discovery = useCount('discovery_runs')
-  const riskEvents = useCount('risk_events')
+  // risk is covered by the health strip above; show deployments here instead.
+  const deployments = useCount('deployments')
 
   // Most-recent window, newest first (buildEquity re-sorts ascending for display).
   const pnl = useLiveRecords({
@@ -83,7 +84,7 @@ export function Overview() {
         <Metric label="Strategies" value={fmtInt(strategies)} />
         <Metric label="Backtests" value={fmtInt(backtests)} />
         <Metric label="Discovery runs" value={fmtInt(discovery)} />
-        <Metric label="Risk events" value={fmtInt(riskEvents)} />
+        <Metric label="Deployments" value={fmtInt(deployments)} />
       </div>
 
       <Panel
