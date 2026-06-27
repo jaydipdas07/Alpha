@@ -5,8 +5,10 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
+
 from alpha_core.core.enums import AssetClass, Side, Venue
-from alpha_core.core.models import Bar
+from alpha_core.core.models import Bar, Tick
 from alpha_core.strategy.examples.opening_range_breakout import (
     OpeningRangeBreakout,
     OpeningRangeBreakoutConfig,
@@ -101,6 +103,38 @@ def test_long_exits_at_opposite_extreme() -> None:
     assert len(exit_signals) == 1
     assert exit_signals[0].side is Side.SELL
     assert "stop" in (exit_signals[0].reason or "")
+
+
+def test_short_exits_at_opposite_extreme() -> None:
+    # the symmetric short-side stop — the one untested real-money exit branch (#48): a short taken
+    # on a breakdown exits with a BUY when a later bar closes back above the opening-range high.
+    strat = OpeningRangeBreakout(_cfg())
+    for b in _RANGE:
+        strat.on_bar(b)
+    strat.on_bar(_bar(2, "98", "98.5", "96.5", "97"))  # enter short (close 97 < 97.902)
+    exit_signals = strat.on_bar(_bar(3, "102", "103.5", "101.5", "103"))  # close 103 > high 102
+    assert len(exit_signals) == 1
+    assert exit_signals[0].side is Side.BUY
+    assert exit_signals[0].score is None  # an exit (a close), not a fresh directional bet
+    assert "stop at opening-range high" in (exit_signals[0].reason or "")
+
+
+def test_rejects_non_positive_opening_range() -> None:
+    with pytest.raises(ValueError, match="opening_range_minutes must be positive"):
+        OpeningRangeBreakout(_cfg(opening_range_minutes=0))
+
+
+def test_ignores_ticks() -> None:
+    # bar-driven: a tick never produces a signal (the Strategy-interface stub).
+    strat = OpeningRangeBreakout(_cfg())
+    tick = Tick(
+        symbol=SYMBOL,
+        venue=Venue.NSE,
+        asset_class=AssetClass.EQUITY,
+        ts=OPEN,
+        last_price=Decimal("100"),
+    )
+    assert strat.on_tick(tick) == []
 
 
 def test_new_day_resets_the_range() -> None:
