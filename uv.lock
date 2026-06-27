@@ -2834,10 +2834,14 @@ version = "0.0.0"
 source = { editable = "worker" }
 dependencies = [
     { name = "alpha-core" },
+    { name = "ccxt" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "alpha-core", editable = "alpha-core" }]
+requires-dist = [
+    { name = "alpha-core", editable = "alpha-core" },
+    { name = "ccxt", specifier = ">=4.5.0" },
+]
 
 [[package]]
 name = "yarl"
