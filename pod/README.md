@@ -40,7 +40,13 @@ composite keys are synthetic unique `TEXT` columns (`cell_key`, `dedup_key`, `po
 lemma pods import pod/ --dry-run --pod 019ef606-7b77-76f1-853a-978ddf819415   # validate
 lemma pods import pod/ --pod 019ef606-7b77-76f1-853a-978ddf819415             # upsert tables (+ build the app)
 bash pod/seed/seed.sh                                                          # demo seed (run once)
+bash pod/seed/seed_cockpit_demo.sh                                             # cockpit demo enrichment (run once, after seed.sh)
 ```
+
+> `seed_cockpit_demo.sh` is **additive** — it enriches the pod with the data the cockpit's views render
+> (varied strategies, backtests incl. **rejected**, discovery runs, a research ledger, a running
+> deployment + equity curve, risk events, a pending approval, a pending command) and refreshes the
+> worker/research heartbeats to "now" so the health strip is green. Demo data only; run once.
 
 > A full `lemma pods import pod/` also **builds the cockpit app** (`apps/cockpit/source/` → `dist/`).
 > For a tables-only change, scope it: `lemma pods import pod/tables/<name>` (skips the app build).
