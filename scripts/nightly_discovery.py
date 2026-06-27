@@ -15,6 +15,7 @@ Research-plane: no keys, no network, no live orders. Run:
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,7 +23,8 @@ from alpha_core.data.store import BarStore
 from alpha_core.research.nightly import run_nightly_discovery_from_config
 
 _ROOT = Path(__file__).resolve().parents[1]
-STORE_ROOT = _ROOT / "data_cold"  # gitignored cold store (B1a.1)
+# Same resolution as the ingest (ALPHA_COLD_ROOT, else data_cold/) so they agree on the store.
+STORE_ROOT = Path(os.environ.get("ALPHA_COLD_ROOT") or (_ROOT / "data_cold"))
 LEDGER_PATH = _ROOT / "proposal_ledger.sqlite"  # gitignored durable proposal ledger (cross-run)
 RESULTS_DIR = (
     _ROOT / "discovery_runs"

@@ -14,23 +14,49 @@
 # `venue`/`market` must be valid Venue/AssetClass enum values. `starting_cash` is the
 # backtest capital at the cell's market scale (crypto $ vs equity ₹; the per-cell risk
 # base_capital is aligned to it). `templates` (omitted = all registered templates)
-# scopes which vetted strategy families the nightly run searches in this cell. Seeded
-# with the two series currently in the cold store (B1a.1b); add a row per series as data
-# lands.
+# scopes which vetted strategy families the nightly run searches in this cell. The
+# series are loaded by scripts/ingest_cold_store.py (BTC-perp 5m ~1mo + daily ~3y; four
+# NIFTY constituents daily ~3y); add a row per series as data lands.
 
 # proposals per (cell, template) discovery cycle each run (B1b.4).
 n_candidates: 8
 
 cells:
+  # --- crypto (Binance BTC-perp) ---
   - market: CRYPTO
     window: "btcusdt-5m"
     symbol: "BTCUSDT"
     venue: BINANCE
     interval_seconds: 300
     starting_cash: "1000000"   # USDT
+  - market: CRYPTO
+    window: "btcusdt-1d"
+    symbol: "BTCUSDT"
+    venue: BINANCE
+    interval_seconds: 86400
+    starting_cash: "1000000"   # USDT
+  # --- NIFTY constituents (daily) ---
   - market: EQUITY
     window: "reliance-1d"
     symbol: "NSE:RELIANCE"
+    venue: NSE
+    interval_seconds: 86400
+    starting_cash: "1000000"   # INR
+  - market: EQUITY
+    window: "tcs-1d"
+    symbol: "NSE:TCS"
+    venue: NSE
+    interval_seconds: 86400
+    starting_cash: "1000000"   # INR
+  - market: EQUITY
+    window: "infy-1d"
+    symbol: "NSE:INFY"
+    venue: NSE
+    interval_seconds: 86400
+    starting_cash: "1000000"   # INR
+  - market: EQUITY
+    window: "hdfcbank-1d"
+    symbol: "NSE:HDFCBANK"
     venue: NSE
     interval_seconds: 86400
     starting_cash: "1000000"   # INR
