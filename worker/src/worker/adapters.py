@@ -40,8 +40,19 @@ def build_adapter(venue: VenueConfig, env: EnvConfig) -> CcxtAdapter:
         )
     api_key, secret = _keys(venue.key_env)
 
-    import ccxt.async_support as ccxt  # lazy: keep ccxt off import-time + out of the kernel
+    # Pick the ccxt module by the streaming flag (lazy import — keep ccxt off
+    # import-time + out of the kernel). The real websocket watch_* methods live only
+    # in ccxt.pro; ccxt.async_support stubs them as NotSupported, so a streaming venue
+    # MUST use ccxt.pro or its tick/order feed dies on the first watch call. ccxt.pro
+    # classes subclass async_support, so they keep every REST method too.
+    if venue.streaming:
+        import ccxt.pro as ccxt
+    else:
+        import ccxt.async_support as ccxt
 
+    if not hasattr(ccxt, venue.exchange):
+        where = "ccxt.pro (no websocket support?)" if venue.streaming else "ccxt"
+        raise RuntimeError(f"unknown exchange {venue.exchange!r} in {where}")
     exchange_cls = getattr(ccxt, venue.exchange)
     exchange = exchange_cls(
         {

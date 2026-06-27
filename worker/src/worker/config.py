@@ -72,7 +72,8 @@ def active_venue(env: EnvConfig, venues: dict[str, VenueConfig]) -> VenueConfig:
     if env.venue not in venues:
         raise ValueError(f"env venue {env.venue!r} not in venues.yaml: {sorted(venues)}")
     vc = venues[env.venue]
-    if not vc.testnet and not env.allow_live:
+    # Same condition the factory's build_adapter uses, so the two never drift.
+    if not vc.testnet and not (env.allow_live and env.mode == "live"):
         raise ValueError(
             f"venue {env.venue!r} is live but the live gate is shut (allow_live=false)"
         )
