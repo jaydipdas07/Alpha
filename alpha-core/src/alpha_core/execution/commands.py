@@ -28,7 +28,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol
+from typing import Protocol, assert_never
 
 from alpha_core.execution.oms import OMS
 from alpha_core.execution.reconcile import Reconciler, ReconcileStatus
@@ -171,7 +171,7 @@ class CommandWatcher:
                 results.append((cmd, CommandStatus.FAILED))
         return results
 
-    async def _dispatch(self, cmd: Command) -> str | None:
+    async def _dispatch(self, cmd: Command) -> str:
         self._log.info("command", command_id=cmd.id, kind=cmd.kind.value)
         match cmd.kind:
             case CommandKind.ARM_KILL | CommandKind.EMERGENCY_FLATTEN:
@@ -193,6 +193,8 @@ class CommandWatcher:
                 return "running"
             case CommandKind.REFRESH_TOKEN:
                 return await self._refresh_token(cmd)
+            case _:  # pragma: no cover - exhaustive; mypy flags an unhandled kind here
+                assert_never(cmd.kind)
 
     async def _hard_kill(self, kind: CommandKind) -> str:
         """Latch the kill-switch and flatten — the trip path (TEST-8)."""
@@ -209,11 +211,13 @@ class CommandWatcher:
     async def _soft_flatten(self) -> str:
         """Cancel + flatten + pause, **without** latching the kill-switch (reversible)."""
         self._notifier.send("command flatten: squaring off + pausing", severity=Severity.WARNING)
+        # Pause FIRST (the soft analogue of trip-first): if the cancel/flatten below
+        # throws, the loop must not keep re-opening positions against the de-risk intent.
+        self._control.set(RunState.PAUSED)
         await self._oms.cancel_all_working()
         flattened = await self._oms.flatten_all()
         if self._drain:
             await self._oms.drain_events()
-        self._control.set(RunState.PAUSED)
         return f"flattened {len(flattened)} position(s), paused"
 
     async def _clear_halt(self) -> str:
