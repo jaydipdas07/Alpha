@@ -200,6 +200,29 @@ def test_rearm_clears_halt() -> None:
     assert _check(mgr, _order(), []).approved is True
 
 
+def test_halt_generation_one_per_distinct_trip() -> None:
+    # The worker flattens once per generation, so a re-trip while already halted must
+    # NOT bump it, but a fresh trip after a re-arm must (else the re-trip's flatten is
+    # skipped — review BLOCKER 2).
+    mgr = RiskManager(_cfg())
+    assert mgr.halt_generation == 0
+    mgr.trip(KillTrigger.DAILY_LOSS)
+    g1 = mgr.halt_generation
+    assert g1 == 1
+    mgr.trip(KillTrigger.DAILY_LOSS)  # re-trip while halted (e.g. the per-mark re-check)
+    assert mgr.halt_generation == g1  # unchanged
+    mgr.rearm()
+    assert mgr.halt_generation == g1  # re-arm does not reset
+    mgr.trip(KillTrigger.DAILY_LOSS)  # a fresh trip after re-arm
+    assert mgr.halt_generation == 2  # bumped -> the worker flattens again
+
+
+def test_restored_halt_bumps_generation() -> None:
+    mgr = RiskManager(_cfg())
+    mgr.restore(halted=True, trigger=KillTrigger.DAILY_LOSS)
+    assert mgr.is_halted is True and mgr.halt_generation == 1  # flatten once on boot
+
+
 # --- step 10: stop discipline --------------------------------------------------
 
 

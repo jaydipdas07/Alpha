@@ -29,6 +29,7 @@ from alpha_core.core.order_fsm import (
 )
 from alpha_core.execution.instruments import InstrumentRegistry
 from alpha_core.execution.positions import apply_fill
+from alpha_core.execution.reconcile import Reconciler, ReconcileReport, ReconcileStatus
 from alpha_core.execution.state import StateStore
 from alpha_core.observability import metrics
 from alpha_core.observability.logging import get_logger
@@ -184,6 +185,24 @@ class OMS:
             "state_rebuilt", fills=len(fills), positions=len(positions), orders=len(self._orders)
         )
 
+    async def reconcile_locked(self, reconciler: Reconciler) -> ReconcileReport:
+        """Run a reconcile **atomically against the live book** (ADR 0009/0014).
+
+        Holds the OMS lock across the local snapshot + the broker fetch + the adopt,
+        so a concurrent submit/fill can't make the snapshot stale between the read and
+        the broker truth — which would otherwise look like drift and trip a *spurious*
+        reconciliation halt (the periodic-reconcile race). A genuine divergence still
+        trips (the snapshot is consistent, not blind). Costs the broker round-trip on
+        the lock, briefly pausing submits — the correctness trade the live loop wants.
+        """
+        async with self._lock:
+            report = await reconciler.reconcile(
+                local_orders=self.orders, local_positions=self.positions
+            )
+            if report.status is ReconcileStatus.CLEAN:
+                await self._apply_adoptions(report.adopted_orders, report.adopted_positions)
+        return report
+
     async def apply_reconciliation(
         self, *, adopted_orders: list[Order], adopted_positions: list[Position]
     ) -> None:
@@ -197,23 +216,31 @@ class OMS:
         there is nothing to adopt, and idempotent (re-adopting sets the same
         records). Held under the OMS lock so it serializes with submits/fills
         (ADR 0014). Only call it for a CLEAN report — a HALTED one adopts nothing.
-        """
+        Prefer ``reconcile_locked`` for the live periodic reconcile (atomic snapshot)."""
         if not adopted_orders and not adopted_positions:
             return
         async with self._lock:
-            for order in adopted_orders:
-                self._orders[order.client_order_id] = order
-                if order.state.is_terminal:
-                    self._working_price.pop(order.client_order_id, None)
-                await asyncio.to_thread(self._persist_adopted_order, order)
-            for position in adopted_positions:
-                self._positions[(position.venue, position.symbol)] = position
-                await asyncio.to_thread(self._persist_adopted_position, position)
-            self._log.info(
-                "reconcile_applied",
-                orders=len(adopted_orders),
-                positions=len(adopted_positions),
-            )
+            await self._apply_adoptions(adopted_orders, adopted_positions)
+
+    async def _apply_adoptions(
+        self, adopted_orders: list[Order], adopted_positions: list[Position]
+    ) -> None:
+        """Adopt broker truth into the book + persist. **The caller must hold the lock.**"""
+        if not adopted_orders and not adopted_positions:
+            return
+        for order in adopted_orders:
+            self._orders[order.client_order_id] = order
+            if order.state.is_terminal:
+                self._working_price.pop(order.client_order_id, None)
+            await asyncio.to_thread(self._persist_adopted_order, order)
+        for position in adopted_positions:
+            self._positions[(position.venue, position.symbol)] = position
+            await asyncio.to_thread(self._persist_adopted_position, position)
+        self._log.info(
+            "reconcile_applied",
+            orders=len(adopted_orders),
+            positions=len(adopted_positions),
+        )
 
     @property
     def positions(self) -> list[Position]:

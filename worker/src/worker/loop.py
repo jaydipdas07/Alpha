@@ -14,12 +14,15 @@ Concurrency (one event loop):
   or drains inline for a bounded/paper feed.
 - **periodic** — every ``reconcile_interval``: beat, check the feed-stale kill, and
   reconcile against broker truth (adopt if clean, halt if not).
-- **commands** — the pod→worker bus (start/stop/flatten/arm_kill/clear_halt).
+- **commands** — the pod→worker bus (start/stop/flatten/arm_kill/clear_halt), run
+  only when a ``CommandWatcher`` is provided; ``build_worker`` wires it once the
+  pod-backed ``CommandSource`` lands (the pod-sync increment).
 
-On any latched halt (daily-loss / feed-stale / reconcile / a command) the loop
-flattens once via ``handle_kill`` (cancel → flatten) and pauses; it never silently
-resumes — a clean reconcile + ``clear_halt`` re-arms it. Money is ``Decimal``; time
-is the injected clock; no broker SDK is imported here (only the kernel + the factory).
+On any latched halt (daily-loss / feed-stale / reconcile) the loop flattens once per
+distinct kill via ``handle_kill`` (cancel → flatten) and pauses; it never silently
+resumes — a clean reconcile + ``clear_halt`` re-arms it, and a fresh trip flattens
+again. Money is ``Decimal``; time is the injected clock; no broker SDK is imported
+here (only the kernel + the factory).
 """
 
 from __future__ import annotations
@@ -86,7 +89,9 @@ class Worker:
         self._clock = clock or SystemClock()
         self._log = get_logger("worker")
         self._last_tick_at: datetime | None = None
-        self._kill_handled = False
+        # Flatten once per distinct kill (by the risk manager's halt generation), so a
+        # re-trip after a clear_halt re-arm is never skipped (review BLOCKER 2).
+        self._handled_halt_generation = -1
 
     def _now(self) -> datetime:
         return self._clock.now()
@@ -148,22 +153,26 @@ class Worker:
             self._heartbeat.beat(now)
             bar = self._bars.add(tick)
             if bar is not None:
-                self._oms.mark({bar.symbol: bar.close})  # re-checks the daily-loss kill
-                await self._maybe_flatten_on_halt()
+                # Same order as the backtest runner (parity, ADR 0001): submit -> book
+                # fills -> mark -> kill-check, so a daily-loss kill sees the just-booked P&L.
                 if self._control.should_submit:
                     for signal in self._engine.process_bar(bar):
                         await self._oms.submit_signal(signal, reference_price=bar.close)
-                    if self._drain_inline:
-                        await self._oms.drain_events()
+                if self._drain_inline:
+                    await self._oms.drain_events()
+                self._oms.mark({bar.symbol: bar.close})  # re-checks the daily-loss kill
+                await self._maybe_flatten_on_halt()
 
     async def _consume_events(self) -> None:
         """Long-lived fill consumer (the venue order-event ws stream)."""
         await self._oms.consume_events()
 
     async def _periodic(self) -> None:
+        # NB: the heartbeat is beaten ONLY from the market loop (per tick), never here —
+        # so a wedged market loop (no ticks) stops beating and the INDEPENDENT deadman
+        # fires (TEST-5). The feed-stale self-trip is the in-band complement.
         while not self._control.stopped:
             await asyncio.sleep(self._env.reconcile_interval_seconds)
-            self._heartbeat.beat(self._now())  # liveness even on a quiet market
             self._check_feed_stale()
             await self._reconcile()
             await self._maybe_flatten_on_halt()
@@ -177,21 +186,23 @@ class Worker:
             self._risk.trip(KillTrigger.FEED_STALE)
 
     async def _reconcile(self) -> None:
-        report = await self._reconciler.reconcile(
-            local_orders=self._oms.orders, local_positions=self._oms.positions
-        )
-        if report.status is ReconcileStatus.CLEAN:
-            await self._oms.apply_reconciliation(
-                adopted_orders=report.adopted_orders, adopted_positions=report.adopted_positions
-            )
-        else:
+        # Atomic against the live book: holds the OMS lock across the snapshot + broker
+        # fetch + adopt, so a concurrent submit/fill can't make the snapshot stale and
+        # trip a SPURIOUS mismatch (review BLOCKER 1). The reconciler trips the kill on
+        # a genuine divergence; audit a halt's issues for the post-mortem.
+        report = await self._oms.reconcile_locked(self._reconciler)
+        if report.status is not ReconcileStatus.CLEAN:
             await self._oms.audit_reconcile_halt(report.issues)
 
     async def _maybe_flatten_on_halt(self) -> None:
-        """A latched halt flattens the book ONCE (cancel → flatten) and pauses; it
-        never silently resumes — a command ``clear_halt`` on a clean reconcile re-arms."""
-        if self._risk.is_halted and not self._kill_handled:
-            self._kill_handled = True
+        """Flatten the book ONCE per distinct kill (cancel → flatten) and pause; it
+        never silently resumes — a command ``clear_halt`` on a clean reconcile re-arms,
+        and a *fresh* trip (new halt generation) flattens again. The generation is read
+        + claimed synchronously before the await, so the concurrent market + periodic
+        tasks can't both enter handle_kill for the same kill (cooperative scheduling)."""
+        gen = self._risk.halt_generation
+        if self._risk.is_halted and gen != self._handled_halt_generation:
+            self._handled_halt_generation = gen  # claim before the await (no double-entry)
             self._control.set(RunState.PAUSED)
             await handle_kill(
                 self._oms,
@@ -199,11 +210,12 @@ class Worker:
                 notifier=self._notifier,
                 drain=self._drain_inline,
             )
-        elif not self._risk.is_halted:
-            self._kill_handled = False  # re-armed (clear_halt) — ready to re-handle a future trip
 
     async def _shutdown(self) -> None:
-        self._bars.flush(self._env.symbols[0])  # drop the forming bar
+        if self._drain_inline:
+            await self._oms.drain_events()  # book any pending fills (bounded path only)
+        for symbol in self._env.symbols:
+            self._bars.flush(symbol)  # drop the forming bars
         self._log.info("worker_shutdown", worker_id=self._env.worker_id)
         await self._adapter.aclose()  # release the ccxt ws/http session
 

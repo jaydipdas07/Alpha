@@ -252,6 +252,42 @@ async def test_halt_flattens_the_book_and_pauses(tmp_path) -> None:  # type: ign
     assert all(p.quantity == 0 for p in oms.positions)  # flattened
 
 
+async def test_retrip_after_clear_halt_flattens_again(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # BLOCKER 2: after a clear_halt re-arm + a NEW position, a fresh trip must flatten
+    # again — the generation guard must not leave the second kill un-flattened.
+    worker, _venue, oms, _hb = _worker(
+        tmp_path, _ticks(["100", "100"]), strategy=_AlwaysBuy("0.02")
+    )
+    await worker.start()
+    sig = Signal(
+        strategy_id="t",
+        symbol=SYMBOL,
+        asset_class=AssetClass.CRYPTO,
+        side=Side.BUY,
+        quantity=Decimal("0.02"),
+        order_type=OrderType.MARKET,
+        created_at=NOW,
+    )
+    await oms.submit_signal(sig, reference_price=Decimal("100"))
+    await oms.drain_events()
+    worker._risk.trip(KillTrigger.MANUAL)  # first kill (generation 1)
+    await worker._maybe_flatten_on_halt()
+    await oms.drain_events()
+    assert all(p.quantity == 0 for p in oms.positions)
+
+    worker._risk.rearm()  # clear_halt
+    worker._control.set(RunState.RUNNING)
+    await oms.submit_signal(
+        sig.model_copy(update={"quantity": Decimal("0.03")}), reference_price=Decimal("100")
+    )
+    await oms.drain_events()
+    assert oms.positions[0].quantity == Decimal("0.03")  # a fresh position
+    worker._risk.trip(KillTrigger.MANUAL)  # re-trip (generation 2)
+    await worker._maybe_flatten_on_halt()
+    await oms.drain_events()
+    assert all(p.quantity == 0 for p in oms.positions)  # flattened AGAIN (not skipped)
+
+
 def _pos(symbol: str, qty: str) -> Position:
     return Position(
         venue=Venue.BINANCE,
@@ -274,9 +310,10 @@ async def test_check_feed_stale_trips_the_kill(tmp_path) -> None:  # type: ignor
     assert worker._risk.is_halted and worker._risk.halt_trigger is KillTrigger.FEED_STALE
 
 
-async def test_periodic_reconciles_and_beats_once(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    # Drive exactly one periodic cycle (stub sleep to stop the loop after it).
-    worker, _venue, _oms, heartbeat = _worker(tmp_path, _ticks(["100"]), strategy=_AlwaysBuy())
+async def test_periodic_reconciles_once(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # Drive exactly one periodic cycle (stub sleep to stop the loop after it). The
+    # periodic does NOT beat the heartbeat (that is market-loop-only, TEST-5).
+    worker, _venue, _oms, _hb = _worker(tmp_path, _ticks(["100"]), strategy=_AlwaysBuy())
     worker._last_tick_at = NOW  # fresh -> no feed-stale trip
 
     async def _sleep_then_stop(_seconds: float) -> None:
@@ -284,8 +321,7 @@ async def test_periodic_reconciles_and_beats_once(tmp_path, monkeypatch) -> None
 
     monkeypatch.setattr("worker.loop.asyncio.sleep", _sleep_then_stop)
     await worker._periodic()
-    assert heartbeat.last_beat() is not None  # beat in the periodic cycle
-    assert worker._risk.is_halted is False  # clean reconcile (flat book)
+    assert worker._risk.is_halted is False  # clean reconcile against a flat book
 
 
 async def test_reconcile_adopts_clean_then_halts_on_drift(tmp_path) -> None:  # type: ignore[no-untyped-def]
