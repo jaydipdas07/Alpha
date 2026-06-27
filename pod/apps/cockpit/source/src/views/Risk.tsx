@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { ShieldAlert, Power, Ban, RotateCcw } from 'lucide-react'
+import { ShieldAlert, Power, Ban, RotateCcw, Check } from 'lucide-react'
 import { useLiveRecords, useCreateRecord, useCurrentUser } from 'lemma-sdk/react'
 import { lemmaClient } from '../lemma-client'
 import { useNow } from '../hooks'
@@ -10,7 +10,8 @@ import { DataTable, type Column } from '../components/DataTable'
 // M2.4 — the Risk surface: kill-switch state, the risk_events audit log, and the
 // governance controls. The controls ISSUE a command (arm_kill / flatten /
 // clear_halt) — the pod commands, the worker EXECUTES (TEST-8). The pod never
-// trades. Controls confirm inline (no blocking JS dialog) before writing.
+// trades. Controls confirm inline (no blocking JS dialog) and require a known
+// issuer before writing.
 
 const SEV_KIND: Record<string, StatusKind> = { info: 'info', warning: 'warn', critical: 'danger' }
 const CMD_KIND: Record<string, StatusKind> = { pending: 'warn', acked: 'info', done: 'ok', failed: 'danger' }
@@ -44,6 +45,7 @@ function ConfirmButton({
         <button
           type="button"
           className={`btn ${tone}`}
+          disabled={disabled}
           onClick={() => {
             setConfirming(false)
             onConfirm()
@@ -123,27 +125,34 @@ export function Risk() {
     sort: [{ field: 'created_at', direction: 'desc' }],
   })
   const [issueError, setIssueError] = useState<string | null>(null)
-  const { create, isSubmitting } = useCreateRecord({
-    client: lemmaClient,
-    tableName: 'commands',
-    onSuccess: () => setIssueError(null),
-    onError: (e) => setIssueError(errMessage(e)),
-  })
+  const [issued, setIssued] = useState<string | null>(null)
+  const { create, isSubmitting } = useCreateRecord({ client: lemmaClient, tableName: 'commands' })
 
+  // Single-worker design today: the freshest heartbeat is "the" worker; the
+  // controls target its worker_id. Revisit when multiple workers heartbeat.
   const worker = freshest(workers.records, 'last_seen')
   const armed = Boolean(worker?.armed)
   const workerId = text(worker?.worker_id)
   const mode = text(worker?.mode) || 'paper'
+  // A governance command must carry an issuer (audit) and a target worker.
+  const canIssue = Boolean(workerId) && Boolean(user?.id) && !isSubmitting
 
-  function issue(kind: string, reason: string) {
-    if (!workerId) return
-    void create({
-      kind,
-      status: 'pending',
-      worker_id: workerId,
-      issued_by: user?.id,
-      payload: { reason, source: 'cockpit' },
-    })
+  async function issue(kind: string, reason: string) {
+    if (!workerId || !user?.id) return
+    setIssued(null)
+    try {
+      await create({
+        kind,
+        status: 'pending',
+        worker_id: workerId,
+        issued_by: user.id,
+        payload: { reason, source: 'cockpit' },
+      })
+      setIssueError(null)
+      setIssued(kind)
+    } catch (e) {
+      setIssueError(errMessage(e))
+    }
   }
 
   const eventRows = useMemo<EventRow[]>(
@@ -156,7 +165,7 @@ export function Risk() {
           severity: text(e.severity),
           when: text(e.ts),
           resolved: d?.resolved === true,
-          note: d ? (text(d.note) || text(d.error) || JSON.stringify(d)) : '',
+          note: d ? text(d.note) || text(d.error) || JSON.stringify(d) : '',
         }
       }),
     [events.records],
@@ -190,11 +199,18 @@ export function Risk() {
               <dd>{timeAgo(worker.last_seen, now)}</dd>
             </div>
             <div className="control-row">
-              <ConfirmButton label="Arm kill-switch" icon={Power} tone="warn" onConfirm={() => issue('arm_kill', 'manual arm from cockpit')} disabled={isSubmitting} />
-              <ConfirmButton label="Flatten all" icon={Ban} tone="danger" onConfirm={() => issue('flatten', 'manual flatten from cockpit')} disabled={isSubmitting} />
-              <ConfirmButton label="Clear halt" icon={RotateCcw} tone="ok" onConfirm={() => issue('clear_halt', 'manual clear-halt from cockpit')} disabled={isSubmitting} />
+              <ConfirmButton label="Arm kill-switch" icon={Power} tone="warn" disabled={!canIssue} onConfirm={() => void issue('arm_kill', 'manual arm from cockpit')} />
+              <ConfirmButton label="Flatten all" icon={Ban} tone="danger" disabled={!canIssue} onConfirm={() => void issue('flatten', 'manual flatten from cockpit')} />
+              <ConfirmButton label="Clear halt" icon={RotateCcw} tone="ok" disabled={!canIssue} onConfirm={() => void issue('clear_halt', 'manual clear-halt from cockpit')} />
             </div>
+            {issued ? (
+              <p className="issued-note">
+                <Check size={14} /> <span className="mono">{issued}</span> command issued — pending worker
+                execution.
+              </p>
+            ) : null}
             {issueError ? <div className="alert">Could not issue command: {issueError}</div> : null}
+            {!user?.id ? <p className="muted">Sign-in still resolving — controls enable once your identity loads.</p> : null}
             <p className="snapshot-note">
               Controls <strong>issue a command</strong> — the worker executes it; the pod never places an
               order itself (TEST-8). A tripped kill-switch latches; re-arm only on a clean reconcile.
@@ -208,7 +224,11 @@ export function Risk() {
       </Panel>
 
       <Panel title="Pending commands" icon={Power}>
-        {pending.length ? (
+        {commands.error ? (
+          <div className="alert">Could not load commands: {errMessage(commands.error)}</div>
+        ) : commands.isLoading ? (
+          <p className="muted">Loading…</p>
+        ) : pending.length ? (
           <ul className="cmd-list">
             {pending.map((c) => (
               <li key={String(c.id)}>
