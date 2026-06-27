@@ -7,6 +7,10 @@ Vault pod, so they are deployed by hand, not by CI.
 - **B1b.4b — the `nightly-discovery` schedule:** a research-box **systemd timer** fires the run.
 - **B1b.4c — the `/knowledge` RAG:** a strategy-knowledge doc uploaded to the pod as a File.
 
+> **Status: DEPLOYED 2026-06-27** (CC, operator-authorized) — the timer is live on the research box
+> (next fire 02:00 UTC) and `/knowledge/strategies.md` is uploaded + indexed + `files search`-verified
+> on the pod. The steps below remain the reusable runbook (e.g. to re-provision the box).
+
 > **Why a research-box cron, not a pod-triggered function.** The cold store is local Parquet on the
 > research box (`data_cold/`), not in the pod — a Lemma function can't read it. So the box runs
 > discovery on its own schedule and the pod only *receives the results* (synced from the per-run JSON
