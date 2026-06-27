@@ -37,3 +37,6 @@ build/
 
 # B1a.1b cold-store data (reproducible from scripts/ingest_cold_store.py)
 data_cold/
+
+# B1b.4 nightly-discovery per-run JSON records (syncable to the pod discovery_runs table)
+discovery_runs/

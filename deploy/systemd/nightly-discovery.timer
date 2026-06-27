@@ -1,0 +1,13 @@
+# B1b.4b — fires nightly-discovery.service once a day. This IS the `nightly-discovery` schedule.
+#
+# 02:00 UTC daily (off-peak; after any data ingest). Tune OnCalendar to taste. Persistent=true so a
+# run missed while the box was down fires on the next boot — the night is never silently skipped.
+[Unit]
+Description=Alpha nightly strategy-discovery schedule
+
+[Timer]
+OnCalendar=*-*-* 02:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

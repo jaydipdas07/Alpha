@@ -7,6 +7,7 @@ entry point end-to-end through the real engine.
 
 from __future__ import annotations
 
+import json
 import shutil
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
@@ -153,6 +154,52 @@ def test_nightly_report_survivors_flattens_across_cells() -> None:
         [r1, r2], [QuarantinedCell(AssetClass.EQUITY, "a", "vwap_reversion", "boom")]
     )
     assert report.survivors == [p1, p2]
+
+
+def test_summary_is_json_safe_and_aligned_to_discovery_runs() -> None:
+    # a real loop report -> a JSON-serializable run record shaped to the pod discovery_runs table.
+    report = run_nightly_discovery(
+        [_cell(AssetClass.EQUITY, "w", templates=["ma_crossover"])],
+        strategist=_strategist(),
+        quant_analyst=QuantAnalyst(),
+        backtester_for=lambda _cell: _FakeBacktester(),
+        n_candidates=3,
+    )
+    summary = report.summary(generated_at=datetime(2026, 6, 27, 2, 0, tzinfo=UTC))
+    blob = json.loads(json.dumps(summary))  # raises if not JSON-safe (Decimal/datetime)
+    assert blob["generated_at"] == "2026-06-27T02:00:00+00:00"
+    assert blob["cycles"] == 1
+    assert blob["quarantined_count"] == 0
+    cycle = blob["reports"][0]
+    # market is lowercased to match the pod discovery_runs ENUM (crypto/equity/index_option)
+    assert (cycle["market"], cycle["family"], cycle["window"]) == ("equity", "ma_crossover", "w")
+    assert cycle["trial_count"] >= 1  # candidates assessed this run
+
+
+def test_summary_serializes_survivor_decimal_params_and_quarantined() -> None:
+    # the promoted + quarantined branches: Decimal params are str-encoded (exact through JSON).
+    promoted = StrategyProposal(
+        "rsi_bollinger",
+        {"rsi_period": 14, "num_std": Decimal("2.5")},
+        AssetClass.CRYPTO,
+        "w",
+        3,
+        "fp",
+    )
+    report = NightlyReport(
+        [DiscoveryReport("rsi_bollinger", AssetClass.CRYPTO, "w", [], [promoted])],
+        [QuarantinedCell(AssetClass.EQUITY, "x", "ma_crossover", "boom")],
+    )
+    blob = json.loads(json.dumps(report.summary(generated_at=datetime(2026, 6, 27, tzinfo=UTC))))
+    assert blob["survivor_count"] == 1
+    assert blob["reports"][0]["promoted"][0]["params"] == {"rsi_period": "14", "num_std": "2.5"}
+    assert blob["reports"][0]["promoted"][0]["fingerprint"] == "fp"
+    assert blob["quarantined"][0] == {
+        "market": "equity",
+        "window": "x",
+        "family": "ma_crossover",
+        "error": "boom",
+    }
 
 
 # --- the pure loop: a cycle per (cell, template) ------------------------------------------------
