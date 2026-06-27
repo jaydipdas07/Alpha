@@ -636,6 +636,16 @@ code,
   color: var(--muted);
 }
 
+.cell-clip {
+  display: inline-block;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  color: var(--ink-2);
+}
+
 /* ---------- filter chips (segmented) ---------- */
 
 .chips-filter {
