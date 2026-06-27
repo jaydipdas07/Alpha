@@ -18,10 +18,14 @@ Vault pod, so they are deployed by hand, not by CI.
 Prereqs on the box (`ubuntu@<elastic-ip>`, repo at `~/alpha` — see `docs/research-host.md`):
 
 1. `uv` installed and the repo synced: `cd ~/alpha && uv sync --all-packages --all-groups`.
-2. The cold store ingested on the box: `uv run python scripts/ingest_cold_store.py` (writes
-   `~/alpha/data_cold/`). The nightly run only promotes on a real edge, which needs a richer window
-   than the B1a.1b seed (289 BTC 5m + 21 RELIANCE daily bars) — extend the ingest before expecting
-   survivors.
+2. Ingest the cold store on the box: `uv run python scripts/ingest_cold_store.py` (writes
+   `~/alpha/data_cold/` — the richer dataset of #73: BTC 5m ~7wk + BTC/4-NIFTY daily ~3y).
+3. **Seal it** (TEST-3): `uv run python scripts/seal_cold_store.py` — splits each series'
+   rolled-forward holdout, writing the in-sample bars to `~/alpha/data_research/` (what the nightly
+   reads) and the recent holdout tails to `~/alpha/data_holdout/` (gate-only). **The nightly reads
+   the sealed `data_research/` store, never the raw `data_cold/`** — so discovery never sees the
+   holdout. Re-run ingest + seal to roll the windows forward as new data arrives. The nightly still
+   only *promotes* on a genuine edge (Sharpe ~2.4+) actually present in the data.
 
 Deploy the timer (units are in `deploy/systemd/`; adjust `User` / `WorkingDirectory` / the `uv` path
 if the box differs from the defaults):

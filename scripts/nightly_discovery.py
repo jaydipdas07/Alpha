@@ -23,8 +23,9 @@ from alpha_core.data.store import BarStore
 from alpha_core.research.nightly import run_nightly_discovery_from_config
 
 _ROOT = Path(__file__).resolve().parents[1]
-# Same resolution as the ingest (ALPHA_COLD_ROOT, else data_cold/) so they agree on the store.
-STORE_ROOT = Path(os.environ.get("ALPHA_COLD_ROOT") or (_ROOT / "data_cold"))
+# Discovery reads the SEALED *research* store (scripts/seal_cold_store.py), NEVER the raw cold store
+# — the raw store still holds each series' holdout tail (TEST-3). Override via ALPHA_RESEARCH_ROOT.
+STORE_ROOT = Path(os.environ.get("ALPHA_RESEARCH_ROOT") or (_ROOT / "data_research"))
 LEDGER_PATH = _ROOT / "proposal_ledger.sqlite"  # gitignored durable proposal ledger (cross-run)
 RESULTS_DIR = (
     _ROOT / "discovery_runs"
