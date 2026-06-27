@@ -89,12 +89,20 @@ def main() -> int:
 
     if args.interval not in _INTERVAL_SECONDS:
         ap.error(f"unknown interval {args.interval!r}; known: {sorted(_INTERVAL_SECONDS)}")
+    if args.market == "futures" and args.kind == "klines" and args.interval == "1s":
+        ap.error("Binance has no 1s futures klines; use --kind aggTrades for 1s perp bars")
     interval_seconds = _INTERVAL_SECONDS[args.interval]
     start = datetime.strptime(args.start, "%Y-%m-%d").replace(tzinfo=UTC).date()
     end = datetime.strptime(args.end, "%Y-%m-%d").replace(tzinfo=UTC).date()
 
+    # Disambiguate the stored identity: spot and futures are economically distinct
+    # instruments (different price/funding) but share Venue.BINANCE, so a bare symbol
+    # would collide in the cold store (one Parquet per (venue, symbol, interval)).
+    # Futures keeps the bare symbol (the existing perp convention); spot gets a suffix.
+    store_symbol = args.symbol if args.market == "futures" else f"{args.symbol}.SPOT"
+
     store = BarStore(os.environ.get("ALPHA_COLD_ROOT", "data_cold"))
-    all_bars = []
+    total = 0
     for day in _daily_dates(start, end):
         url = (
             _klines_url(args.market, args.symbol, args.interval, day)
@@ -106,21 +114,20 @@ def main() -> int:
             print(f"[skip] {day} not published")
             continue
         bars = (
-            klines_to_bars(rows, symbol=args.symbol, interval_seconds=interval_seconds)
+            klines_to_bars(rows, symbol=store_symbol, interval_seconds=interval_seconds)
             if args.kind == "klines"
-            else aggtrades_to_bars(rows, symbol=args.symbol, interval_seconds=interval_seconds)
+            else aggtrades_to_bars(rows, symbol=store_symbol, interval_seconds=interval_seconds)
         )
-        all_bars.extend(bars)
-        print(f"[{day}] {args.kind}: {len(bars)} bars")
+        # Write per day: write_bars is idempotent, so a transient error on a later day
+        # never discards earlier days, and memory stays bounded over a long range.
+        on_disk = store.write_bars(bars)
+        total += len(bars)
+        print(f"[{day}] {args.kind}: {len(bars)} bars -> {on_disk} on disk")
 
-    if not all_bars:
+    if total == 0:
         print("no bars ingested (no published days in range)")
         return 1
-    on_disk = store.write_bars(all_bars)
-    print(
-        f"=== {args.symbol} {args.market} {args.kind} {args.interval}: "
-        f"{len(all_bars)} bars -> {on_disk} on disk ({store.root}) ==="
-    )
+    print(f"=== {store_symbol} {args.kind} {args.interval}: {total} bars -> {store.root} ===")
     return 0
 
 

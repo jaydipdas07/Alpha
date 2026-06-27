@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
+
 from alpha_core.core.enums import AssetClass, Venue
 from alpha_core.data.ingest.binance import aggtrades_to_bars, kline_to_bar, klines_to_bars
 from alpha_core.data.ingest.yahoo import chart_to_bars
@@ -97,6 +99,26 @@ def test_aggtrades_to_bars_empty_is_empty() -> None:
     assert aggtrades_to_bars([], symbol="BTCUSDT", interval_seconds=1) == []
     # a header-only stream yields no bars either
     assert aggtrades_to_bars([_AGGTRADES[0]], symbol="BTCUSDT", interval_seconds=1) == []
+
+
+def test_aggtrades_to_bars_gap_makes_no_phantom_bar() -> None:
+    # Trades only at second 0 and second 5 -> exactly 2 bars, no empty buckets in between.
+    rows = [
+        ["1", "100", "1", "0", "0", "1719360000000", "true"],  # 00:00:00
+        ["2", "105", "2", "0", "0", "1719360005000", "true"],  # 00:00:05 (4s gap)
+    ]
+    bars = aggtrades_to_bars(rows, symbol="BTCUSDT", interval_seconds=1)
+    assert [b.start.second for b in bars] == [0, 5]  # no phantom 1..4
+    assert bars[0].volume == Decimal("1") and bars[1].open == Decimal("105")  # single-trade bucket
+
+
+def test_aggtrades_to_bars_rejects_out_of_order() -> None:
+    rows = [
+        ["1", "100", "1", "0", "0", "1719360005000", "true"],  # 00:00:05
+        ["2", "101", "1", "0", "0", "1719360000000", "true"],  # 00:00:00 — goes backwards
+    ]
+    with pytest.raises(ValueError, match="time-ordered"):
+        aggtrades_to_bars(rows, symbol="BTCUSDT", interval_seconds=1)
 
 
 def test_yahoo_chart_to_bars_skips_null_days() -> None:

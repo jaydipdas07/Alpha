@@ -51,8 +51,8 @@ def klines_to_bars(
     out: list[Bar] = []
     for k in klines:
         try:
-            int(k[0])  # numeric open-time -> a data row (skip a CSV header)
-        except (ValueError, TypeError):
+            int(k[0])  # numeric open-time -> a data row (skip a CSV header or blank line)
+        except (ValueError, TypeError, IndexError):
             continue
         out.append(kline_to_bar(k, symbol=symbol, interval_seconds=interval_seconds))
     return out
@@ -97,19 +97,21 @@ def aggtrades_to_bars(
 
     for row in rows:
         try:
-            ts_ms = int(row[5])  # transact-time; non-numeric -> a CSV header, skip
-        except (ValueError, TypeError):
+            ts_ms = int(row[5])  # transact-time; non-numeric/missing -> header/blank, skip
+        except (ValueError, TypeError, IndexError):
             continue
         price = Decimal(str(row[1]))
         qty = Decimal(str(row[2]))
         bucket = (ts_ms // interval_ms) * interval_ms
         if bucket_ms is None:
             bucket_ms, o, h, low, c, v = bucket, price, price, price, price, qty
-        elif bucket != bucket_ms:
+        elif bucket == bucket_ms:
+            h, low, c, v = max(h, price), min(low, price), price, v + qty
+        elif bucket > bucket_ms:
             _flush()
             bucket_ms, o, h, low, c, v = bucket, price, price, price, price, qty
-        else:
-            h, low, c, v = max(h, price), min(low, price), price, v + qty
+        else:  # a bucket going backwards means the input wasn't time-ordered — never guess
+            raise ValueError("aggTrade rows must be time-ordered (transact-time went backwards)")
     if bucket_ms is not None:
         _flush()
     return bars
