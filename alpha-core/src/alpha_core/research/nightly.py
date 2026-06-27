@@ -85,7 +85,8 @@ class NightlyReport:
         """A JSON-safe record of the night, shaped to sync to the pod ``discovery_runs`` table (one
         entry per cycle: market / family / window / trial_count / survivors + detail).
         ``generated_at`` is injected (tz-aware UTC — the edge supplies it, never a wall-clock read
-        here); ``Decimal`` params are str-encoded so the record round-trips JSON without loss."""
+        here); every param value is str-encoded (a ``Decimal`` survives JSON exactly; ints parse
+        back). ``market`` is lowercased to match the pod ENUM."""
         return {
             "generated_at": generated_at.isoformat(),
             "cycles": len(self.reports),
@@ -93,7 +94,8 @@ class NightlyReport:
             "quarantined_count": len(self.quarantined),
             "reports": [
                 {
-                    "market": report.market.value,
+                    # lowercase to match the pod discovery_runs / research_ledger market ENUM
+                    "market": report.market.value.lower(),
                     "family": report.template,
                     "window": report.window,
                     "trial_count": len(report.assessments),
@@ -111,7 +113,7 @@ class NightlyReport:
             ],
             "quarantined": [
                 {
-                    "market": q.market.value,
+                    "market": q.market.value.lower(),
                     "family": q.template,
                     "window": q.window,
                     "error": q.error,

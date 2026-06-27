@@ -61,7 +61,10 @@ lemma records create discovery_runs \
 ```
 
 A small sync helper (read the newest `discovery_runs/*.json` → `lemma records create` per cycle) is
-a clean follow-up once the cockpit needs live rows; the JSON schema already matches the table.
+a clean follow-up once the cockpit needs live rows. Each `reports[]` entry maps straight onto the
+table columns — `market` (already lowercased to the ENUM) / `family` / `window` / `trial_count` /
+`survivors`, with `promoted` → the `detail` JSON and `status` = `complete`; each `quarantined[]`
+entry is a `status=failed` row.
 
 ## B1b.4c — the `/knowledge` RAG (live pod)
 

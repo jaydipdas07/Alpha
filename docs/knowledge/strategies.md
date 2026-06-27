@@ -81,9 +81,11 @@ The **quant-analyst** composes the statistical-rigor kernel into one verdict per
    Prado) discounts the Sharpe by **how many configs have already been tried in the cell** — the more
    you search, the higher the bar, because the best of many random tries looks good by luck. The
    candidate must clear the configured DSR threshold (currently **0.92** — a deliberately
-   *conservative* bar: it certifies strong edges, ~Sharpe 2.4+, and rejects weaker ones, holding the
-   false-promote rate near zero). The trial count is the **cumulative** per-cell count from the
-   durable ledger, so re-runs across nights don't reset the penalty.
+   *conservative* bar: it certifies strong edges, ~Sharpe 2.4+, and holds the false-promote rate near
+   zero). A candidate that passed the OOS screen but **falls short of the DSR is sent to revise** (the
+   evidence isn't strong enough yet — it stays re-proposable), not rejected outright. The trial count
+   is the **cumulative** per-cell count from the durable ledger, so re-runs across nights don't reset
+   the penalty.
 3. **Fold consistency.** A regime check across cross-validation folds: a candidate that is
    statistically significant but only works in one regime is fragile → **revise**.
 4. **Cell-PBO (optional).** The Probability of Backtest Overfitting over the cell's trial×fold matrix;

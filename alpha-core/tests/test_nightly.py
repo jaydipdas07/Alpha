@@ -171,7 +171,8 @@ def test_summary_is_json_safe_and_aligned_to_discovery_runs() -> None:
     assert blob["cycles"] == 1
     assert blob["quarantined_count"] == 0
     cycle = blob["reports"][0]
-    assert (cycle["market"], cycle["family"], cycle["window"]) == ("EQUITY", "ma_crossover", "w")
+    # market is lowercased to match the pod discovery_runs ENUM (crypto/equity/index_option)
+    assert (cycle["market"], cycle["family"], cycle["window"]) == ("equity", "ma_crossover", "w")
     assert cycle["trial_count"] >= 1  # candidates assessed this run
 
 
@@ -194,7 +195,7 @@ def test_summary_serializes_survivor_decimal_params_and_quarantined() -> None:
     assert blob["reports"][0]["promoted"][0]["params"] == {"rsi_period": "14", "num_std": "2.5"}
     assert blob["reports"][0]["promoted"][0]["fingerprint"] == "fp"
     assert blob["quarantined"][0] == {
-        "market": "EQUITY",
+        "market": "equity",
         "window": "x",
         "family": "ma_crossover",
         "error": "boom",
