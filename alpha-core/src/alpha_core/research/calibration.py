@@ -42,6 +42,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from alpha_core.backtest.dsr import deflated_sharpe_ratio
+from alpha_core.backtest.metrics import sharpe
 from alpha_core.backtest.overfitting import probability_of_backtest_overfitting
 
 Population = list[list[float]]  # a list of candidates, each a per-bucket return series
@@ -75,13 +76,6 @@ def edge_population(*, n_candidates: int, n_obs: int, seed: int, drift: float) -
     return [[rng.gauss(drift, 1.0) for _ in range(n_obs)] for _ in range(n_candidates)]
 
 
-def _sharpe(returns: Sequence[float]) -> float:
-    if len(returns) < 2:
-        return 0.0
-    sd = statistics.pstdev(returns)
-    return statistics.fmean(returns) / sd if sd > 0 else 0.0
-
-
 def _oos(returns: Sequence[float], oos_fraction: float) -> list[float]:
     """The out-of-sample tail the gate judges on (a held-out slice, à la B1a.6)."""
     cut = len(returns) - max(2, round(len(returns) * oos_fraction))
@@ -111,7 +105,7 @@ def calibrate(
     if n < 2:
         raise ValueError(f"need >= 2 candidates to calibrate; got {n}")
     oos = [_oos(c, oos_fraction) for c in population]
-    variance = statistics.pvariance([_sharpe(o) for o in oos])
+    variance = statistics.pvariance([sharpe(o) for o in oos])
     promoted = sum(
         deflated_sharpe_ratio(o, n_trials=n, trial_sharpe_variance=variance) >= dsr_threshold
         for o in oos

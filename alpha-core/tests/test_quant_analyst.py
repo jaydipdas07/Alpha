@@ -8,9 +8,9 @@ import statistics
 import pytest
 from pydantic import ValidationError
 
+from alpha_core.backtest.metrics import sharpe
 from alpha_core.helpers.config import QuantAnalystConfig, load_rigor_config
 from alpha_core.research.calibration import _oos as _cal_oos
-from alpha_core.research.calibration import _sharpe as _cal_sharpe
 from alpha_core.research.calibration import (
     edge_population,
     noise_population,
@@ -20,7 +20,6 @@ from alpha_core.research.quant_analyst import (
     Assessment,
     QuantAnalyst,
     Verdict,
-    _sharpe,
     deflation_inputs,
 )
 
@@ -119,7 +118,7 @@ def test_assess_validates_its_deflation_inputs() -> None:
 def test_deflation_inputs_matches_the_calibration() -> None:
     pop = edge_population(n_candidates=10, n_obs=400, seed=1, drift=0.2)
     n, var = deflation_inputs(pop, oos_fraction=0.5)
-    expected = statistics.pvariance([_cal_sharpe(_cal_oos(c, 0.5)) for c in pop])
+    expected = statistics.pvariance([sharpe(_cal_oos(c, 0.5)) for c in pop])
     assert n == 10
     assert var == pytest.approx(expected)
 
@@ -143,9 +142,3 @@ def test_quant_analyst_config() -> None:
     assert 0.0 <= qa.fold_consistency_min <= 1.0
     with pytest.raises(ValidationError):
         QuantAnalystConfig(min_oos_sharpe=0.0, fold_consistency_min=1.5, oos_fraction=0.5)
-
-
-def test_sharpe_degenerate_cases() -> None:
-    assert _sharpe([]) == 0.0  # too few points
-    assert _sharpe([3.0, 3.0, 3.0]) == 0.0  # no dispersion
-    assert _sharpe([1.0, 2.0, 3.0]) > 0.0
