@@ -1,0 +1,11 @@
+{
+  // Alpha mission-control cockpit — a Vite + lemma-sdk dashboard over the Vault
+  // pod's tables (worker/research heartbeats, discovery runs, backtests incl.
+  // rejected candidates, approvals, risk). Lives inside the pod bundle, so
+  // `lemma pods import pod/` builds + ships it (source/ is built to dist/ on
+  // import; see pod/README.md). Realtime via watchChanges; never on the money
+  // path (TEST-8). Phase 2 / M2.1.
+  "name": "cockpit",
+  "description": "Alpha mission-control cockpit: a live dashboard over the Vault pod tables (worker/research heartbeats, discovery, backtests incl. rejected, approvals, risk). Read-only over the SDK; never places live orders (TEST-8).",
+  "public_slug": "cockpit"
+}
