@@ -166,3 +166,14 @@ class BarStore:
         else:  # empty store -> a typed 0-row view so analytical queries still work
             con.execute(f"CREATE VIEW bars AS SELECT * FROM ({_EMPTY_VIEW}) WHERE false")
         return con
+
+    def series(self) -> list[tuple[str, Venue, int]]:
+        """The distinct ``(symbol, venue, interval_seconds)`` series held in the store, sorted
+        (empty for an empty store). Lets a caller iterate every series — e.g. to seal each one's
+        rolled-forward holdout independently (their spans differ)."""
+        rows = (
+            self.connect()
+            .execute("SELECT DISTINCT symbol, venue, interval_seconds FROM bars ORDER BY 1, 2, 3")
+            .fetchall()
+        )
+        return [(str(symbol), Venue(venue), int(interval_s)) for symbol, venue, interval_s in rows]

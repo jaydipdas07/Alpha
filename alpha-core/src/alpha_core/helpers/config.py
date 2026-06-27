@@ -226,7 +226,7 @@ def load_rigor_config() -> RigorConfig:
 class DiscoveryCellConfig(BaseModel):
     """One discovery cell: the ``(market, window)`` the loop searches mapped to the cold-store
     series it backtests on. The bars are **in-sample only** — the cold store holds no holdout
-    (``seal_dataset`` routes it to the separate gate-only store), so this never names a holdout
+    (``seal_cold_store`` routes it to the separate gate-only store), so this never names a holdout
     boundary (TEST-3/R6)."""
 
     model_config = ConfigDict(extra="forbid")

@@ -38,5 +38,9 @@ build/
 # B1a.1b cold-store data (reproducible from scripts/ingest_cold_store.py)
 data_cold/
 
+# sealed research store (discovery reads) + holdout store (gate-only) — scripts/seal_cold_store.py
+data_research/
+data_holdout/
+
 # B1b.4 nightly-discovery per-run JSON records (syncable to the pod discovery_runs table)
 discovery_runs/

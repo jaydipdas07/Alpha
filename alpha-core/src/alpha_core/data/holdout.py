@@ -167,3 +167,57 @@ def seal_dataset(
     research.write_bars(research_bars)
     holdout.replace(holdout_bars, window)
     return window
+
+
+def _clear_parquet(store: BarStore) -> None:
+    """Remove every parquet file from a store's root — a *fresh* seal. The holdout tail rolls
+    forward and is not monotonic, so a re-seal must not leave a stale bar that would contaminate
+    the research store or the one-shot gate."""
+    for parquet in store.root.glob("*.parquet"):
+        parquet.unlink()
+
+
+def _write_seal_manifest(root: Path, windows: dict[str, HoldoutWindow]) -> None:
+    """Record each series' locked holdout window (its ``holdout_window_version`` + extent) so the
+    eventual one-shot gate knows exactly which tail is reserved per series."""
+    manifest = {
+        key: {"start": w.start.isoformat(), "end": w.end.isoformat(), "version": w.version}
+        for key, w in windows.items()
+    }
+    (root / "_windows.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
+
+
+def seal_cold_store(
+    source: BarStore, *, research: BarStore, holdout: BarStore, fraction: float
+) -> dict[str, HoldoutWindow]:
+    """Seal a **multi-series** cold store: reserve each series' OWN rolled-forward holdout tail.
+
+    For every series in ``source`` the research bars (everything before that series' window start)
+    go to ``research`` — the cold store the discovery loop reads — and the recent holdout tail to
+    ``holdout`` (gate-only, a disjoint root). Each series gets its **own** window: their spans
+    differ (a few weeks of intraday vs years of daily), so one *global* window would dump an
+    all-recent series entirely into the holdout and leave it with no research data. The per-series
+    windows (keyed ``"venue|symbol|interval"``) are recorded in a ``_windows.json`` manifest at the
+    holdout root and returned.
+
+    The research store ends up **holdout-free per series** — the structural TEST-3 guarantee
+    ``ColdStoreBarsFor`` relies on (it reads the whole series and trusts this boundary). ``source``,
+    ``research`` and ``holdout`` must be pairwise-disjoint roots so no Parquet glob crosses them; a
+    re-seal rebuilds both targets from scratch (the rolled-forward windows are not monotonic)."""
+    _assert_disjoint(source.root, research.root)
+    _assert_disjoint(source.root, holdout.root)
+    _assert_disjoint(research.root, holdout.root)
+    _clear_parquet(research)
+    _clear_parquet(holdout)
+    windows: dict[str, HoldoutWindow] = {}
+    for symbol, venue, interval_seconds in source.series():
+        bars = source.read_bars(symbol=symbol, venue=venue, interval_seconds=interval_seconds)
+        window = compute_holdout_window([b.start for b in bars], fraction=fraction)
+        if window is None:  # pragma: no cover - a listed series always has >=1 bar
+            continue
+        research_bars, holdout_bars = split_research_holdout(bars, window)
+        research.write_bars(research_bars)
+        holdout.write_bars(holdout_bars)
+        windows[f"{venue.value}|{symbol}|{interval_seconds}"] = window
+    _write_seal_manifest(holdout.root, windows)
+    return windows
