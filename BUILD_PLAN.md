@@ -3,7 +3,7 @@
 > This is the **refined/finalized** companion to the original plan at
 > `/Users/jaydipdas/.claude/plans/recursive-marinating-kurzweil.md`. It supersedes that doc
 > where they differ. It is self-contained so the cloud **Ultraplan** session can read it by
-> absolute path. **Build has NOT started — finalize first.**
+> absolute path. **Build status lives in `TASKS.md`** (Phases 0–1 complete, Phase 2 next) — this doc is the hardened backbone it executes against, not a live tracker.
 > Reference repo: Vega at `/Users/jaydipdas/Code/Vega`. **You own Vega outright** (`Proprietary`,
 > authored by you) — verified this session, so code may be **lifted wholesale**, not just patterned.
 > **`docs/DESIGN_v4.md` E1 supersedes Q1 below**: the engine is decided by a Phase-0 co-equal A/B
@@ -68,8 +68,8 @@ imposes its strategy format/learning curve on the strategist agent and buys spee
 (SEBI ≤10 OPS, ~1s equity tick, seconds-to-minutes crypto are well within a Python event engine);
 its only wins (microsecond HFT, a big out-of-the-box venue/indicator library) don't apply. But
 rather than pre-decide, **DESIGN_v4 E1 runs both as a time-boxed Phase-0 A/B** (Nautilus-shell vs
-Vega-lift) and picks on parity + integration friction + time-to-market. Current evidence favors the
-lift (≈6–8 wk, ~80% lower risk).
+Vega-lift) and picks on parity + integration friction + time-to-market. **Decided → Track B (the
+Vega lift): 0.GATE, `docs/adr/0001`.** (The original evidence favored the lift — ≈6–8 wk, ~80% lower risk.)
 
 **Open items resolved (recommendations; say the word to override):**
 - Notification surface → **Telegram**. Pod name → **keep `Vault`** (repo=Alpha, pod=Vault).

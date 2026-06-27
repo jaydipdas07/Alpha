@@ -21,12 +21,13 @@ doc-map is in `README.md`.
   frequency-agnostic; sub-second is retired as a near-term goal (E5).
 
 ## Where we are
-**Pre-build — this repo is the build.** The design is finalized (`docs/DESIGN_v4.md`); no application
-code exists yet. The first job is **Phase 0**: scaffold `alpha-core`/`worker`/`pod`, verify Lemma +
-money types, and run the **engine bake-off** (E1) — a co-equal A/B between a NautilusTrader-shell and
-**lifting the operator's own proven Vega engine wholesale** (you own Vega outright; evidence favors
-the lift). Much of the engine is *lifted, not written* — treat Vega (`/Users/jaydipdas/Code/Vega`) as
-a trustworthy machine to copy from, not a greenfield to re-derive.
+**Phases 0–1 are complete; Phase 2 (cockpit) is next** — the `TASKS.md` Phase index is the
+authoritative status. Phase 0 ran the **engine bake-off** (E1) and **lifted the operator's own proven
+Vega engine wholesale** (0.GATE, ADR 0001) — you own Vega outright (`/Users/jaydipdas/Code/Vega`), so
+much of the engine is *lifted, not written*. Phase 1 built the rigor crown-jewel (1a.GATE, ADR 0002)
+and the AI **discovery machine** — strategist → quant-analyst → discovery-cycle → real engine →
+sealed cold store → nightly, deployed on the research box (1b.GATE, ADR 0003). Real *vendor* data +
+the first real-edge demonstration arrive at **M3.0** (Phase 3) when the operator provides the source.
 
 > **Live status is deliberately not kept here** (it would rot; there must be one source of truth). For
 > where things stand *this* session use the **Session continuity** protocol below: the ⏳ tracker at
