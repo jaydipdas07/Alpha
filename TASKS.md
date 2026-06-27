@@ -17,7 +17,7 @@
 | **0** | Foundation + **engine bake-off** (Nautilus-shell vs lift-Vega) → engine chosen | [CC]/[You] | ✅ (0.GATE, ADR 0001) |
 | **1a** | Rigor crown-jewel + data plane (+ population calibration) | [CC] | ✅ (1a.GATE, ADR 0002) |
 | **1b** | AI discovery — constrained track (strategist + quant-analyst + Workflow A) | [CC] | ✅ (1b.GATE, ADR 0003) |
-| **2** | Cockpit + copilot + Telegram surface | [CC] | 🔶 next |
+| **2** | Cockpit + copilot + Telegram surface | [CC] | 🔶 in progress (B2.1a ✅) |
 | **3** | Paper + approval gate + worker (paper) + **deadman** | [CC]/[You] | ⏳ |
 | **4** | First real money — Delta live (staged) + start SEBI long-poles | [You]+[CC] | ⏳ |
 | **5** | Indian equities/index live + multi-venue breadth | [You]+[CC] | ⏳ |
@@ -78,7 +78,9 @@ Goal: autonomous discovery + rigorous backtesting. No money/keys. Delivers the h
 ## Phase 2 — Cockpit + copilot + surface · [CC]
 Goal: the visible hero — dashboard + copilot + Telegram. Expand to `B2.x` on arrival.
 
-- **M2.1** Vite + lemma-sdk cockpit shell (`watchChanges` + charts).
+- **M2.1** Vite + lemma-sdk cockpit shell (`watchChanges` + charts). *Expanded → B2.x:*
+  - **B2.1a ✅** (#80) the **shell** — the cockpit Lemma app inside the pod bundle (`pod/apps/cockpit/cockpit.json` + `source/`; canonical bundle shape, so `lemma pods import pod/` builds it), Vite + React 19 + `lemma-sdk`, `AuthGuard` + sidebar nav over all 8 views, terminal design system + designed loading/error/empty states, **Overview = a live SDK connectivity proof** (signed-in user + pod table inventory), path-filtered frontend CI (`.github/workflows/cockpit.yml`). Read + governance-command surface only (TEST-8 / TEST-3). Verified authenticated against the live Vault pod (15 tables); reviewed (no blockers). Plan: `pod/apps/cockpit/DESIGN.md`.
+  - **B2.1b ⏳** the **live Overview** — `useLiveRecords`/`useWatchChanges` tiles + the equity chart → completes M2.1's "watchChanges + charts".
 - **M2.2** System-health strip: worker/research heartbeats, last reconcile, data freshness, open `risk_events`.
 - **M2.3** Backtests view incl. **rejected** candidates (Sharpe / DSR / PBO / maxDD / cost-sensitivity) — the filter is visibly working.
 - **M2.4** Approvals FORM inbox + Strategies/Discovery/Exchanges/Risk/Config views.
@@ -132,7 +134,7 @@ Goal: additive, last — the riskiest discovery track, hard-gated on isolation.
 > it here. Update via `/session-wrap` at the end of every session.
 
 ### 🟢 Unblocked — ready to start now
-- **Phase 2 — the Cockpit (M2.1–M2.5).** Phases 0/1a/1b are ✅: the AI discovery machine is built, calibrated, holdout-safe, and **deployed nightly** on the research box. The next build is the visible hero — the Vite + lemma-sdk cockpit (dashboard + copilot + Telegram). Expand `M2.x → B2.x` on arrival.
+- **Phase 2 — the Cockpit (in progress).** M2.1 expanded → **B2.1a ✅ (#80)** shipped the cockpit *shell* (Vite + `lemma-sdk` app at `pod/apps/cockpit/`, 8-view nav, terminal theme, frontend CI; verified live against the pod). **NEXT = B2.1b** — the live Overview (`useLiveRecords`/`useWatchChanges` tiles + an equity chart → completes M2.1). Then **M2.2** health strip → **M2.3** backtests incl. **rejected** → **M2.4** approvals FORM + Strategies/Discovery/Exchanges/Risk/Config → **M2.5** `desk` copilot + Telegram → **2.GATE**. *(Deploying the cockpit to the pod is operator-authorized — CC builds + verifies locally, like the B1b.4 deploy.)*
 
 ### 🟡 Carried / deferred (not blocking Phase 2)
 - **M3.0 — real-data on-ramp ([You] provides data → [CC] builds):** the data-vendor ingest adapters (**Tardis/Velo** crypto + the Indian-leg source) + the **deferred 1b.GATE demonstration** (a real *deployable* edge on vendor data). Lives in Phase 3 — needed when active backtesting starts; [You] supplies the source/keys, [CC] builds the adapters + runs discovery. Free Binance/Yahoo data carries the build until then.
@@ -140,8 +142,9 @@ Goal: additive, last — the riskiest discovery track, hard-gated on isolation.
 
 ### 🔒 [You]-gated (later phases)
 - The Phase-3/4 money/live gates (paper-approval FORM, deadman, Delta live, SEBI long-poles). The **fuller `helpers/config.py`** (Env/live-gate `load_env_config` + universe config + restore `_scan_for_secrets`) rejoins when the live gate lands. **Safety-gate edits** (never-do list / cardinal invariants TEST-1..8 / money-live-secrets / live-gate) → **[You]** merges. *(Agents/pod are **Mac-CLI-only**; the portable core builds anywhere.)*
+- **CI required-check note (repo settings, from the B2.1a review):** `cockpit.yml`'s `typecheck-build` is **path-filtered** to `pod/apps/cockpit/**` — correct (Python-only PRs skip it), but if it's ever marked a **required** status check, a Python-only PR won't trigger it and could hang on "waiting for status." If made required, use a path-aware required check (or an always-reporting skip job).
 
 ### ▶️ Next action for a cold session
-**Phases 0 + 1a + 1b are COMPLETE.** Phase 0 = engine bake-off → **Vega lift** (0.GATE, ADR 0001); Phase 1a = the rigor crown-jewel, calibrated + trusted (1a.GATE, ADR 0002 — `dsr.threshold` 0.92, certifies Sharpe ~2.4+ edges); Phase 1b = the AI discovery machine — **strategist → quant-analyst → discovery-cycle → real engine → sealed cold store → nightly**, deployed on the research box (1b.GATE, `docs/adr/0003` closes Phase 1 on machine-validation; the real-edge demonstration is deferred to **M3.0** with operator-provided vendor data). **`main` clean, 0 open PRs.** **Next = Phase 2 (the cockpit).** The discovery nightly self-fires at 02:00 UTC on the box; real vendor data + the real-edge demonstration come at M3.0 when [You] provides the data.
+**Phases 0 + 1a + 1b are COMPLETE.** Phase 0 = engine bake-off → **Vega lift** (0.GATE, ADR 0001); Phase 1a = the rigor crown-jewel, calibrated + trusted (1a.GATE, ADR 0002 — `dsr.threshold` 0.92, certifies Sharpe ~2.4+ edges); Phase 1b = the AI discovery machine — **strategist → quant-analyst → discovery-cycle → real engine → sealed cold store → nightly**, deployed on the research box (1b.GATE, `docs/adr/0003` closes Phase 1 on machine-validation; the real-edge demonstration is deferred to **M3.0** with operator-provided vendor data). **Phase 2 (the cockpit) is underway — B2.1a ✅ (#80) shipped the shell; NEXT = B2.1b** (the live Overview: `useLiveRecords`/`useWatchChanges` tiles + an equity chart → completes M2.1), then M2.2–M2.5 → 2.GATE. The cockpit app is `pod/apps/cockpit/` (Vite + `lemma-sdk`; `npm run dev` in `source/` to iterate, `npm run build` to verify); **deploying it to the pod is operator-authorized** (CC builds + verifies locally, like the B1b.4 deploy). The discovery nightly self-fires at 02:00 UTC on the box; real vendor data + the real-edge demonstration come at M3.0 when [You] provides the data.
 
 **Deferred lifts (rejoin when their layer/phase lands; tracked in the coverage `omit`):** `strategy/registry` + the ~8 example strategies + the **options** layer; `data.universe` (needs the universe config); `portfolio/setup`. *(The data readers — `normalize`/`historical`/`feed` + `store` — landed in B1a.1a; the `vega`→`alpha` namespacing is done, #27. The fuller `helpers/config.py` is [You]-gated, above.)*
