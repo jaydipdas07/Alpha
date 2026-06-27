@@ -77,6 +77,21 @@ class BrokerAdapter(ABC):
         Raises UnknownOrder | InvalidOrder | AuthError (terminal); Transient."""
         raise NotImplementedError
 
+    async def cancel_all(self) -> list[str]:
+        """Cancel every working order at the venue; return the cancelled client ids.
+
+        Default: cancel each non-terminal order from ``get_orders`` by client id.
+        The **independent deadman** (TEST-5) runs its own adapter instance with no
+        local order map, so it cannot rely on ``cancel``'s client-id bookkeeping —
+        adapters with a native bulk cancel (ccxt ``cancelAllOrders``) override this
+        to cancel directly against broker truth. Idempotent (no working orders → [])."""
+        cancelled: list[str] = []
+        for order in await self.get_orders():
+            if not order.state.is_terminal:
+                await self.cancel(order.client_order_id)
+                cancelled.append(order.client_order_id)
+        return cancelled
+
     @abstractmethod
     async def get_positions(self) -> list[Position]:
         """Broker's current positions (broker truth). Raises AuthError; Transient."""
