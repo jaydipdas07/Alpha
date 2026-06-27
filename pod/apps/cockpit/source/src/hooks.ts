@@ -1,5 +1,20 @@
+import { useEffect, useState } from 'react'
 import { useRecordAggregates } from 'lemma-sdk/react'
 import { lemmaClient } from './lemma-client'
+
+/**
+ * Current time in ms, re-rendered every `interval` ms. A *local clock* (not API
+ * polling) so relative times ("8s ago") tick and a heartbeat that stops updating
+ * visibly ages into "stale". Cleared on unmount.
+ */
+export function useNow(interval = 5000): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), interval)
+    return () => clearInterval(id)
+  }, [interval])
+  return now
+}
 
 /**
  * A row count for a table via a server-side COUNT aggregate (no full-table

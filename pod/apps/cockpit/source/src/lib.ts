@@ -55,3 +55,23 @@ export function fmtMoney(value: unknown): string {
 export function fmtInt(value: number | null): string {
   return value === null ? '…' : value.toLocaleString('en-US')
 }
+
+/** Seconds since an ISO/DATETIME timestamp (for fresh/stale logic). `null` if unparseable. */
+export function secondsAgo(iso: unknown, now: number = Date.now()): number | null {
+  if (typeof iso !== 'string') return null
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return null
+  return Math.max(0, Math.round((now - t) / 1000))
+}
+
+/** Relative "time ago" for heartbeats/timestamps. */
+export function timeAgo(iso: unknown, now: number = Date.now()): string {
+  const s = secondsAgo(iso, now)
+  if (s === null) return '—'
+  if (s < 60) return `${s}s ago`
+  const m = Math.round(s / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.round(m / 60)
+  if (h < 24) return `${h}h ago`
+  return `${Math.round(h / 24)}d ago`
+}
