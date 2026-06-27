@@ -1,0 +1,25 @@
+# Adapter registry — how to reach each venue (CLAUDE.md: venues.yaml).
+#
+# Only PAPER/testnet venues are defined here. The live venue config + the live
+# gate flip belong to the human (config/live.yaml + allow_live; CLAUDE.md never-do).
+# The active venue, symbols, and mode live in config/<env>.yaml. `key_env` names
+# the .env prefix: e.g. BINANCE_TESTNET -> BINANCE_TESTNET_API_KEY/_API_SECRET.
+
+venues:
+  binance-spot-testnet:
+    adapter: ccxt
+    exchange: binance        # ccxt exchange id
+    venue: BINANCE           # core Venue enum
+    market_type: spot        # Binance retired its FUTURES testnet; spot testnet is funded
+    testnet: true
+    streaming: true          # ccxt.pro websockets
+    key_env: BINANCE_TESTNET
+
+  delta-testnet:
+    adapter: ccxt
+    exchange: delta
+    venue: DELTA
+    market_type: swap        # perps — Alpha's live crypto venue (paper here)
+    testnet: true
+    streaming: false         # Delta has no ccxt.pro ws -> REST poll (P18.1)
+    key_env: DELTA_TESTNET
