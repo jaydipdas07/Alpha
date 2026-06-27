@@ -1,0 +1,13 @@
+{
+  // Exposes the `desk` copilot on Telegram (DESIGN_v4 "Surface: telegram").
+  // The bot itself is operator-provided: [You] create a Telegram bot, set up a
+  // Lemma connector account for it (`lemma connectors ...`), put its id in
+  // account_id, then flip is_enabled true. CC authors this config but never
+  // holds the bot token (credentials are [You]'s; see CLAUDE.md never-do).
+  "name": "telegram",
+  "platform": "TELEGRAM",
+  "default_agent_name": "desk",
+  "credential_mode": "CUSTOM",
+  "account_id": "TODO-telegram-connector-account-uuid",
+  "is_enabled": false
+}

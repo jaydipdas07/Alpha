@@ -17,8 +17,12 @@
     { "name": "deflated_sharpe", "type": "FLOAT" },
     { "name": "net_pnl", "type": "TEXT", "max_length": 48, "description": "money: string-Decimal (B5)" },
     { "name": "trial_count", "type": "INTEGER", "description": "per-run trial count" },
-    { "name": "holdout_used", "type": "BOOLEAN", "default": false },
-    { "name": "holdout_metrics", "type": "JSON" },
+    // NO holdout_used / holdout_metrics here. Holdout-derived results must NOT live on
+    // the pod backtests table: any agent/RAG granted `backtests` (the `desk` copilot,
+    // reachable on Telegram) would read them, violating TEST-3 (holdout isolation;
+    // CLAUDE.md never-do). Holdout results stay off-pod (no-ACL store); when the
+    // human approval needs the one-shot holdout verdict as evidence, surface it via a
+    // dedicated, agent-EXCLUDED table at Phase 3 (Workflow B / M3.7).
     { "name": "dataset_version", "type": "TEXT", "max_length": 64 },
     { "name": "engine_version", "type": "TEXT", "max_length": 64 },
     { "name": "cost_model_version", "type": "TEXT", "max_length": 64 },

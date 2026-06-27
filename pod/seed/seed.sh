@@ -13,7 +13,7 @@ echo "seeding strategy -> backtest -> deployment -> paper_run -> order -> fill -
 
 SID=$(lemma --json records create strategies -d '{"name":"BTC MA Crossover","family":"ma_crossover","market":"crypto","status":"paper","origin":"constrained","config":{"fast_period":10,"slow_period":30},"rationale":"Trend-follow BTC-perp on a fast/slow SMA cross."}' | jid)
 
-lemma records create backtests -d "{\"strategy_id\":\"$SID\",\"status\":\"complete\",\"market\":\"crypto\",\"family\":\"ma_crossover\",\"window\":\"2023-01..2024-12\",\"sharpe\":1.42,\"max_dd\":0.18,\"cpcv_pbo\":0.12,\"deflated_sharpe\":0.91,\"net_pnl\":\"18420.75\",\"trial_count\":7,\"holdout_used\":true,\"holdout_metrics\":{\"sharpe\":1.31},\"dataset_version\":\"btc-5m-v1\",\"engine_version\":\"alpha-core-0.0.0\",\"cost_model_version\":\"delta-v1\",\"seed\":\"4294967295\"}" >/dev/null
+lemma records create backtests -d "{\"strategy_id\":\"$SID\",\"status\":\"complete\",\"market\":\"crypto\",\"family\":\"ma_crossover\",\"window\":\"2023-01..2024-12\",\"sharpe\":1.42,\"max_dd\":0.18,\"cpcv_pbo\":0.12,\"deflated_sharpe\":0.91,\"net_pnl\":\"18420.75\",\"trial_count\":7,\"dataset_version\":\"btc-5m-v1\",\"engine_version\":\"alpha-core-0.0.0\",\"cost_model_version\":\"delta-v1\",\"seed\":\"4294967295\"}" >/dev/null
 
 DID=$(lemma --json records create deployments -d "{\"strategy_id\":\"$SID\",\"venue\":\"DELTA\",\"mode\":\"paper\",\"status\":\"running\",\"capital\":\"100000.00\",\"risk_limits\":{\"max_position\":\"0.5\",\"daily_loss_halt\":\"2000.00\"},\"worker_id\":\"worker-1\"}" | jid)
 

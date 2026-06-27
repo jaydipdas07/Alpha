@@ -1,0 +1,130 @@
+{
+  "name": "desk",
+  "description": "Alpha mission-control copilot — answers operator questions about the discovery → backtest → paper → live pipeline from the pod tables + the /knowledge corpus. Read-only: never trades, never moves money, never surfaces the holdout (TEST-8 / TEST-3).",
+  "instruction": { "$file": "instruction.md" },
+  // toolsets: POD SKILLS SPEECH SUBAGENTS TODO USER_INTERACTION WEB_SEARCH WORKSPACE_CLI
+  "toolsets": ["POD"],
+  "visibility": "POD",   // PERSONAL | POD | PUBLIC | RESTRICTED
+  // agent_runtime omitted -> the system runtime profile (system:lemma). Add it to pin a specific model.
+  "permissions": { "grants": [
+    {
+      "resource_type": "datastore_table",
+      "resource_name": "strategies",
+      "permission_ids": [
+        "datastore.table.read",
+        "datastore.record.read"
+      ]
+    },
+    {
+      "resource_type": "datastore_table",
+      "resource_name": "backtests",
+      "permission_ids": [
+        "datastore.table.read",
+        "datastore.record.read"
+      ]
+    },
+    {
+      "resource_type": "datastore_table",
+      "resource_name": "discovery_runs",
+      "permission_ids": [
+        "datastore.table.read",
+        "datastore.record.read"
+      ]
+    },
+    {
+      "resource_type": "datastore_table",
+      "resource_name": "research_ledger",
+      "permission_ids": [
+        "datastore.table.read",
+        "datastore.record.read"
+      ]
+    },
+    {
+      "resource_type": "datastore_table",
+      "resource_name": "deployments",
+      "permission_ids": [
+        "datastore.table.read",
+        "datastore.record.read"
+      ]
+    },
+    {
+      "resource_type": "datastore_table",
+      "resource_name": "paper_runs",
+      "permission_ids": [
+        "datastore.table.read",
+        "datastore.record.read"
+      ]
+    },
+    {
+      "resource_type": "datastore_table",
+      "resource_name": "orders",
+      "permission_ids": [
+        "datastore.table.read",
+        "datastore.record.read"
+      ]
+    },
+    {
+      "resource_type": "datastore_table",
+      "resource_name": "fills",
+      "permission_ids": [
+        "datastore.table.read",
+        "datastore.record.read"
+      ]
+    },
+    {
+      "resource_type": "datastore_table",
+      "resource_name": "positions",
+      "permission_ids": [
+        "datastore.table.read",
+        "datastore.record.read"
+      ]
+    },
+    {
+      "resource_type": "datastore_table",
+      "resource_name": "pnl_snapshots",
+      "permission_ids": [
+        "datastore.table.read",
+        "datastore.record.read"
+      ]
+    },
+    {
+      "resource_type": "datastore_table",
+      "resource_name": "risk_events",
+      "permission_ids": [
+        "datastore.table.read",
+        "datastore.record.read"
+      ]
+    },
+    {
+      "resource_type": "datastore_table",
+      "resource_name": "commands",
+      "permission_ids": [
+        "datastore.table.read",
+        "datastore.record.read"
+      ]
+    },
+    {
+      "resource_type": "datastore_table",
+      "resource_name": "worker_status",
+      "permission_ids": [
+        "datastore.table.read",
+        "datastore.record.read"
+      ]
+    },
+    {
+      "resource_type": "datastore_table",
+      "resource_name": "research_status",
+      "permission_ids": [
+        "datastore.table.read",
+        "datastore.record.read"
+      ]
+    },
+    {
+      "resource_type": "folder",
+      "resource_name": "/knowledge",
+      "permission_ids": [
+        "folder.read"
+      ]
+    }
+  ] }
+}
