@@ -20,6 +20,21 @@ export function errMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** The record with the newest parseable `tsField` (e.g. the latest heartbeat). */
+export function freshest<T extends Record<string, unknown>>(records: T[], tsField: string): T | null {
+  let best: T | null = null
+  let bestT = -Infinity
+  for (const r of records) {
+    const raw = r[tsField]
+    const t = Date.parse(typeof raw === 'string' ? raw : '')
+    if (!Number.isNaN(t) && t > bestT) {
+      bestT = t
+      best = r
+    }
+  }
+  return best
+}
+
 // --- display formatting -----------------------------------------------------
 // Money/price/qty arrive as string-encoded Decimal (B5). The cockpit is a read
 // surface: it parses to a JS number ONLY for visual display (charts, labels) and
