@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { FlaskConical } from 'lucide-react'
 import { useLiveRecords } from 'lemma-sdk/react'
 import { lemmaClient } from '../lemma-client'
-import { parseNum, fmtMoney, fmtNum, fmtPct, errMessage } from '../lib'
+import { fmtMoney, fmtNum, fmtPct, errMessage } from '../lib'
 import { Panel, EmptyState, StatusBadge, type StatusKind } from '../ui'
 import { DataTable, type Column } from '../components/DataTable'
 
@@ -34,14 +34,19 @@ interface Row {
   dsr: number | null
   pbo: number | null
   maxDd: number | null
-  netPnl: number
+  netPnl: number | null
   trials: number
   status: string
 }
 
+/** Coerce a FLOAT (number) or string-Decimal (TEXT) field to a number; else null. */
 function num(v: unknown): number | null {
-  return typeof v === 'number' && Number.isFinite(v) ? v : null
+  if (v === null || v === undefined || v === '') return null
+  const n = typeof v === 'number' ? v : Number(v)
+  return Number.isFinite(n) ? n : null
 }
+
+const dash = (s: string) => (s ? <span className="mono muted">{s}</span> : <span className="mono muted">—</span>)
 
 const columns: Column<Row>[] = [
   {
@@ -51,12 +56,12 @@ const columns: Column<Row>[] = [
     render: (r) => (
       <div className="cell-main">
         <span>{r.strategy}</span>
-        <span className="cell-sub mono">{r.family}</span>
+        <span className="cell-sub mono">{r.family || '—'}</span>
       </div>
     ),
   },
-  { key: 'market', header: 'Market', sort: (r) => r.market, render: (r) => <span className="mono muted">{r.market}</span> },
-  { key: 'window', header: 'Window', render: (r) => <span className="mono muted">{r.window}</span> },
+  { key: 'market', header: 'Market', sort: (r) => r.market, render: (r) => dash(r.market) },
+  { key: 'window', header: 'Window', render: (r) => dash(r.window) },
   { key: 'sharpe', header: 'Sharpe', align: 'right', sort: (r) => r.sharpe ?? -Infinity, render: (r) => <span className="mono">{fmtNum(r.sharpe)}</span> },
   { key: 'dsr', header: 'DSR', align: 'right', sort: (r) => r.dsr ?? -Infinity, render: (r) => <span className="mono">{fmtNum(r.dsr)}</span> },
   { key: 'pbo', header: 'PBO', align: 'right', sort: (r) => r.pbo ?? Infinity, render: (r) => <span className="mono">{fmtNum(r.pbo)}</span> },
@@ -65,12 +70,15 @@ const columns: Column<Row>[] = [
     key: 'netPnl',
     header: 'Net P&L',
     align: 'right',
-    sort: (r) => r.netPnl,
-    render: (r) => (
-      <span className="mono" style={{ color: r.netPnl >= 0 ? 'var(--ok)' : 'var(--danger)' }}>
-        {fmtMoney(r.netPnl)}
-      </span>
-    ),
+    sort: (r) => r.netPnl ?? -Infinity,
+    render: (r) =>
+      r.netPnl === null ? (
+        <span className="mono muted">—</span>
+      ) : (
+        <span className="mono" style={{ color: r.netPnl >= 0 ? 'var(--ok)' : 'var(--danger)' }}>
+          {fmtMoney(r.netPnl)}
+        </span>
+      ),
   },
   { key: 'trials', header: 'Trials', align: 'right', sort: (r) => r.trials, render: (r) => <span className="mono muted">{r.trials}</span> },
   {
@@ -93,8 +101,18 @@ const columns: Column<Row>[] = [
 
 export function Backtests() {
   const [market, setMarket] = useState<string>('all')
-  const bt = useLiveRecords({ client: lemmaClient, tableName: 'backtests', limit: 500 })
-  const strat = useLiveRecords({ client: lemmaClient, tableName: 'strategies', limit: 500 })
+  const bt = useLiveRecords({
+    client: lemmaClient,
+    tableName: 'backtests',
+    limit: 500,
+    sort: [{ field: 'created_at', direction: 'desc' }],
+  })
+  const strat = useLiveRecords({
+    client: lemmaClient,
+    tableName: 'strategies',
+    limit: 500,
+    sort: [{ field: 'created_at', direction: 'desc' }],
+  })
 
   const stratById = useMemo(() => {
     const m = new Map<string, Record<string, unknown>>()
@@ -117,7 +135,7 @@ export function Backtests() {
           dsr: num(b.deflated_sharpe),
           pbo: num(b.cpcv_pbo),
           maxDd: num(b.max_dd),
-          netPnl: parseNum(b.net_pnl),
+          netPnl: num(b.net_pnl),
           trials: typeof b.trial_count === 'number' ? b.trial_count : 0,
           status: String(b.status ?? ''),
         }
@@ -125,17 +143,20 @@ export function Backtests() {
       .filter((r) => market === 'all' || r.market === market)
   }, [bt.records, stratById, market])
 
+  const error = bt.error || strat.error
+
   return (
     <Panel
       title="Candidates"
       icon={FlaskConical}
       action={
-        <div className="chips-filter">
+        <div className="chips-filter" role="group" aria-label="Filter by market">
           {MARKETS.map((m) => (
             <button
               key={m}
               type="button"
               className={`chip-btn${market === m ? ' active' : ''}`}
+              aria-pressed={market === m}
               onClick={() => setMarket(m)}
             >
               {m}
@@ -144,8 +165,8 @@ export function Backtests() {
         </div>
       }
     >
-      {bt.error ? (
-        <div className="alert">Could not load backtests: {errMessage(bt.error)}</div>
+      {error ? (
+        <div className="alert">Could not load backtests: {errMessage(error)}</div>
       ) : bt.isLoading ? (
         <div className="skeleton" style={{ height: 200 }} />
       ) : (

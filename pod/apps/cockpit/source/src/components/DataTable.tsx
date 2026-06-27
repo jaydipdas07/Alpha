@@ -69,6 +69,18 @@ export function DataTable<T>({
                   .filter(Boolean)
                   .join(' ')}
                 onClick={() => onSort(col)}
+                role={col.sort ? 'button' : undefined}
+                tabIndex={col.sort ? 0 : undefined}
+                onKeyDown={
+                  col.sort
+                    ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          onSort(col)
+                        }
+                      }
+                    : undefined
+                }
                 aria-sort={sortKey === col.key ? (dir === 'asc' ? 'ascending' : 'descending') : undefined}
               >
                 <span className="th-inner">
