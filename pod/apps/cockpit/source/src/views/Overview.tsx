@@ -14,17 +14,40 @@ import { EquityChart, type EquityPoint } from '../components/EquityChart'
 // strip (heartbeats / reconcile / freshness / open risk_events) lands above this
 // in M2.2.
 
+type Snap = { t: number; v: number }
+
 function buildEquity(records: Record<string, unknown>[]): EquityPoint[] {
-  // Dedupe by timestamp (last write wins) and sort ascending — lightweight-charts
-  // requires a strictly increasing, unique time axis.
-  const byTime = new Map<number, number>()
+  // pnl_snapshots is keyed per deployment; the Overview curve is *total account
+  // equity*: forward-fill each deployment's latest equity and sum across
+  // deployments at every snapshot timestamp. Output is ascending + unique by time
+  // (lightweight-charts requires that). Degrades to a single deployment's own curve.
+  const byDeployment = new Map<string, Snap[]>()
   for (const r of records) {
     const t = toUnixSeconds(r.ts)
-    if (t > 0) byTime.set(t, parseNum(r.equity))
+    if (t <= 0) continue
+    const dep = typeof r.deployment_id === 'string' ? r.deployment_id : '_'
+    const snap: Snap = { t, v: parseNum(r.equity) }
+    const existing = byDeployment.get(dep)
+    if (existing) existing.push(snap)
+    else byDeployment.set(dep, [snap])
   }
-  return [...byTime.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([time, value]) => ({ time: time as UTCTimestamp, value }))
+
+  const deployments = [...byDeployment.values()].map((s) => s.sort((a, b) => a.t - b.t))
+  const times = [...new Set(deployments.flat().map((s) => s.t))].sort((a, b) => a - b)
+  const cursor = deployments.map(() => -1) // index of each deployment's last snapshot ≤ t
+  const last = deployments.map(() => 0) // its equity there
+
+  return times.map((t) => {
+    let sum = 0
+    deployments.forEach((snaps, i) => {
+      while (cursor[i] + 1 < snaps.length && snaps[cursor[i] + 1].t <= t) {
+        cursor[i] += 1
+        last[i] = snaps[cursor[i]].v
+      }
+      if (cursor[i] >= 0) sum += last[i] // only count deployments that have started
+    })
+    return { time: t as UTCTimestamp, value: sum }
+  })
 }
 
 const LIVE_BADGE: Record<string, StatusKind> = {
@@ -40,7 +63,13 @@ export function Overview() {
   const discovery = useCount('discovery_runs')
   const riskEvents = useCount('risk_events')
 
-  const pnl = useLiveRecords({ client: lemmaClient, tableName: 'pnl_snapshots', limit: 1000 })
+  // Most-recent window, newest first (buildEquity re-sorts ascending for display).
+  const pnl = useLiveRecords({
+    client: lemmaClient,
+    tableName: 'pnl_snapshots',
+    limit: 1000,
+    sort: [{ field: 'ts', direction: 'desc' }],
+  })
   const points = useMemo(() => buildEquity(pnl.records), [pnl.records])
   const latestEquity = points.length ? points[points.length - 1].value : null
 
