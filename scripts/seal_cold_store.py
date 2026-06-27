@@ -38,9 +38,7 @@ HOLDOUT_ROOT = _root("ALPHA_HOLDOUT_ROOT", "data_holdout")  # gate-only
 
 def main() -> None:
     fraction = load_rigor_config().holdout.fraction
-    print(
-        f"=== seal {RAW_ROOT} -> research {RESEARCH_ROOT} + holdout {HOLDOUT_ROOT} ==="
-    )
+    print(f"=== seal {RAW_ROOT} -> research {RESEARCH_ROOT} + holdout {HOLDOUT_ROOT} ===")
     research = BarStore(RESEARCH_ROOT)
     windows = seal_cold_store(
         BarStore(RAW_ROOT), research=research, holdout=BarStore(HOLDOUT_ROOT), fraction=fraction
