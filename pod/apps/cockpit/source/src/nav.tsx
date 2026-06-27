@@ -7,6 +7,7 @@ import {
   Network,
   ShieldAlert,
   SlidersHorizontal,
+  Sparkles,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -23,6 +24,7 @@ export type ViewId =
   | 'exchanges'
   | 'risk'
   | 'config'
+  | 'desk'
 
 export interface NavItem {
   id: ViewId
@@ -80,5 +82,11 @@ export const NAV: readonly NavItem[] = [
     label: 'Config',
     icon: SlidersHorizontal,
     blurb: 'The tunables — risk / costs / rigor (read-only).',
+  },
+  {
+    id: 'desk',
+    label: 'Desk',
+    icon: Sparkles,
+    blurb: 'Ask the mission-control copilot about the system.',
   },
 ]

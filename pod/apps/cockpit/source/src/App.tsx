@@ -11,6 +11,7 @@ import { Approvals } from './views/Approvals'
 import { Exchanges } from './views/Exchanges'
 import { Risk } from './views/Risk'
 import { Config } from './views/Config'
+import { Desk } from './views/Desk'
 
 // View registry. Keyed by ViewId so the compiler enforces one component per nav
 // entry. Navigation is in-app state (not URL routing) — apps run inside the pod
@@ -24,6 +25,7 @@ const VIEWS: Record<ViewId, ComponentType> = {
   exchanges: Exchanges,
   risk: Risk,
   config: Config,
+  desk: Desk,
 }
 
 const POD_ID = lemmaClient.podId

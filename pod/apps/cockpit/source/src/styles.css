@@ -812,6 +812,87 @@ code,
   color: var(--ok);
 }
 
+/* ---------- desk chat (M2.5) ---------- */
+
+.desk {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: calc(100vh - 170px);
+}
+
+.desk-log {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 4px;
+}
+
+.bubble {
+  display: flex;
+  gap: 10px;
+  max-width: 82%;
+}
+
+.bubble.me {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+.bubble-who {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--panel-2);
+  color: var(--ink-2);
+}
+
+.bubble.agent .bubble-who {
+  color: var(--accent);
+}
+
+.bubble-text {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 10px 13px;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bubble.me .bubble-text {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+
+.desk-composer {
+  display: flex;
+  gap: 10px;
+}
+
+.desk-composer input {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  padding: 10px 14px;
+  border-radius: var(--r-sm);
+}
+
+.desk-composer input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .evidence {
   display: flex;
   flex-wrap: wrap;
