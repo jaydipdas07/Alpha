@@ -43,6 +43,11 @@ dev = [
 line-length = 100
 target-version = "py312"
 src = ["alpha-core/src", "alpha-core/tests", "worker/src", "worker/tests"]
+# The pod bundle is Lemma-sandbox code, not part of the alpha-core/worker packages: its
+# Python functions carry required `#input_type_name:`-style header comments that Lemma
+# validates with NO space after `#` — `ruff format` would rewrite them to `# input_…` and
+# break the import. Keep it out of the repo's Python formatter/linter.
+extend-exclude = ["pod"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF"]

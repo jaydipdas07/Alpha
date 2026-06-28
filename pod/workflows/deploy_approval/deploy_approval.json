@@ -1,0 +1,83 @@
+{
+  // Workflow B (M3.7) — the per-strategy human go-live gate. The off-pod risk-officer
+  // bridge writes an `approval_requests` row ONLY when both gates passed (paper-eval
+  // confirmed the backtest AND the one-shot holdout gate promoted — the holdout read
+  // stays off-pod, TEST-3); that INSERT triggers this workflow. The graph is the on-pod
+  // half: a human FORM, then a coordinated commit. On approve the commit issues a `start`
+  // command for the worker (TEST-8: the pod issues; only the worker executes); on reject
+  // it records the decision. Every go-live is a human decision — the pod never auto-approves.
+  "name": "deploy_approval",
+  "description": "Workflow B: human approval of a paper survivor for deployment. FORM -> finalize (issue the worker start command on approve / record rejection). TEST-8: the pod issues commands; the worker executes.",
+  "start": {
+    "type": "DATASTORE_EVENT",
+    "config": { "table_name": "approval_requests", "operations": ["INSERT"] }
+  },
+  "nodes": [
+    {
+      "id": "human_approval",
+      "type": "FORM",
+      "label": "Approve deployment",
+      "config": {
+        // Assigned to the operator (POD_ADMIN). Every go-live is this human decision.
+        "assignee_pod_member_id": "019ef606-7b98-702b-9e53-d980f3c0b6bb",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            // review context, pre-filled from the triggering row (the holdout verdict is
+            // shown to the HUMAN approver — allowed; it is never given to an agent/RAG).
+            "strategy": { "type": "string",
+              "default": { "type": "expression", "value": "start.payload.strategy_name", "optional": true } },
+            "venue": { "type": "string",
+              "default": { "type": "expression", "value": "start.payload.venue", "optional": true } },
+            "mode": { "type": "string",
+              "default": { "type": "expression", "value": "start.payload.mode", "optional": true } },
+            "market": { "type": "string",
+              "default": { "type": "expression", "value": "start.payload.market", "optional": true } },
+            "paper_sharpe": { "type": "number",
+              "default": { "type": "expression", "value": "start.payload.paper_sharpe", "optional": true } },
+            "sharpe_retention": { "type": "number",
+              "default": { "type": "expression", "value": "start.payload.sharpe_retention", "optional": true } },
+            "holdout_verdict": { "type": "string",
+              "default": { "type": "expression", "value": "start.payload.holdout_verdict", "optional": true } },
+            "holdout_oos_sharpe": { "type": "number",
+              "default": { "type": "expression", "value": "start.payload.holdout_oos_sharpe", "optional": true } },
+            "holdout_reason": { "type": "string",
+              "default": { "type": "expression", "value": "start.payload.holdout_reason", "optional": true } },
+            "origin": { "type": "string",
+              "default": { "type": "expression", "value": "start.payload.origin", "optional": true } },
+            // the decision
+            "approved": { "type": "boolean", "title": "Approve this deployment?" },
+            "notes": { "type": "string", "title": "Notes (reason)" }
+          },
+          "required": ["approved"]
+        },
+        "ui_schema": {
+          "ui:order": [
+            "strategy", "venue", "mode", "market",
+            "paper_sharpe", "sharpe_retention",
+            "holdout_verdict", "holdout_oos_sharpe", "holdout_reason",
+            "origin", "approved", "notes"
+          ]
+        }
+      }
+    },
+    {
+      "id": "finalize",
+      "type": "FUNCTION",
+      "label": "Commit decision",
+      "config": {
+        "function_name": "finalize_deployment",
+        "input_mapping": {
+          "record_id": { "type": "expression", "value": "start.metadata.record_id" },
+          "approved": { "type": "expression", "value": "human_approval.approved" },
+          "notes": { "type": "expression", "value": "human_approval.notes", "optional": true }
+        }
+      }
+    },
+    { "id": "end", "type": "END", "label": "Done" }
+  ],
+  "edges": [
+    { "id": "e1", "source": "human_approval", "target": "finalize" },
+    { "id": "e2", "source": "finalize", "target": "end" }
+  ]
+}
