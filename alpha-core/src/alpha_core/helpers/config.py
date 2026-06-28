@@ -201,10 +201,26 @@ class QuantAnalystConfig(BaseModel):
     oos_fraction: float = Field(gt=0, lt=1)  # the out-of-sample slice the verdict judges
 
 
+class PaperEvalConfig(BaseModel):
+    """Paper-run acceptance thresholds (M3.7) — does forward paper confirm the backtest?
+
+    The paper edge must persist (an absolute Sharpe floor) **and** keep a minimum fraction
+    of the backtest Sharpe (so slippage / fees / real fills haven't eaten the edge)."""
+
+    model_config = ConfigDict(extra="forbid")
+    min_obs: int = Field(
+        default=60, gt=0
+    )  # min paper return-obs: too few -> a lucky Sharpe -> fail
+    min_paper_sharpe: float = 0.5  # absolute floor on the live paper Sharpe
+    min_sharpe_retention: float = Field(
+        default=0.5, ge=0, le=1
+    )  # paper/backtest Sharpe ratio floor
+
+
 class RigorConfig(BaseModel):
     """``rigor.yaml`` — the statistical-rigor tunables (CPCV embargo + PBO + DSR + holdout +
     the vectorbt pre-screen + the CPCV compute budget + population calibration + the
-    quant-analyst verdict)."""
+    quant-analyst verdict + the paper-run acceptance thresholds)."""
 
     model_config = ConfigDict(extra="forbid")
     cpcv: CPCVConfig
@@ -215,6 +231,7 @@ class RigorConfig(BaseModel):
     cpcv_budget: CpcvBudgetConfig
     calibration: CalibrationConfig
     quant_analyst: QuantAnalystConfig
+    paper_eval: PaperEvalConfig = Field(default_factory=PaperEvalConfig)  # M3.7 (optional section)
 
 
 def load_rigor_config() -> RigorConfig:

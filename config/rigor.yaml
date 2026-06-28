@@ -79,3 +79,11 @@ quant_analyst:
   oos_fraction: 0.5          # out-of-sample slice the verdict judges (matches calibration.oos_fraction)
 
 
+
+# M3.7 paper-run acceptance — does forward paper-trading confirm the backtest? A paper
+# run passes (-> Workflow B) only if the live paper edge persists AND keeps enough of the
+# backtest Sharpe (so slippage / fees / real fills haven't eaten it). evaluate_paper_run.
+paper_eval:
+  min_obs: 60                # min paper return-obs (else a lucky Sharpe) before judging
+  min_paper_sharpe: 0.5      # absolute floor on the live paper Sharpe (the edge must persist)
+  min_sharpe_retention: 0.5  # paper/backtest Sharpe ratio floor (keep >= half the backtest edge)
