@@ -71,6 +71,12 @@ class PodSyncConfig(BaseModel):
     # per pod call — bounds how long a hung pod can delay worker shutdown
     timeout_seconds: float = Field(default=10.0, gt=0)
     token_env: str = "LEMMA_TOKEN"  # the .env var holding the 60-min pod token (never committed)
+    # Token rotation: the worker reads the env var only at startup, but the pod token is ~60-min,
+    # so a long-lived worker re-reads $token_env from this FILE on a timer and swaps in a fresh pod
+    # client (no restart). A Mac launchd relay (deploy/relay/) keeps the file fresh. 0 keeps the
+    # legacy behaviour (startup token only).
+    token_envfile: str = ".env"  # re-read here for rotation (relative to the worker's cwd)
+    token_refresh_seconds: float = Field(default=60.0, ge=0)  # 0 = no re-read (startup token only)
 
 
 class EnvConfig(BaseModel):

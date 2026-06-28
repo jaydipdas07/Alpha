@@ -17,7 +17,13 @@ from alpha_core.core.enums import AssetClass, Venue
 from alpha_core.core.models import Position
 from alpha_core.execution.commands import CommandKind, CommandStatus
 from worker.config import EnvConfig
-from worker.pod_sync import PodCommandSource, PodStatusWriter, build_pod_client, positions_hash
+from worker.pod_sync import (
+    PodCommandSource,
+    PodStatusWriter,
+    build_pod_client,
+    positions_hash,
+    read_envfile_token,
+)
 
 NOW = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
 
@@ -268,3 +274,50 @@ def test_build_pod_client_swallows_construction_errors(monkeypatch: pytest.Monke
     monkeypatch.setenv("LEMMA_TOKEN", "tok")
     env = EnvConfig.model_validate({**_base_env(), "pod_sync": {"pod_id": "p-1"}})
     assert build_pod_client(env) is None  # a construction error -> None, never raises (TEST-8)
+
+
+# --- token rotation (the relay keeps the .env fresh; the worker re-reads it) ----------
+
+
+def test_build_pod_client_token_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The rotation loop passes a freshly-read token; it overrides the (absent) startup env var."""
+    monkeypatch.delenv("LEMMA_TOKEN", raising=False)
+    env = EnvConfig.model_validate({**_base_env(), "pod_sync": {"pod_id": "p-1"}})
+    assert build_pod_client(env) is None  # no startup token + no override -> off
+    assert build_pod_client(env, token="fresh.jwt.value") is not None  # override builds a client
+
+
+def test_read_envfile_token(tmp_path: Any) -> None:
+    f = tmp_path / ".env"
+    f.write_text(
+        "# Alpha\nDELTA_TESTNET_API_KEY=abc\nLEMMA_TOKEN=eyJ.aGVhZA.sig\nOTHER=z\n",
+        encoding="utf-8",
+    )
+    assert read_envfile_token(str(f), "LEMMA_TOKEN") == "eyJ.aGVhZA.sig"
+    assert read_envfile_token(str(f), "MISSING") is None  # key absent -> None
+    (tmp_path / "quoted.env").write_text('LEMMA_TOKEN="q.u.oted"\n', encoding="utf-8")
+    assert read_envfile_token(str(tmp_path / "quoted.env"), "LEMMA_TOKEN") == "q.u.oted"
+    (tmp_path / "empty.env").write_text("LEMMA_TOKEN=\n", encoding="utf-8")
+    assert read_envfile_token(str(tmp_path / "empty.env"), "LEMMA_TOKEN") is None  # empty -> None
+    assert (
+        read_envfile_token(str(tmp_path / "nope.env"), "LEMMA_TOKEN") is None
+    )  # missing file -> None
+
+
+async def test_status_writer_set_pod_swaps_the_client() -> None:
+    """A rotated client takes over writes; the cached row id is kept (same row, new client)."""
+    old = _FakePod(existing=[{"id": "row-1", "worker_id": "w-1"}])
+    writer = _writer(old)
+    await writer.beat(now=NOW, armed=True, positions=[], detail={})  # caches row-1 on `old`
+    new = _FakePod(existing=[{"id": "row-1", "worker_id": "w-1"}])
+    writer.set_pod(cast(Pod, new))
+    await writer.beat(now=NOW, armed=False, positions=[], detail={})
+    assert len(new.records.updated) == 1  # the new client now serves writes
+    assert len(old.records.updated) == 1  # the old client got only the first beat
+
+
+async def test_command_source_set_pod_swaps_the_client() -> None:
+    src = _cmd_src(_FakePod(pending=[]))  # old pod: nothing pending
+    assert await src.poll() == []
+    src.set_pod(cast(Pod, _FakePod(pending=[{"id": "c9", "kind": "start"}])))
+    assert [c.id for c in await src.poll()] == ["c9"]  # the new client's commands now arrive

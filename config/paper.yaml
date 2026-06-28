@@ -28,3 +28,6 @@ pod_sync:
   pod_id: "019ef606-7b77-76f1-853a-978ddf819415"  # Vault (mission control)
   base_url: https://api.lemma.work
   heartbeat_seconds: 15
+  # Token rotation: re-read LEMMA_TOKEN from .env this often + swap the pod client (no restart),
+  # so the ~60-min token stays fresh. A Mac launchd relay (deploy/relay/) keeps .env current.
+  token_refresh_seconds: 60
