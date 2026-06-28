@@ -50,7 +50,7 @@ from alpha_core.strategy.engine import StrategyEngine
 from alpha_core.strategy.registry import build_strategy
 from worker.adapters import build_adapter
 from worker.config import EnvConfig, active_venue, load_env_config, load_venues
-from worker.pod_sync import PodStatusWriter, build_pod_client
+from worker.pod_sync import PodCommandSource, PodStatusWriter, build_pod_client
 
 
 class Worker:
@@ -338,9 +338,26 @@ def build_worker(env: EnvConfig) -> Worker:
     reconciler = Reconciler(adapter=adapter, risk=risk)
     engine = StrategyEngine(build_strategy(env.strategy))
     feed_stale = float(risk_config.kill_switch.triggers.feed_stale_seconds)
+    control = WorkerControl()
     pod = build_pod_client(env)  # None unless pod_sync is configured + a token is staged
     pod_status = (
         PodStatusWriter(pod, worker_id=env.worker_id, mode=env.mode) if pod is not None else None
+    )
+    # The pod-backed command bus (cockpit -> worker). The worker is the sole executor
+    # (TEST-8): the pod only ISSUES commands; this watcher applies them to the LOCAL risk
+    # gate/OMS. drain=False matches drain_inline=False (consume_events books flatten fills).
+    command_watcher = (
+        CommandWatcher(
+            source=PodCommandSource(pod),
+            oms=oms,
+            risk=risk,
+            control=control,
+            worker_id=env.worker_id,
+            reconciler=reconciler,
+            drain=False,
+        )
+        if pod is not None
+        else None
     )
     return Worker(
         env=env,
@@ -351,7 +368,7 @@ def build_worker(env: EnvConfig) -> Worker:
         engine=engine,
         bar_builder=BarBuilder(env.bar_interval_seconds),
         heartbeat=HeartbeatFile(env.heartbeat_path),
-        control=WorkerControl(),
+        control=control,
         feed=AdapterFeed(adapter),
         feed_stale_seconds=feed_stale,
         # The CcxtAdapter's order_events() is ALWAYS continuous — a ccxt.pro ws stream
@@ -362,6 +379,7 @@ def build_worker(env: EnvConfig) -> Worker:
         # first closed bar (the heartbeat freezes -> the deadman trips). drain_inline=True
         # is only for a bounded PaperBroker sim, which build_adapter never builds.
         drain_inline=False,
+        command_watcher=command_watcher,  # pod->worker command bus (None unless configured)
         pod_status=pod_status,  # best-effort worker->pod heartbeat (None unless configured)
         clock=clock,
     )
