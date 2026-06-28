@@ -8,6 +8,6 @@
   "platform": "TELEGRAM",
   "default_agent_name": "desk",
   "credential_mode": "CUSTOM",
-  "account_id": "TODO-telegram-connector-account-uuid",
-  "is_enabled": false
+  "account_id": "019f0dd2-f652-743d-8939-e78cc093d868",
+  "is_enabled": true
 }
