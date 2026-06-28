@@ -1,0 +1,171 @@
+"""Pod-sync tests — the best-effort ``worker_status`` writer + the pod-client gate.
+
+The writer must NEVER raise on a pod error (TEST-8: Lemma off the money path) and must
+upsert by the unique ``worker_id`` (find-or-create, then update the cached row).
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from decimal import Decimal
+from typing import Any, cast
+
+import pytest
+from lemma_sdk import Pod
+
+from alpha_core.core.enums import AssetClass, Venue
+from alpha_core.core.models import Position
+from worker.config import EnvConfig
+from worker.pod_sync import PodStatusWriter, build_pod_client, positions_hash
+
+NOW = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
+
+
+class _FakeListResp:
+    def __init__(self, items: list[dict[str, Any]]) -> None:
+        self._items = items
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"items": self._items}
+
+
+class _FakeRecords:
+    def __init__(self, existing: list[dict[str, Any]], *, fail: bool) -> None:
+        self._existing = existing
+        self._fail = fail
+        self.created: list[tuple[str, dict[str, Any]]] = []
+        self.updated: list[tuple[str, str, dict[str, Any]]] = []
+
+    def list(self, table: str, *, limit: int = 20, **_kw: Any) -> _FakeListResp:
+        return _FakeListResp(self._existing)
+
+    def create(self, table: str, data: dict[str, Any]) -> dict[str, Any]:
+        if self._fail:
+            raise RuntimeError("pod down")
+        self.created.append((table, data))
+        return {**data, "id": "row-1"}
+
+    def update(self, table: str, record_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        if self._fail:
+            raise RuntimeError("pod down")
+        self.updated.append((table, record_id, data))
+        return {**data, "id": record_id}
+
+
+class _FakePod:
+    def __init__(self, existing: list[dict[str, Any]] | None = None, *, fail: bool = False) -> None:
+        self.records = _FakeRecords(existing or [], fail=fail)
+
+
+def _pos(symbol: str, qty: str) -> Position:
+    held = Decimal(qty) != 0
+    return Position(
+        venue=Venue.DELTA,
+        symbol=symbol,
+        asset_class=AssetClass.CRYPTO,
+        quantity=Decimal(qty),
+        average_price=Decimal("100") if held else None,
+        last_price=Decimal("100") if held else None,
+        updated_at=NOW,
+    )
+
+
+def _writer(pod: _FakePod) -> PodStatusWriter:
+    return PodStatusWriter(cast(Pod, pod), worker_id="w-1", mode="paper")
+
+
+async def test_first_beat_creates_the_row() -> None:
+    pod = _FakePod()  # no existing rows
+    await _writer(pod).beat(
+        now=NOW, armed=True, positions=[_pos("BTC/USD:USD", "1")], detail={"run_state": "running"}
+    )
+    assert len(pod.records.created) == 1
+    table, data = pod.records.created[0]
+    assert table == "worker_status"
+    assert data["worker_id"] == "w-1"
+    assert data["armed"] is True
+    assert data["mode"] == "paper"
+    assert data["last_seen"] == NOW.isoformat()
+    assert data["detail"] == {"run_state": "running"}
+    assert data["positions_hash"]  # a non-empty hash for an open book
+
+
+async def test_second_beat_updates_the_cached_row() -> None:
+    pod = _FakePod()
+    writer = _writer(pod)
+    await writer.beat(now=NOW, armed=True, positions=[], detail={})
+    await writer.beat(now=NOW, armed=False, positions=[], detail={})
+    assert len(pod.records.created) == 1  # created once...
+    assert len(pod.records.updated) == 1  # ...then reused the cached id
+    assert pod.records.updated[0][1] == "row-1"
+    assert pod.records.updated[0][2]["armed"] is False
+
+
+async def test_beat_finds_an_existing_row_and_updates() -> None:
+    pod = _FakePod(existing=[{"id": "existing-9", "worker_id": "w-1"}])
+    await _writer(pod).beat(now=NOW, armed=True, positions=[], detail={})
+    assert pod.records.created == []  # did NOT create a duplicate
+    assert pod.records.updated[0][1] == "existing-9"
+
+
+async def test_beat_swallows_pod_errors() -> None:
+    # TEST-8: a pod outage must never raise into the worker loop.
+    pod = _FakePod(fail=True)
+    await _writer(pod).beat(now=NOW, armed=True, positions=[], detail={})  # must not raise
+
+
+def test_positions_hash_stable_and_ignores_flat() -> None:
+    a = positions_hash([_pos("BTC/USD:USD", "1"), _pos("ETH/USD:USD", "2")])
+    b = positions_hash([_pos("ETH/USD:USD", "2"), _pos("BTC/USD:USD", "1")])  # order-independent
+    assert a == b
+    assert positions_hash([_pos("BTC/USD:USD", "0")]) == positions_hash([])  # zero-qty ignored
+
+
+def _base_env() -> dict[str, Any]:
+    return {
+        "env": "paper",
+        "mode": "paper",
+        "allow_live": False,
+        "worker_id": "w",
+        "venue": "delta-testnet",
+        "strategy": "idle",
+        "symbols": ["BTC/USD:USD"],
+        "bar_interval_seconds": 60,
+        "state_db": "sqlite:///:memory:",
+        "heartbeat_path": "/tmp/hb",
+        "command_poll_seconds": 1.0,
+        "reconcile_interval_seconds": 30,
+    }
+
+
+def test_build_pod_client_off_without_config_or_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LEMMA_TOKEN", raising=False)
+    assert build_pod_client(EnvConfig.model_validate(_base_env())) is None  # no pod_sync
+    env = EnvConfig.model_validate({**_base_env(), "pod_sync": {"pod_id": "p-1"}})
+    assert build_pod_client(env) is None  # configured but no token
+
+
+def test_build_pod_client_constructs_with_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    class _FakePodCls:
+        def __init__(self, *, pod_id: str, token: str, base_url: str) -> None:
+            captured.update(pod_id=pod_id, token=token, base_url=base_url)
+
+    monkeypatch.setattr("worker.pod_sync.Pod", _FakePodCls)
+    monkeypatch.setenv("LEMMA_TOKEN", "tok-123")
+    env = EnvConfig.model_validate(
+        {**_base_env(), "pod_sync": {"pod_id": "p-9", "base_url": "https://api.x"}}
+    )
+    assert build_pod_client(env) is not None
+    assert captured == {"pod_id": "p-9", "token": "tok-123", "base_url": "https://api.x"}
+
+
+def test_build_pod_client_swallows_construction_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _boom(**_kw: Any) -> None:
+        raise RuntimeError("bad base_url")
+
+    monkeypatch.setattr("worker.pod_sync.Pod", _boom)
+    monkeypatch.setenv("LEMMA_TOKEN", "tok")
+    env = EnvConfig.model_validate({**_base_env(), "pod_sync": {"pod_id": "p-1"}})
+    assert build_pod_client(env) is None  # a construction error -> None, never raises (TEST-8)

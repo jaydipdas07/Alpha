@@ -50,6 +50,7 @@ from alpha_core.strategy.engine import StrategyEngine
 from alpha_core.strategy.registry import build_strategy
 from worker.adapters import build_adapter
 from worker.config import EnvConfig, active_venue, load_env_config, load_venues
+from worker.pod_sync import PodStatusWriter, build_pod_client
 
 
 class Worker:
@@ -72,6 +73,7 @@ class Worker:
         drain_inline: bool = False,
         notifier: Notifier | None = None,
         command_watcher: CommandWatcher | None = None,
+        pod_status: PodStatusWriter | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._env = env
@@ -93,6 +95,7 @@ class Worker:
         self._drain_inline = drain_inline
         self._notifier = notifier or LoggingNotifier()
         self._command_watcher = command_watcher
+        self._pod_status = pod_status  # best-effort worker->pod heartbeat (None = off; TEST-8)
         self._clock = clock or SystemClock()
         self._log = get_logger("worker")
         self._last_tick_at: datetime | None = None
@@ -143,6 +146,8 @@ class Worker:
                     self._command_watcher.run(poll_interval=self._env.command_poll_seconds)
                 )
             )
+        if self._pod_status is not None:
+            background.append(asyncio.create_task(self._pod_status_loop()))
         try:
             await self._market_loop()
         finally:
@@ -173,6 +178,37 @@ class Worker:
     async def _consume_events(self) -> None:
         """Long-lived fill consumer (the venue order-event ws stream)."""
         await self._oms.consume_events()
+
+    async def _pod_status_loop(self) -> None:
+        """Best-effort ``worker_status`` heartbeat to the pod every ``heartbeat_seconds``.
+        The pod is mission control, NOT on the money path (TEST-8): ``beat`` swallows every
+        pod error, and this task is independent of the market/periodic/command tasks, so a
+        pod outage cannot stall trading, the kill-switch, the deadman, or reconcile."""
+        assert self._pod_status is not None  # only started when present
+        cadence = self._env.pod_sync.heartbeat_seconds if self._env.pod_sync else 15.0
+        while not self._control.stopped:
+            await self._pod_status.beat(
+                now=self._now(),
+                armed=not self._risk.is_halted,
+                positions=self._oms.positions,
+                detail=self._status_detail(),
+            )
+            await asyncio.sleep(cadence)
+
+    def _status_detail(self) -> dict[str, object]:
+        """Compact telemetry for the cockpit (money as str — never a float, B5)."""
+        last = self._last_tick_at
+        age = (self._now() - last).total_seconds() if last is not None else None
+        return {
+            "run_state": self._control.state.value,
+            "strategy": self._env.strategy,
+            "venue": self._env.venue,
+            "halt_trigger": self._risk.halt_trigger.value if self._risk.halt_trigger else None,
+            "realized_pnl": str(self._oms.total_realized_pnl()),
+            "unrealized_pnl": str(self._oms.total_unrealized_pnl()),
+            "open_positions": sum(1 for p in self._oms.positions if p.quantity != 0),
+            "last_tick_age_s": round(age, 1) if age is not None else None,
+        }
 
     async def _periodic(self) -> None:
         # NB: the heartbeat is beaten ONLY from the market loop (per tick), never here —
@@ -299,6 +335,10 @@ def build_worker(env: EnvConfig) -> Worker:
     reconciler = Reconciler(adapter=adapter, risk=risk)
     engine = StrategyEngine(build_strategy(env.strategy))
     feed_stale = float(risk_config.kill_switch.triggers.feed_stale_seconds)
+    pod = build_pod_client(env)  # None unless pod_sync is configured + a token is staged
+    pod_status = (
+        PodStatusWriter(pod, worker_id=env.worker_id, mode=env.mode) if pod is not None else None
+    )
     return Worker(
         env=env,
         adapter=adapter,
@@ -319,6 +359,7 @@ def build_worker(env: EnvConfig) -> Worker:
         # first closed bar (the heartbeat freezes -> the deadman trips). drain_inline=True
         # is only for a bounded PaperBroker sim, which build_adapter never builds.
         drain_inline=False,
+        pod_status=pod_status,  # best-effort worker->pod heartbeat (None unless configured)
         clock=clock,
     )
 

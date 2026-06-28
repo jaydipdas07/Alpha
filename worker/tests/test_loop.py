@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Any, cast
 
 from alpha_core.core.enums import AssetClass, OrderType, Side, Venue
 from alpha_core.core.interfaces import BrokerAdapter, BrokerEventKind, BrokerOrderEvent, Strategy
@@ -28,6 +29,7 @@ from alpha_core.scheduler.clock import FakeClock
 from alpha_core.strategy.engine import StrategyEngine
 from worker.config import EnvConfig
 from worker.loop import Worker
+from worker.pod_sync import PodStatusWriter
 
 T0 = datetime(2026, 6, 28, 12, 0, 0, tzinfo=UTC)
 NOW = T0 + timedelta(minutes=1)  # the worker's wall-clock instant (after the scripted ticks)
@@ -117,6 +119,18 @@ class _FakeVenue(BrokerAdapter):
             )
 
 
+class _RecordingPodStatus:
+    """A fake PodStatusWriter that records the heartbeat calls (structural)."""
+
+    def __init__(self) -> None:
+        self.beats: list[dict[str, Any]] = []
+
+    async def beat(
+        self, *, now: datetime, armed: bool, positions: Sequence[Position], detail: dict[str, Any]
+    ) -> None:
+        self.beats.append({"armed": armed, "positions": list(positions), "detail": detail})
+
+
 def _risk() -> RiskManager:
     return RiskManager(
         RiskConfig.model_validate(
@@ -182,6 +196,7 @@ def _worker(
     risk: RiskManager | None = None,
     venue: _FakeVenue | None = None,
     drain_inline: bool = True,
+    pod_status: PodStatusWriter | None = None,
 ) -> tuple[Worker, _FakeVenue, OMS, HeartbeatFile]:
     risk = risk or _risk()
     store = StateStore("sqlite:///:memory:")
@@ -203,6 +218,7 @@ def _worker(
         feed=AdapterFeed(venue),
         feed_stale_seconds=600,
         drain_inline=drain_inline,  # bounded fake feed -> drain fills inline
+        pod_status=pod_status,
         clock=clock,
     )
     return worker, venue, oms, heartbeat
@@ -382,6 +398,49 @@ async def test_rearm_is_a_noop_when_not_halted(tmp_path) -> None:  # type: ignor
     worker, *_ = _worker(tmp_path, _ticks(["100"]), strategy=_AlwaysBuy())
     rearmed, detail = await worker.rearm()
     assert rearmed and "nothing to re-arm" in detail
+
+
+async def test_status_detail_reports_run_state_and_str_money(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    worker, *_ = _worker(tmp_path, _ticks(["100"]), strategy=_AlwaysBuy())
+    worker._last_tick_at = NOW
+    d = worker._status_detail()
+    assert d["run_state"] == "running"
+    assert d["strategy"] == "idle"
+    assert isinstance(d["realized_pnl"], str)  # money as str, never float (B5)
+    assert isinstance(d["unrealized_pnl"], str)
+    assert d["open_positions"] == 0
+    assert d["last_tick_age_s"] is not None
+
+
+async def test_pod_status_loop_beats_then_stops(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    rec = _RecordingPodStatus()
+    worker, *_ = _worker(
+        tmp_path, _ticks(["100"]), strategy=_AlwaysBuy(), pod_status=cast(PodStatusWriter, rec)
+    )
+    worker._last_tick_at = NOW
+
+    async def _sleep_then_stop(_seconds: float) -> None:
+        worker._control.set(RunState.STOPPED)  # exit the loop after one beat
+
+    monkeypatch.setattr("worker.loop.asyncio.sleep", _sleep_then_stop)
+    await worker._pod_status_loop()
+    assert len(rec.beats) == 1
+    assert rec.beats[0]["armed"] is True  # not halted
+    assert rec.beats[0]["detail"]["strategy"] == "idle"
+
+
+async def test_run_wires_the_pod_status_heartbeat(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # run() starts the pod-status background task; a bounded feed lets it beat at least
+    # once (at the first market-loop await) before the loop ends and cancels it.
+    rec = _RecordingPodStatus()
+    worker, *_ = _worker(
+        tmp_path,
+        _ticks(["100", "100", "100"]),
+        strategy=_AlwaysBuy(),
+        pod_status=cast(PodStatusWriter, rec),
+    )
+    await worker.run()
+    assert rec.beats  # the heartbeat fired
 
 
 async def test_periodic_reconciles_once(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
