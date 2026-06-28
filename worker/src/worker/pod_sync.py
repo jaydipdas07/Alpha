@@ -29,24 +29,39 @@ from worker.config import EnvConfig
 _log = get_logger("pod_sync")
 
 
-def build_pod_client(env: EnvConfig) -> Pod | None:
-    """Construct the Vault-pod client from ``env.pod_sync`` + the staged token, or
-    ``None`` if pod-sync is unconfigured/disabled or no token is present. Never raises —
-    pod-sync is best-effort, so a missing token just means "no pod telemetry"."""
+def build_pod_client(env: EnvConfig, *, token: str | None = None) -> Pod | None:
+    """Construct the Vault-pod client from ``env.pod_sync`` + a token, or ``None`` if pod-sync
+    is unconfigured/disabled or no token is present. ``token`` overrides the startup
+    ``$token_env`` (the rotation loop passes a freshly-read token). Never raises — pod-sync is
+    best-effort, so a missing/bad token just means "no pod telemetry"."""
     cfg = env.pod_sync
     if cfg is None or not cfg.enabled:
         return None
-    token = os.environ.get(cfg.token_env, "")
-    if not token:
+    tok = token if token is not None else os.environ.get(cfg.token_env, "")
+    if not tok:
         _log.info("pod_sync_disabled", reason=f"no {cfg.token_env} in environment")
         return None
     try:
-        return Pod(
-            pod_id=cfg.pod_id, token=token, base_url=cfg.base_url, timeout=cfg.timeout_seconds
-        )
+        return Pod(pod_id=cfg.pod_id, token=tok, base_url=cfg.base_url, timeout=cfg.timeout_seconds)
     except Exception as exc:
         _log.warning("pod_client_build_failed", error=str(exc))
         return None
+
+
+def read_envfile_token(path: str, key: str) -> str | None:
+    """Read ``key``'s value from a ``.env``-style file (the value the relay keeps fresh), or
+    ``None`` if the file/key is absent. The rotation loop must read the FILE — ``os.environ`` is
+    frozen at startup (``load_dotenv`` uses ``setdefault``). Best-effort: a missing/unreadable file
+    returns ``None`` (rotation just doesn't happen this tick)."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if line.startswith(f"{key}="):
+                    return line[len(key) + 1 :].strip().strip('"').strip("'") or None
+    except OSError:
+        return None
+    return None
 
 
 def positions_hash(positions: list[Position]) -> str:
@@ -72,6 +87,12 @@ class PodStatusWriter:
         self._mode = mode
         self._build_version = build_version
         self._row_id: str | None = None
+
+    def set_pod(self, pod: Pod) -> None:
+        """Swap in a freshly-tokened pod client (token rotation). Keeps the cached ``_row_id`` —
+        it is the same row, only the client changed. Reference assignment is atomic (GIL), so a
+        concurrent ``beat`` in another thread uses one consistent client, never a torn state."""
+        self._pod = pod
 
     async def beat(
         self,
@@ -149,6 +170,10 @@ class PodCommandSource:
     def __init__(self, pod: Pod) -> None:
         self._pod = pod
         self._poll_ok = True
+
+    def set_pod(self, pod: Pod) -> None:
+        """Swap in a freshly-tokened pod client (rotation; see ``PodStatusWriter.set_pod``)."""
+        self._pod = pod
 
     async def poll(self) -> list[Command]:
         try:

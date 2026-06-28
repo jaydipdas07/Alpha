@@ -29,6 +29,7 @@ here (only the kernel + the factory).
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -50,7 +51,12 @@ from alpha_core.strategy.engine import StrategyEngine
 from alpha_core.strategy.registry import build_strategy
 from worker.adapters import build_adapter
 from worker.config import EnvConfig, active_venue, load_env_config, load_venues
-from worker.pod_sync import PodCommandSource, PodStatusWriter, build_pod_client
+from worker.pod_sync import (
+    PodCommandSource,
+    PodStatusWriter,
+    build_pod_client,
+    read_envfile_token,
+)
 
 
 class Worker:
@@ -74,6 +80,7 @@ class Worker:
         notifier: Notifier | None = None,
         command_watcher: CommandWatcher | None = None,
         pod_status: PodStatusWriter | None = None,
+        pod_command_source: PodCommandSource | None = None,
         clock: Clock | None = None,
     ) -> None:
         self._env = env
@@ -96,6 +103,10 @@ class Worker:
         self._notifier = notifier or LoggingNotifier()
         self._command_watcher = command_watcher
         self._pod_status = pod_status  # best-effort worker->pod heartbeat (None = off; TEST-8)
+        # The status writer + command source whose pod client the token-rotation loop swaps when
+        # the relay refreshes $token_env in the .env file (so a long-lived worker stays pod-synced
+        # without a restart). Both best-effort (TEST-8) — rotation never touches trading/safety.
+        self._pod_command_source = pod_command_source
         self._clock = clock or SystemClock()
         self._log = get_logger("worker")
         self._last_tick_at: datetime | None = None
@@ -148,6 +159,8 @@ class Worker:
             )
         if self._pod_status is not None:
             background.append(asyncio.create_task(self._pod_status_loop()))
+            if self._env.pod_sync is not None and self._env.pod_sync.token_refresh_seconds > 0:
+                background.append(asyncio.create_task(self._pod_token_refresh_loop()))
         try:
             await self._market_loop()
         finally:
@@ -197,6 +210,37 @@ class Worker:
             except Exception as exc:  # self-healing: telemetry must never kill its own loop
                 self._log.warning("pod_status_loop_error", error=str(exc))
             await asyncio.sleep(cadence)
+
+    async def _pod_token_refresh_loop(self) -> None:
+        """Best-effort token rotation. The pod token is ~60-min and the worker reads ``$token_env``
+        only at startup (``load_dotenv`` setdefault), so a long-lived worker would lose pod-sync.
+        This re-reads the token from the .env FILE on a timer (a Mac launchd relay keeps it fresh —
+        ``deploy/relay/``) and, when it changed, swaps a freshly-tokened pod client into the status
+        writer + command source — no restart. TEST-8: pod-sync is never on the money path; every
+        step is best-effort and self-healing, so a failure just retries next tick and trading,
+        the kill-switch, the deadman, and reconcile are all untouched. The token value is NEVER
+        logged."""
+        cfg = self._env.pod_sync
+        assert cfg is not None and self._pod_status is not None  # started only when both hold
+        current = os.environ.get(cfg.token_env)  # the startup token the clients were built with
+        while not self._control.stopped:
+            await asyncio.sleep(cfg.token_refresh_seconds)
+            try:
+                token = await asyncio.to_thread(
+                    read_envfile_token, cfg.token_envfile, cfg.token_env
+                )
+                if not token or token == current:
+                    continue  # nothing staged yet, or unchanged since the last swap
+                pod = build_pod_client(self._env, token=token)
+                if pod is None:
+                    continue  # build failed (logged inside) — keep the current client, retry later
+                self._pod_status.set_pod(pod)
+                if self._pod_command_source is not None:
+                    self._pod_command_source.set_pod(pod)
+                current = token
+                self._log.info("pod_token_refreshed")  # the VALUE is never logged
+            except Exception as exc:  # self-healing: rotation must never kill its own loop
+                self._log.warning("pod_token_refresh_error", error=str(exc))
 
     def _status_detail(self) -> dict[str, object]:
         """Compact telemetry for the cockpit (money as str — never a float, B5)."""
@@ -346,9 +390,11 @@ def build_worker(env: EnvConfig) -> Worker:
     # The pod-backed command bus (cockpit -> worker). The worker is the sole executor
     # (TEST-8): the pod only ISSUES commands; this watcher applies them to the LOCAL risk
     # gate/OMS. drain=False matches drain_inline=False (consume_events books flatten fills).
+    # Named so the token-rotation loop can swap its pod client alongside the status writer.
+    pod_command_source = PodCommandSource(pod) if pod is not None else None
     command_watcher = (
         CommandWatcher(
-            source=PodCommandSource(pod),
+            source=pod_command_source,
             oms=oms,
             risk=risk,
             control=control,
@@ -356,7 +402,7 @@ def build_worker(env: EnvConfig) -> Worker:
             reconciler=reconciler,
             drain=False,
         )
-        if pod is not None
+        if pod_command_source is not None
         else None
     )
     return Worker(
@@ -371,6 +417,7 @@ def build_worker(env: EnvConfig) -> Worker:
         control=control,
         feed=AdapterFeed(adapter),
         feed_stale_seconds=feed_stale,
+        pod_command_source=pod_command_source,  # rotated alongside pod_status by the refresh loop
         # The CcxtAdapter's order_events() is ALWAYS continuous — a ccxt.pro ws stream
         # OR an infinite REST poll (Delta) — never a bounded sim that returns after
         # draining. So the worker ALWAYS consumes it via the long-lived consume_events

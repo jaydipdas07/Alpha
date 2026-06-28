@@ -8,10 +8,14 @@ derived P&L -> heartbeat, plus stop and halt-flatten.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, cast
+
+import pytest
 
 from alpha_core.core.enums import AssetClass, OrderType, Side, Venue
 from alpha_core.core.interfaces import BrokerAdapter, BrokerEventKind, BrokerOrderEvent, Strategy
@@ -616,5 +620,129 @@ async def test_build_worker_wires_pod_sync_when_a_pod_is_present(tmp_path, monke
     try:
         assert worker._command_watcher is not None
         assert worker._pod_status is not None
+    finally:
+        await worker._adapter.aclose()
+
+
+async def test_token_refresh_swaps_clients_on_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The pod token is ~60-min + the worker reads it only at startup, so the rotation loop re-reads
+    # $token_env from the .env FILE and swaps a freshly-tokened client into BOTH the status writer
+    # and the command source — no restart. (A Mac relay keeps the file fresh; here the test does.)
+    from worker.loop import build_worker
+
+    monkeypatch.setenv("BINANCE_TESTNET_API_KEY", "k")
+    monkeypatch.setenv("BINANCE_TESTNET_API_SECRET", "s")
+    monkeypatch.setenv("LEMMA_TOKEN", "old.token")  # the startup token the clients were built with
+    built: list[tuple[str | None, object]] = []
+
+    def _fake_build(env: object, *, token: str | None = None) -> object:
+        pod = object()
+        built.append((token, pod))
+        return pod
+
+    monkeypatch.setattr("worker.loop.build_pod_client", _fake_build)
+    envfile = tmp_path / ".env"
+    envfile.write_text("LEMMA_TOKEN=old.token\n", encoding="utf-8")
+    env = EnvConfig.model_validate(
+        {
+            "env": "paper",
+            "mode": "paper",
+            "allow_live": False,
+            "worker_id": "w",
+            "venue": "binance-spot-testnet",
+            "strategy": "idle",
+            "symbols": [SYMBOL],
+            "bar_interval_seconds": 60,
+            "state_db": "sqlite:///:memory:",
+            "heartbeat_path": f"{tmp_path}/hb",
+            "command_poll_seconds": 1.0,
+            "reconcile_interval_seconds": 30,
+            "pod_sync": {
+                "pod_id": "p-1",
+                "token_envfile": str(envfile),
+                "token_refresh_seconds": 0.01,
+            },
+        }
+    )
+    worker = build_worker(env)
+    try:
+        envfile.write_text(
+            "LEMMA_TOKEN=new.token\n", encoding="utf-8"
+        )  # the relay rotates the file
+        task = asyncio.create_task(worker._pod_token_refresh_loop())
+        for _ in range(100):  # wait (bounded) for the loop to pick up the change
+            await asyncio.sleep(0.01)
+            if any(tok == "new.token" for tok, _ in built):
+                break
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+        fresh = [pod for tok, pod in built if tok == "new.token"]
+        assert fresh, "the loop never rebuilt the client with the fresh token"
+        assert worker._pod_status is not None
+        assert worker._pod_status._pod is fresh[0]  # status writer now uses the fresh client
+        assert worker._pod_command_source is not None
+        assert worker._pod_command_source._pod is fresh[0]  # command source swapped too
+    finally:
+        await worker._adapter.aclose()
+
+
+async def test_token_refresh_no_swap_when_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # If the file token matches the in-use token, the loop must NOT rebuild (no churn/log spam).
+    from worker.loop import build_worker
+
+    monkeypatch.setenv("BINANCE_TESTNET_API_KEY", "k")
+    monkeypatch.setenv("BINANCE_TESTNET_API_SECRET", "s")
+    monkeypatch.setenv("LEMMA_TOKEN", "same.token")
+    builds: list[str | None] = []
+
+    def _track_build(env: object, *, token: str | None = None) -> object:
+        builds.append(token)
+        return object()
+
+    monkeypatch.setattr("worker.loop.build_pod_client", _track_build)
+    reads = {"n": 0}
+
+    def _counting_read(path: str, key: str) -> str:
+        reads["n"] += 1
+        return "same.token"  # what the file holds — unchanged vs the startup token
+
+    monkeypatch.setattr("worker.loop.read_envfile_token", _counting_read)
+    envfile = tmp_path / ".env"
+    envfile.write_text("LEMMA_TOKEN=same.token\n", encoding="utf-8")  # unchanged vs startup
+    env = EnvConfig.model_validate(
+        {
+            "env": "paper",
+            "mode": "paper",
+            "allow_live": False,
+            "worker_id": "w",
+            "venue": "binance-spot-testnet",
+            "strategy": "idle",
+            "symbols": [SYMBOL],
+            "bar_interval_seconds": 60,
+            "state_db": "sqlite:///:memory:",
+            "heartbeat_path": f"{tmp_path}/hb",
+            "command_poll_seconds": 1.0,
+            "reconcile_interval_seconds": 30,
+            "pod_sync": {
+                "pod_id": "p-1",
+                "token_envfile": str(envfile),
+                "token_refresh_seconds": 0.01,
+            },
+        }
+    )
+    worker = build_worker(env)
+    builds.clear()  # ignore the build_worker startup call; watch only the loop
+    try:
+        task = asyncio.create_task(worker._pod_token_refresh_loop())
+        await asyncio.sleep(0.05)  # several iterations
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert reads["n"] >= 1  # the loop DID iterate + read the file...
+        assert builds == []  # ...and correctly did not rebuild on an unchanged token
     finally:
         await worker._adapter.aclose()
