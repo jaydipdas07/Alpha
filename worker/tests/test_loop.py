@@ -472,5 +472,41 @@ async def test_build_worker_constructs_from_paper_config(tmp_path, monkeypatch) 
     worker = build_worker(env)  # builds a real (sandbox) ccxt adapter
     try:
         assert isinstance(worker, Worker)
+        # The real adapter's order_events() is continuous -> background consume_events.
+        assert worker._drain_inline is False
+    finally:
+        await worker._adapter.aclose()
+
+
+async def test_build_worker_non_streaming_venue_uses_background_consume(
+    tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    # REGRESSION: a non-streaming (REST-poll) venue's order_events() is an INFINITE poll,
+    # so the worker must consume it via the background consume_events task — NOT the inline
+    # drain_events, which would `async for` the infinite poll forever and wedge the market
+    # loop on the first closed bar (heartbeat freezes -> deadman trips).
+    from worker.loop import build_worker
+
+    monkeypatch.setenv("DELTA_TESTNET_API_KEY", "k")
+    monkeypatch.setenv("DELTA_TESTNET_API_SECRET", "s")
+    env = EnvConfig.model_validate(
+        {
+            "env": "paper",
+            "mode": "paper",
+            "allow_live": False,
+            "worker_id": "w",
+            "venue": "delta-testnet",  # streaming=False (REST poll)
+            "strategy": "idle",
+            "symbols": ["BTC/USD:USD"],
+            "bar_interval_seconds": 60,
+            "state_db": "sqlite:///:memory:",
+            "heartbeat_path": f"{tmp_path}/hb",
+            "command_poll_seconds": 1.0,
+            "reconcile_interval_seconds": 30,
+        }
+    )
+    worker = build_worker(env)
+    try:
+        assert worker._drain_inline is False  # background consume_events, never inline drain
     finally:
         await worker._adapter.aclose()

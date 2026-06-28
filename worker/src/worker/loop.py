@@ -85,7 +85,12 @@ class Worker:
         self._control = control
         self._feed = feed
         self._feed_stale_seconds = feed_stale_seconds
-        self._drain_inline = drain_inline  # bounded/paper feed: drain fills inline
+        # True ONLY for a BOUNDED order_events() (a PaperBroker sim that returns after
+        # yielding pending fills): drain_events async-for's the stream to exhaustion. A
+        # continuous adapter (ws stream OR infinite REST poll) MUST be False — use the
+        # consume_events background task — or the inline drain never returns and wedges
+        # the market loop on the first closed bar.
+        self._drain_inline = drain_inline
         self._notifier = notifier or LoggingNotifier()
         self._command_watcher = command_watcher
         self._clock = clock or SystemClock()
@@ -306,7 +311,14 @@ def build_worker(env: EnvConfig) -> Worker:
         control=WorkerControl(),
         feed=AdapterFeed(adapter),
         feed_stale_seconds=feed_stale,
-        drain_inline=not venue_cfg.streaming,  # ws venue streams order events; REST polls/drains
+        # The CcxtAdapter's order_events() is ALWAYS continuous — a ccxt.pro ws stream
+        # OR an infinite REST poll (Delta) — never a bounded sim that returns after
+        # draining. So the worker ALWAYS consumes it via the long-lived consume_events
+        # background task, never the inline drain_events: draining `async for`s over the
+        # stream, which for the REST poll NEVER returns and wedges the market loop on the
+        # first closed bar (the heartbeat freezes -> the deadman trips). drain_inline=True
+        # is only for a bounded PaperBroker sim, which build_adapter never builds.
+        drain_inline=False,
         clock=clock,
     )
 
