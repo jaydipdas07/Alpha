@@ -246,11 +246,12 @@ class Worker:
             self._oms.restore_daily_state(self._today())
             if not self._risk.is_halted:
                 return True, "not halted — nothing to re-arm"
+            cleared = self._risk.halt_trigger  # capture before rearm_on_clean_reconcile clears it
             rearmed, detail = await rearm_on_clean_reconcile(
                 self._oms, self._risk, self._reconciler
             )
             if rearmed:
-                await self._oms.clear_persisted_halt()  # durable clear (survives restart)
+                await self._oms.clear_persisted_halt(cleared)  # durable clear (survives restart)
                 self._notifier.send("worker re-armed on clean reconcile", severity=Severity.WARNING)
             else:
                 self._notifier.send(f"worker re-arm refused: {detail}", severity=Severity.WARNING)

@@ -663,17 +663,19 @@ class OMS:
                 payload={"trigger": trigger.value if trigger else None},
             )
 
-    async def clear_persisted_halt(self) -> None:
+    async def clear_persisted_halt(self, cleared_trigger: KillTrigger | None = None) -> None:
         """Persist a re-armed (un-halted) state to today's daily-P&L row so a clean
         re-arm survives a restart — the symmetric counterpart to ``persist_halt``
         (ADR 0006). Without this an offline re-arm would clear the latch in memory but
         leave ``daily_pnl.halted=True``, so ``restore_daily_state`` would re-halt on the
-        next boot. Writes a ``REARM`` audit row (the re-arm is a decision). Idempotent;
-        held under the OMS lock so the hash-chained audit write can't fork the chain."""
+        next boot. Writes a ``REARM`` audit row recording the halt that was cleared (the
+        re-arm is a decision; symmetric with the ``KILL_SWITCH`` row's trigger).
+        Idempotent; held under the OMS lock so the hash-chained audit write can't fork
+        the chain. ``cleared_trigger`` is captured by the caller *before* ``rearm()``."""
         async with self._lock:
-            await asyncio.to_thread(self._clear_persisted_halt)
+            await asyncio.to_thread(self._clear_persisted_halt, cleared_trigger)
 
-    def _clear_persisted_halt(self) -> None:
+    def _clear_persisted_halt(self, cleared_trigger: KillTrigger | None) -> None:
         now = self.now()
         with self._store.transaction() as s:
             self._store.upsert_daily_pnl(
@@ -686,7 +688,14 @@ class OMS:
                 halt_trigger=None,
                 updated_at=now,
             )
-            self._store.append_audit(s, event_type="REARM", payload={})
+            self._store.append_audit(
+                s,
+                event_type="REARM",
+                payload={
+                    "cleared_trigger": cleared_trigger.value if cleared_trigger else None,
+                    "via": "clean reconcile",
+                },
+            )
 
     def _persist_adopted_order(self, order: Order) -> None:
         """Persist an order adopted from broker truth + its RECONCILE audit row (EXEC-2)."""

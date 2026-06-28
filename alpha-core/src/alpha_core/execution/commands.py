@@ -227,9 +227,10 @@ class CommandWatcher:
         else an idle worker would re-halt on restart) and resume the loop."""
         if self._reconciler is None:
             return "refused: no reconciler — cannot verify broker truth"
+        cleared = self._risk.halt_trigger  # capture before rearm_on_clean_reconcile clears it
         rearmed, detail = await rearm_on_clean_reconcile(self._oms, self._risk, self._reconciler)
         if rearmed:
-            await self._oms.clear_persisted_halt()
+            await self._oms.clear_persisted_halt(cleared)
             self._control.set(RunState.RUNNING)
             self._notifier.send(
                 "command clear_halt: re-armed on clean reconcile", severity=Severity.WARNING

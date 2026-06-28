@@ -196,6 +196,19 @@ async def test_clear_halt_rearms_on_clean_reconcile() -> None:
     assert control.state is RunState.RUNNING
 
 
+async def test_clear_halt_persists_the_rearm_so_a_restart_stays_armed() -> None:
+    # The clear must be DURABLE (symmetric with the kill persisting the trip): without
+    # persisting halted=False, restore_daily_state would re-halt an idle worker on boot.
+    oms, _broker, rec, risk = _setup()
+    risk.trip(KillTrigger.MANUAL)
+    await oms.persist_halt(KillTrigger.MANUAL)  # durable latch in daily_pnl
+    src = _FakeSource([_cmd(CommandKind.CLEAR_HALT)])
+    await _watcher(src, oms, risk, reconciler=rec).process_once()
+    assert risk.is_halted is False
+    oms.restore_daily_state(oms.now().astimezone(UTC).date().isoformat())
+    assert risk.is_halted is False  # the DB row was flipped to halted=False
+
+
 async def test_clear_halt_refuses_on_dirty_reconcile() -> None:
     oms, _broker, rec, risk = _setup()
     risk.trip(KillTrigger.MANUAL)
