@@ -124,15 +124,21 @@ class _FakeVenue(BrokerAdapter):
 
 
 class _RecordingPodStatus:
-    """A fake PodStatusWriter that records the heartbeat calls (structural)."""
+    """A fake PodStatusWriter that records the heartbeat + risk-event calls (structural)."""
 
     def __init__(self) -> None:
         self.beats: list[dict[str, Any]] = []
+        self.risk_events: list[dict[str, Any]] = []
 
     async def beat(
         self, *, now: datetime, armed: bool, positions: Sequence[Position], detail: dict[str, Any]
     ) -> None:
         self.beats.append({"armed": armed, "positions": list(positions), "detail": detail})
+
+    async def record_risk_event(
+        self, *, kind: str, severity: str, now: datetime, detail: dict[str, Any]
+    ) -> None:
+        self.risk_events.append({"kind": kind, "severity": severity, "detail": detail})
 
 
 def _risk() -> RiskManager:
@@ -746,3 +752,36 @@ async def test_token_refresh_no_swap_when_unchanged(
         assert builds == []  # ...and correctly did not rebuild on an unchanged token
     finally:
         await worker._adapter.aclose()
+
+
+async def test_kill_event_mirrored_to_risk_events_on_a_new_trip(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # A new kill-switch trip is mirrored to the pod risk_events log (mission control) from the
+    # telemetry loop, off the money path — one row per distinct trip, never a duplicate.
+    rec = _RecordingPodStatus()
+    worker, *_ = _worker(
+        tmp_path, _ticks(["100"]), strategy=_AlwaysBuy(), pod_status=cast(PodStatusWriter, rec)
+    )
+    await worker._maybe_sync_kill_event()  # not halted -> nothing
+    assert rec.risk_events == []
+    worker._risk.trip(KillTrigger.DAILY_LOSS)  # a kill trips
+    await worker._maybe_sync_kill_event()
+    assert len(rec.risk_events) == 1
+    ev = rec.risk_events[0]
+    assert ev["kind"] == "kill_tripped" and ev["severity"] == "critical"
+    assert ev["detail"]["trigger"] == "daily_loss"
+    assert ev["detail"]["worker_id"] == "w-test"
+    await worker._maybe_sync_kill_event()  # same trip, no new generation
+    assert len(rec.risk_events) == 1  # not re-reported
+
+
+async def test_kill_event_not_remirrored_for_a_baselined_halt(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # A worker that boots already-halted (the latched halt restored) baselines the cursor at the
+    # current generation, so the old, already-alerted kill is NOT re-reported to risk_events.
+    rec = _RecordingPodStatus()
+    worker, *_ = _worker(
+        tmp_path, _ticks(["100"]), strategy=_AlwaysBuy(), pod_status=cast(PodStatusWriter, rec)
+    )
+    worker._risk.trip(KillTrigger.MANUAL)  # already halted on entry
+    worker._synced_halt_generation = worker._risk.halt_generation  # the loop baselines to current
+    await worker._maybe_sync_kill_event()
+    assert rec.risk_events == []  # a known (baselined) halt is not re-mirrored
