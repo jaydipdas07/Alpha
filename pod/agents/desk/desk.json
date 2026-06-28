@@ -5,7 +5,10 @@
   // toolsets: POD SKILLS SPEECH SUBAGENTS TODO USER_INTERACTION WEB_SEARCH WORKSPACE_CLI
   "toolsets": ["POD"],
   "visibility": "POD",   // PERSONAL | POD | PUBLIC | RESTRICTED
-  // agent_runtime omitted -> the system runtime profile (system:lemma). Add it to pin a specific model.
+  // Pin desk to the Claude Code daemon harness on Opus (the operator's standing pref) instead of the
+  // cloud system:lemma default (minimax-m3). NB: this makes desk daemon-dependent — if `lemma daemon`
+  // is down, runs fail (Lemma has no daemon->cloud fallback); keep the daemon running (ideally on the box).
+  "agent_runtime": { "profile_id": "019ef088-83ea-730f-b282-8ef4fec8c1ce", "model_name": "opus" },
   "permissions": { "grants": [
     {
       "resource_type": "datastore_table",
