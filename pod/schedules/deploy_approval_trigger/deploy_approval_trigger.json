@@ -1,0 +1,11 @@
+{
+  // Fires Workflow B when the off-pod risk-officer bridge inserts an `approval_requests`
+  // row (a paper survivor that cleared both gates). INSERT only — the workflow writes back
+  // to deployments/strategies/commands, never to approval_requests' INSERT signal, so there
+  // is no trigger loop. The changed row's id arrives at start.metadata.record_id.
+  "name": "deploy_approval_trigger",
+  "schedule_type": "DATASTORE",
+  "config": { "table_name": "approval_requests", "operations": ["INSERT"] },
+  "workflow_name": "deploy_approval",
+  "is_active": true
+}

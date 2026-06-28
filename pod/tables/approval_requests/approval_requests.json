@@ -1,0 +1,51 @@
+{
+  // Workflow B's human-approval queue (M3.7). One row per candidate that cleared BOTH
+  // off-pod gates (paper-eval confirmed the backtest AND the one-shot holdout gate
+  // promoted) and now awaits the human FORM. The off-pod risk-officer bridge
+  // (scripts/risk_officer_review.py) writes the row; its INSERT triggers the
+  // `deploy_approval` workflow → the human FORM → (on approve) a `start` command on the
+  // `commands` table → the worker (TEST-8: the pod issues; only the worker executes).
+  //
+  // ⚠️ AGENT-EXCLUDED BY DESIGN (TEST-3 / CLAUDE.md never-do). holdout_verdict /
+  // holdout_oos_sharpe / holdout_reason / detail are HOLDOUT-DERIVED. This table must be
+  // granted to NO agent (not `desk`, not any RAG/table-read agent). Only the human
+  // approver reads it — via the workflow FORM and the cockpit (the operator's own
+  // identity, not an agent). This is the dedicated agent-excluded table the `backtests`
+  // table comment prescribed for the holdout verdict at Phase 3.
+  "name": "approval_requests",
+  "primary_key_column": "id",
+  "enable_rls": false,
+  "columns": [
+    { "name": "deployment_id", "type": "UUID", "required": true,
+      "foreign_key": { "references": "deployments.id" } },
+    { "name": "strategy_id", "type": "UUID",
+      "foreign_key": { "references": "strategies.id" } },
+    { "name": "strategy_name", "type": "TEXT", "max_length": 120 },
+    { "name": "family", "type": "TEXT", "max_length": 64 },
+    { "name": "market", "type": "ENUM", "options": ["crypto", "equity", "index_option"] },
+    { "name": "venue", "type": "TEXT", "max_length": 16 },
+    { "name": "mode", "type": "ENUM", "default": "paper", "options": ["paper", "live"] },
+    // the off-pod combined verdict — only `passed` rows are ever written; the workflow
+    // re-checks it as a defence-in-depth guard before showing the FORM.
+    { "name": "gate_status", "type": "ENUM", "required": true, "default": "passed",
+      "options": ["passed", "rejected"] },
+    // paper-eval (statistics plane — FLOAT, never money)
+    { "name": "paper_sharpe", "type": "FLOAT" },
+    { "name": "backtest_sharpe", "type": "FLOAT" },
+    { "name": "sharpe_retention", "type": "FLOAT", "description": "paper/backtest Sharpe kept" },
+    // one-shot holdout gate (HOLDOUT-DERIVED — the reason this whole table is agent-excluded)
+    { "name": "holdout_verdict", "type": "ENUM", "options": ["promote", "reject", "revise"] },
+    { "name": "holdout_oos_sharpe", "type": "FLOAT" },
+    { "name": "holdout_n_obs", "type": "INTEGER" },
+    { "name": "holdout_reason", "type": "TEXT", "max_length": 500 },
+    // the human decision
+    { "name": "status", "type": "ENUM", "required": true, "default": "pending",
+      "options": ["pending", "approved", "rejected"] },
+    { "name": "decided_by", "type": "USER", "description": "the human who approved/rejected" },
+    { "name": "decided_at", "type": "DATETIME" },
+    { "name": "notes", "type": "TEXT", "max_length": 1000 },
+    { "name": "origin", "type": "ENUM", "default": "discovery",
+      "options": ["discovery", "demo"], "description": "demo = a labelled pipeline test, not a real edge" },
+    { "name": "detail", "type": "JSON", "description": "full paper+holdout summary (scalars only; no return series)" }
+  ]
+}

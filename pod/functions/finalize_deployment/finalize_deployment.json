@@ -1,0 +1,22 @@
+{
+  // Workflow B's commit step (M3.7). On the human's FORM decision it does the coordinated
+  // write: on APPROVE it issues a `start` command on the `commands` table (the worker
+  // executes it — TEST-8: the pod issues, never trades) and marks the deployment approved;
+  // on REJECT it records the rejection. Grants are exactly the tables it touches.
+  "name": "finalize_deployment",
+  "description": "Commit a Workflow-B approval decision: on approve, issue the worker `start` command + mark the deployment approved; on reject, record it. The pod issues commands; only the worker executes (TEST-8).",
+  "type": "API",
+  "code": { "$file": "code.py" },
+  "permissions": {
+    "grants": [
+      { "resource_type": "datastore_table", "resource_name": "approval_requests",
+        "permission_ids": ["datastore.table.read", "datastore.record.read", "datastore.record.write"] },
+      { "resource_type": "datastore_table", "resource_name": "deployments",
+        "permission_ids": ["datastore.table.read", "datastore.record.read", "datastore.record.write"] },
+      { "resource_type": "datastore_table", "resource_name": "commands",
+        "permission_ids": ["datastore.table.read", "datastore.record.write"] },
+      { "resource_type": "datastore_table", "resource_name": "strategies",
+        "permission_ids": ["datastore.table.read", "datastore.record.write"] }
+    ]
+  }
+}
