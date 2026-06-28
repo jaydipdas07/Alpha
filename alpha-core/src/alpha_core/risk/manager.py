@@ -62,6 +62,11 @@ class RiskManager:
         self._require_stop = require_stop
         self._halted = False
         self._halt_trigger: KillTrigger | None = None
+        # Monotonic counter incremented on each *transition* into a halt. Lets a
+        # consumer (the worker's flatten orchestration) act exactly once per distinct
+        # trip: re-checks while already halted don't bump it, but a fresh trip after a
+        # re-arm does — so a re-trip's flatten is never skipped (ADR 0006).
+        self._halt_generation = 0
         self._order_times: deque[datetime] = deque()
         self._consecutive_errors = 0
 
@@ -79,14 +84,24 @@ class RiskManager:
     def halt_trigger(self) -> KillTrigger | None:
         return self._halt_trigger
 
+    @property
+    def halt_generation(self) -> int:
+        """The current halt's generation (bumped on each not-halted -> halted transition)."""
+        return self._halt_generation
+
     def trip(self, trigger: KillTrigger) -> None:
         """Latch the kill switch. Cleanup (cancel/flatten) is orchestrated by the
-        app/OMS; this records the halt so every subsequent check rejects."""
+        app/OMS; this records the halt so every subsequent check rejects. A trip while
+        already halted (e.g. the daily-loss re-check on every mark) keeps the same
+        generation; only a transition into a halt bumps it."""
+        if not self._halted:
+            self._halt_generation += 1
         self._halted = True
         self._halt_trigger = trigger
 
     def rearm(self) -> None:
-        """Deliberate manual re-arm (fail-closed default requires this)."""
+        """Deliberate manual re-arm (fail-closed default requires this). The generation
+        is NOT reset — a subsequent trip bumps it, so the next halt is seen as fresh."""
         self._halted = False
         self._halt_trigger = None
         self._consecutive_errors = 0
@@ -95,8 +110,11 @@ class RiskManager:
         """Restore a persisted halt state on restart (ADR 0006 restart-safety).
 
         A latched daily-loss/kill halt must survive a crash — the bot does not
-        silently resume after restart; it stays halted until a manual re-arm.
+        silently resume after restart; it stays halted until a manual re-arm. A
+        restored halt bumps the generation so the worker flattens it once on boot.
         """
+        if halted and not self._halted:
+            self._halt_generation += 1
         self._halted = halted
         self._halt_trigger = trigger if halted else None
 

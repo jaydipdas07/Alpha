@@ -10,12 +10,31 @@ Two config files (CLAUDE.md: tunables in ``config/``, no magic numbers):
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alpha_core.core.enums import Venue
 from alpha_core.helpers.config import load_yaml
+
+
+def load_dotenv() -> None:
+    """Load ``.env`` key=value pairs into the environment if present (no override).
+
+    Broker keys live only in the gitignored ``.env`` (B3); the entrypoints call this
+    so the factory can read ``<key_env>_API_KEY`` / ``_API_SECRET``. Honors
+    ``ALPHA_DOTENV`` to point at an alternate file (the deploy may stage it elsewhere)."""
+    path = Path(os.environ.get("ALPHA_DOTENV", ".env"))
+    if not path.is_file():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
 class VenueConfig(BaseModel):
@@ -40,10 +59,13 @@ class EnvConfig(BaseModel):
     allow_live: bool = False  # THE LIVE GATE
     worker_id: str
     venue: str  # active venue — a key into venues.yaml
+    strategy: str  # the configured edge (strategy registry name); `idle` = no-trade soak
     symbols: list[str] = Field(min_length=1)
     bar_interval_seconds: int = Field(gt=0)
+    state_db: str  # SQLAlchemy URL for the durable order/fill/audit StateStore
     heartbeat_path: str
     command_poll_seconds: float = Field(gt=0)
+    reconcile_interval_seconds: float = Field(gt=0)  # periodic reconcile + liveness beat cadence
 
     @model_validator(mode="after")
     def _live_gate(self) -> Self:

@@ -305,6 +305,37 @@ async def test_reconcile_zeroes_position_the_broker_reports_flat() -> None:
     assert len(flat) == 1 and flat[0].quantity == Decimal("0")
 
 
+async def test_reconcile_locked_clean_adopts_under_the_lock() -> None:
+    # reconcile_locked runs the reconcile + applies adoptions atomically under the OMS
+    # lock (so a concurrent submit/fill can't make the snapshot stale -> spurious halt).
+    store = StateStore("sqlite:///:memory:")
+    store.create_schema()
+    risk = _risk()
+    broker_order = _order("o1", OrderState.FILLED, venue_order_id="V1", filled="10")
+    adapter = _StubAdapter([_pos("NSE:RELIANCE", "10")], [broker_order])
+    oms = OMS(adapter=adapter, risk=risk, store=store, venue=Venue.NSE)
+    oms._orders["o1"] = _order("o1", OrderState.OPEN, venue_order_id="V1")  # missed the fill
+    report = await oms.reconcile_locked(Reconciler(adapter=adapter, risk=risk))
+    assert report.status is ReconcileStatus.CLEAN
+    assert risk.is_halted is False
+    assert oms.orders[0].state is OrderState.FILLED  # adopted
+    assert {(p.venue, p.symbol): p.quantity for p in oms.positions} == {
+        (Venue.NSE, "NSE:RELIANCE"): Decimal("10")
+    }
+
+
+async def test_reconcile_locked_dirty_halts() -> None:
+    store = StateStore("sqlite:///:memory:")
+    store.create_schema()
+    risk = _risk()
+    adapter = _StubAdapter([_pos("NSE:RELIANCE", "7")], [])  # broker 7
+    oms = OMS(adapter=adapter, risk=risk, store=store, venue=Venue.NSE)
+    oms._positions[(Venue.NSE, "NSE:RELIANCE")] = _pos("NSE:RELIANCE", "10")  # local 10 -> drift
+    report = await oms.reconcile_locked(Reconciler(adapter=adapter, risk=risk))
+    assert report.status is ReconcileStatus.HALTED
+    assert risk.is_halted is True
+
+
 async def test_apply_reconciliation_flattens_a_broker_flat_position() -> None:
     # End-to-end (M2): applying the CLEAN report actually flattens the phantom local
     # position to match broker truth (before the fix it stayed at the stale quantity).

@@ -67,8 +67,10 @@ class BarBuilder:
     def _price(tick: Tick) -> Decimal:
         if tick.last_price is not None:
             return tick.last_price
-        # The model guarantees last_price or both bid+ask; mid-price the quote.
-        assert tick.bid is not None and tick.ask is not None
+        # The Tick model guarantees last_price or both bid+ask; mid-price the quote.
+        # A `raise` (not `assert`, stripped under -O) keeps the guarantee on the money path.
+        if tick.bid is None or tick.ask is None:  # pragma: no cover - Tick model guarantees one
+            raise ValueError("tick has neither last_price nor a bid/ask pair")
         return (tick.bid + tick.ask) / 2
 
     @staticmethod
