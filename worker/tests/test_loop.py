@@ -429,6 +429,24 @@ async def test_pod_status_loop_beats_then_stops(tmp_path, monkeypatch) -> None: 
     assert rec.beats[0]["detail"]["strategy"] == "idle"
 
 
+async def test_pod_status_loop_self_heals_on_error(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # A telemetry error must never kill the heartbeat loop (best-effort; off the money path).
+    class _Boom:
+        async def beat(self, **_kw: Any) -> None:
+            raise RuntimeError("telemetry boom")
+
+    worker, *_ = _worker(
+        tmp_path, _ticks(["100"]), strategy=_AlwaysBuy(), pod_status=cast(PodStatusWriter, _Boom())
+    )
+    worker._last_tick_at = NOW
+
+    async def _sleep_then_stop(_seconds: float) -> None:
+        worker._control.set(RunState.STOPPED)
+
+    monkeypatch.setattr("worker.loop.asyncio.sleep", _sleep_then_stop)
+    await worker._pod_status_loop()  # must NOT raise — the error is logged and the loop continues
+
+
 async def test_run_wires_the_pod_status_heartbeat(tmp_path) -> None:  # type: ignore[no-untyped-def]
     # run() starts the pod-status background task; a bounded feed lets it beat at least
     # once (at the first market-loop await) before the loop ends and cancels it.

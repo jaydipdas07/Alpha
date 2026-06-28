@@ -187,12 +187,15 @@ class Worker:
         assert self._pod_status is not None  # only started when present
         cadence = self._env.pod_sync.heartbeat_seconds if self._env.pod_sync else 15.0
         while not self._control.stopped:
-            await self._pod_status.beat(
-                now=self._now(),
-                armed=not self._risk.is_halted,
-                positions=self._oms.positions,
-                detail=self._status_detail(),
-            )
+            try:
+                await self._pod_status.beat(
+                    now=self._now(),
+                    armed=not self._risk.is_halted,
+                    positions=self._oms.positions,
+                    detail=self._status_detail(),
+                )
+            except Exception as exc:  # self-healing: telemetry must never kill its own loop
+                self._log.warning("pod_status_loop_error", error=str(exc))
             await asyncio.sleep(cadence)
 
     def _status_detail(self) -> dict[str, object]:

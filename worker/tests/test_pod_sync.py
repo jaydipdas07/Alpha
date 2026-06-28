@@ -149,8 +149,8 @@ def test_build_pod_client_constructs_with_token(monkeypatch: pytest.MonkeyPatch)
     captured: dict[str, Any] = {}
 
     class _FakePodCls:
-        def __init__(self, *, pod_id: str, token: str, base_url: str) -> None:
-            captured.update(pod_id=pod_id, token=token, base_url=base_url)
+        def __init__(self, *, pod_id: str, token: str, base_url: str, timeout: float) -> None:
+            captured.update(pod_id=pod_id, token=token, base_url=base_url, timeout=timeout)
 
     monkeypatch.setattr("worker.pod_sync.Pod", _FakePodCls)
     monkeypatch.setenv("LEMMA_TOKEN", "tok-123")
@@ -158,7 +158,27 @@ def test_build_pod_client_constructs_with_token(monkeypatch: pytest.MonkeyPatch)
         {**_base_env(), "pod_sync": {"pod_id": "p-9", "base_url": "https://api.x"}}
     )
     assert build_pod_client(env) is not None
-    assert captured == {"pod_id": "p-9", "token": "tok-123", "base_url": "https://api.x"}
+    assert captured == {
+        "pod_id": "p-9",
+        "token": "tok-123",
+        "base_url": "https://api.x",
+        "timeout": 10.0,  # the PodSyncConfig default
+    }
+
+
+async def test_beat_recovers_from_a_stale_cached_row_id() -> None:
+    # The cached row vanishes pod-side -> update raises -> the id is forgotten, so the next
+    # beat re-finds/creates instead of wedging on a dead id until restart.
+    pod = _FakePod()
+    writer = _writer(pod)
+    await writer.beat(now=NOW, armed=True, positions=[], detail={})  # creates + caches "row-1"
+    assert writer._row_id == "row-1"
+    pod.records._fail = True  # the row "disappears" -> update fails
+    await writer.beat(now=NOW, armed=True, positions=[], detail={})  # swallowed; id forgotten
+    assert writer._row_id is None
+    pod.records._fail = False
+    await writer.beat(now=NOW, armed=True, positions=[], detail={})  # re-creates
+    assert len(pod.records.created) == 2
 
 
 def test_build_pod_client_swallows_construction_errors(monkeypatch: pytest.MonkeyPatch) -> None:

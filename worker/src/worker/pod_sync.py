@@ -40,7 +40,9 @@ def build_pod_client(env: EnvConfig) -> Pod | None:
         _log.info("pod_sync_disabled", reason=f"no {cfg.token_env} in environment")
         return None
     try:
-        return Pod(pod_id=cfg.pod_id, token=token, base_url=cfg.base_url)
+        return Pod(
+            pod_id=cfg.pod_id, token=token, base_url=cfg.base_url, timeout=cfg.timeout_seconds
+        )
     except Exception as exc:
         _log.warning("pod_client_build_failed", error=str(exc))
         return None
@@ -100,8 +102,14 @@ class PodStatusWriter:
         if self._row_id is None:
             rec = self._pod.records.create("worker_status", data)
             self._row_id = str(rec["id"]) if isinstance(rec, dict) and "id" in rec else None
-        else:
+            return
+        try:
             self._pod.records.update("worker_status", self._row_id, data)
+        except Exception:
+            # The cached row went stale (deleted pod-side) — forget it so the next beat
+            # re-finds or re-creates, rather than wedging on a dead id until restart.
+            self._row_id = None
+            raise
 
     def _find_row_id(self) -> str | None:
         # worker_status is one row per worker (low volume) — list + match in Python, no

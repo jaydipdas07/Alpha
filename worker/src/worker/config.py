@@ -68,6 +68,8 @@ class PodSyncConfig(BaseModel):
     pod_id: str  # the Vault pod (mission control)
     base_url: str = "https://api.lemma.work"
     heartbeat_seconds: float = Field(default=15.0, gt=0)  # worker_status upsert cadence
+    # per pod call — bounds how long a hung pod can delay worker shutdown
+    timeout_seconds: float = Field(default=10.0, gt=0)
     token_env: str = "LEMMA_TOKEN"  # the .env var holding the 60-min pod token (never committed)
 
 
