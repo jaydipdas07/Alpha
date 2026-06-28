@@ -17,4 +17,4 @@ bar_interval_seconds: 60    # build 1-minute bars from the tick stream
 state_db: sqlite:///var/alpha-worker.db  # durable orders/fills/positions/audit
 heartbeat_path: var/run/alpha-worker.heartbeat  # the deadman reads this (TEST-5)
 command_poll_seconds: 1.0   # pod commands watchChanges + ~1s fallback (R10)
-reconcile_interval_seconds: 30  # periodic broker-truth reconcile + liveness beat (< deadman RTO)
+reconcile_interval_seconds: 30  # periodic broker-truth reconcile + in-band feed-stale check

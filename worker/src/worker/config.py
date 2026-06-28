@@ -68,7 +68,7 @@ class EnvConfig(BaseModel):
     state_db: str  # SQLAlchemy URL for the durable order/fill/audit StateStore
     heartbeat_path: str
     command_poll_seconds: float = Field(gt=0)
-    reconcile_interval_seconds: float = Field(gt=0)  # periodic reconcile + liveness beat cadence
+    reconcile_interval_seconds: float = Field(gt=0)  # periodic reconcile + feed-stale check cadence
 
     @model_validator(mode="after")
     def _live_gate(self) -> Self:
