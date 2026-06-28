@@ -22,6 +22,8 @@ WorkingDirectory=/home/ubuntu/alpha
 ExecStart=/home/ubuntu/.local/bin/uv run python -m worker.deadman_main paper
 Restart=on-failure
 RestartSec=5
+# SIGINT so the deadman's `finally` acloses its adapter session on stop.
+KillSignal=SIGINT
 # The deadman is the last line of defence — keep it up.
 Nice=0
 

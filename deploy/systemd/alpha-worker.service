@@ -22,7 +22,9 @@ WorkingDirectory=/home/ubuntu/alpha
 ExecStart=/home/ubuntu/.local/bin/uv run python -m worker paper
 Restart=on-failure
 RestartSec=5
-# A clean stop lets the loop cancel its tasks + aclose the venue session.
+# SIGINT (not the default SIGTERM) so asyncio.run raises KeyboardInterrupt -> the
+# loop's `finally` runs -> tasks cancelled + the venue session aclosed gracefully.
+KillSignal=SIGINT
 TimeoutStopSec=30
 Nice=5
 
