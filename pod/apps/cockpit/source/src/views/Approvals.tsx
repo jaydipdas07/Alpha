@@ -88,9 +88,17 @@ export function Approvals() {
   )
 
   const pending = useMemo(() => all.filter((r) => r.status === 'pending'), [all])
-  const decided = useMemo(() => all.filter((r) => r.status !== 'pending').slice(0, 8), [all])
+  const decided = useMemo(
+    () =>
+      all
+        .filter((r) => r.status !== 'pending')
+        .sort((a, b) => b.decidedAt.localeCompare(a.decidedAt)) // most-recently-DECIDED first
+        .slice(0, 8),
+    [all],
+  )
 
-  const error = reqs.error || deps.error
+  // Only the approval queue is load-bearing; a failed deployments fetch just degrades capital to "—".
+  const error = reqs.error
 
   return (
     <div className="stack">
@@ -116,7 +124,7 @@ export function Approvals() {
         <Panel title="Approvals" icon={ClipboardCheck}>
           <EmptyState
             icon={ClipboardCheck}
-            head="No deployments awaiting approval"
+            head="No strategies awaiting approval"
             sub="When a paper survivor clears the risk-officer review, it appears here for your go-live decision."
             hint="reads: approval_requests (pending) — agent-excluded; the holdout verdict is shown to the human only"
           />
