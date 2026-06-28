@@ -400,7 +400,8 @@
           "market_type": "swap",
           "testnet": true,
           "streaming": false,
-          "key_env": "DELTA_TESTNET"
+          "key_env": "DELTA_TESTNET",
+          "testnet_url": "https://cdn-ind.testnet.deltaex.org"
         }
       }
     },

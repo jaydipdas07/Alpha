@@ -23,3 +23,4 @@ venues:
     testnet: true
     streaming: false         # Delta has no ccxt.pro ws -> REST poll (P18.1)
     key_env: DELTA_TESTNET
+    testnet_url: https://cdn-ind.testnet.deltaex.org  # Delta INDIA demo (not ccxt's global testnet)

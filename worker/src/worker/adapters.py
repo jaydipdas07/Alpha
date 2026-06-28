@@ -75,4 +75,6 @@ def build_adapter(venue: VenueConfig, env: EnvConfig) -> CcxtAdapter:
     )
     if venue.testnet:
         exchange.set_sandbox_mode(True)
+        if venue.testnet_url is not None:  # the venue's sandbox isn't ccxt's default testnet
+            exchange.urls["api"] = {"public": venue.testnet_url, "private": venue.testnet_url}
     return CcxtAdapter(exchange=exchange, venue=venue.venue, streaming=venue.streaming)
