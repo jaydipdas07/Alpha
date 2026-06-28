@@ -351,6 +351,39 @@ async def test_feed_stale_is_soft_with_only_a_closed_out_position(tmp_path) -> N
     assert worker._risk.is_halted is False  # a closed-out residual is flat
 
 
+async def test_rearm_clears_a_latched_halt_on_clean_reconcile(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # A latched halt + a flat book matching broker truth -> re-armed, and the clear is
+    # PERSISTED (a fresh restore from the DB no longer sees the halt).
+    worker, _venue, oms, _hb = _worker(tmp_path, _ticks(["100"]), strategy=_AlwaysBuy())
+    worker._risk.trip(KillTrigger.FEED_STALE)
+    await oms.persist_halt(KillTrigger.FEED_STALE)  # durable latch (survives restart)
+    rearmed, detail = await worker.rearm()
+    assert rearmed and "re-armed" in detail and worker._risk.is_halted is False
+    oms.restore_daily_state(worker._today())  # reload from the DB
+    assert worker._risk.is_halted is False  # the clear was persisted
+
+
+async def test_rearm_refuses_when_local_diverges_from_broker(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # Open a real position (booked from a fill), then a flat broker -> drift -> the
+    # re-arm is REFUSED and the halt is retained (never cleared blind).
+    worker, _venue, oms, _hb = _worker(
+        tmp_path, _ticks(["100", "100"]), strategy=_AlwaysBuy("0.01")
+    )
+    await worker.run()  # 2 ticks -> 1 closed bar -> 1 buy -> fill booked locally
+    assert oms.positions and oms.positions[0].quantity == Decimal("0.01")
+    worker._risk.trip(KillTrigger.MANUAL)
+    await oms.persist_halt(KillTrigger.MANUAL)
+    rearmed, detail = await worker.rearm()  # broker (fake) reports no position -> drift
+    assert rearmed is False and "not clean" in detail
+    assert worker._risk.is_halted is True
+
+
+async def test_rearm_is_a_noop_when_not_halted(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    worker, *_ = _worker(tmp_path, _ticks(["100"]), strategy=_AlwaysBuy())
+    rearmed, detail = await worker.rearm()
+    assert rearmed and "nothing to re-arm" in detail
+
+
 async def test_periodic_reconciles_once(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     # Drive exactly one periodic cycle (stub sleep to stop the loop after it). The
     # periodic does NOT beat the heartbeat (that is market-loop-only, TEST-5).
