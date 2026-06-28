@@ -1,0 +1,31 @@
+# M3.3 — the INDEPENDENT deadman watchdog on the AWS box (TEST-5 / R1).
+#
+# A SEPARATE process from alpha-worker.service (that independence is the point): it
+# watches the worker's heartbeat file and, if the worker dies beyond the RTO, flattens
+# the book via broker REST. Its own broker adapter; shares nothing with the worker.
+# PAPER/testnet only; keys from ~/alpha/.env. Budgets in config/worker.yaml.
+#
+# NB the deadman flattens broker POSITIONS — meaningful on a perp venue (Delta); a
+# spot venue (Binance) reports balances, not positions, so the perp testnet is where
+# the full kill-the-worker-mid-position drill (3.GATE) runs.
+#
+# Deploy: `sudo systemctl enable --now alpha-deadman`. Logs: journalctl -u alpha-deadman -f.
+[Unit]
+Description=Alpha deadman (independent flatten watchdog)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/alpha
+ExecStart=/home/ubuntu/.local/bin/uv run python -m worker.deadman_main paper
+Restart=on-failure
+RestartSec=5
+# SIGINT so the deadman's `finally` acloses its adapter session on stop.
+KillSignal=SIGINT
+# The deadman is the last line of defence — keep it up.
+Nice=0
+
+[Install]
+WantedBy=multi-user.target

@@ -60,8 +60,9 @@ class BrokerAdapter(ABC):
 
     @abstractmethod
     async def cancel(self, client_order_id: str) -> None:
-        """Request cancel. Idempotent: cancelling a terminal/absent order is a
-        safe no-op. Raises UnknownOrder | AuthError (terminal); Transient."""
+        """Request cancel. Idempotent: cancelling a terminal/absent order is a safe
+        no-op (an adapter that learns the order is already gone swallows the venue's
+        not-found and returns). Raises AuthError (terminal); Transient."""
         raise NotImplementedError
 
     @abstractmethod

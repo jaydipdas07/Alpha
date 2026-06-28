@@ -300,6 +300,16 @@ def _pos(symbol: str, qty: str) -> Position:
     )
 
 
+def test_ensure_db_dir_creates_parent(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from worker.loop import _ensure_db_dir
+
+    target = tmp_path / "state" / "alpha.db"
+    _ensure_db_dir(f"sqlite:///{target}")  # the `state/` dir doesn't exist yet
+    assert target.parent.is_dir()
+    _ensure_db_dir("sqlite:///:memory:")  # no-op, no crash
+    _ensure_db_dir("postgresql://x")  # non-sqlite -> no-op
+
+
 async def test_check_feed_stale_trips_the_kill(tmp_path) -> None:  # type: ignore[no-untyped-def]
     worker, *_ = _worker(tmp_path, _ticks(["100"]), strategy=_AlwaysBuy())
     worker._feed_stale_seconds = 5

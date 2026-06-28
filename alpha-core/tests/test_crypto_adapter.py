@@ -255,6 +255,19 @@ async def test_cancel_known_calls_exchange() -> None:
     assert ex.cancelled[0] == (vid, "BTC/USDT")
 
 
+async def test_cancel_already_filled_order_is_a_noop() -> None:
+    # The venue says "unknown order" because it already filled -> cancel must no-op
+    # (idempotent-cancel contract), not raise (which would crash handle_kill).
+    class _Ex(FakeExchange):
+        async def cancel_order(self, id: str, symbol: str) -> dict[str, Any]:
+            raise OrderNotFound("already filled")  # ccxt name -> UnknownOrder
+
+    ex = _Ex()
+    adapter = CcxtAdapter(exchange=ex)
+    await adapter.place_order(_order())
+    await adapter.cancel("alpha-btc1")  # must not raise
+
+
 async def test_cancel_all_cancels_by_venue_id_without_local_map() -> None:
     # The independent deadman's adapter never placed these orders, so its _known is
     # empty — cancel_all must still cancel them by venue id (broker truth), not no-op.

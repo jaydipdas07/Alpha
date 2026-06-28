@@ -66,6 +66,10 @@ def build_adapter(venue: VenueConfig, env: EnvConfig) -> CcxtAdapter:
                 # that — acknowledge it (the worker's order volume is low). Venues that
                 # don't define this option ignore it.
                 "warnOnFetchOpenOrdersWithoutSymbol": False,
+                # A market BUY carries a base quantity (the OMS always sizes in base
+                # units), not a quote cost. Without this, Binance spot reads a market-buy
+                # amount as quote (USDT) and demands a price. (Perps ignore the option.)
+                "createMarketBuyOrderRequiresPrice": False,
             },
         }
     )

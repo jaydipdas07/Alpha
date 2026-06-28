@@ -1,0 +1,32 @@
+# M3.1 — the Alpha PAPER worker on the AWS box (the sole executor, TEST-8).
+#
+# Long-running service: the live loop (venue ticks -> bars -> strategy -> risk gate
+# -> OMS -> venue) against the configured PAPER/testnet venue. PAPER ONLY — the live
+# gate lives in config/<env>.yaml (allow_live:false); going live is a human FORM step
+# (CLAUDE.md never-do). Keys come from ~/alpha/.env (testnet only). Beats a heartbeat
+# file the INDEPENDENT alpha-deadman.service watches (TEST-5).
+#
+# Deploy: rsync the repo to ~/alpha, `uv sync --all-packages`, stage ~/alpha/.env
+# (testnet keys), then `sudo systemctl enable --now alpha-worker`. Logs: journalctl
+# -u alpha-worker -f.
+[Unit]
+Description=Alpha paper worker (sole executor)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/alpha
+# `uv run` self-heals the venv to the lockfile, then runs the worker entrypoint.
+ExecStart=/home/ubuntu/.local/bin/uv run python -m worker paper
+Restart=on-failure
+RestartSec=5
+# SIGINT (not the default SIGTERM) so asyncio.run raises KeyboardInterrupt -> the
+# loop's `finally` runs -> tasks cancelled + the venue session aclosed gracefully.
+KillSignal=SIGINT
+TimeoutStopSec=30
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

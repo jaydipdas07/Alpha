@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from pathlib import Path
 
 from alpha_core.core.interfaces import BrokerAdapter, DataFeed
 from alpha_core.data.bar_builder import BarBuilder
@@ -220,6 +221,17 @@ class Worker:
         await self._adapter.aclose()  # release the ccxt ws/http session
 
 
+def _ensure_db_dir(state_db: str) -> None:
+    """Create the parent dir of a sqlite file URL so a fresh box doesn't crash on
+    ``unable to open database file`` (``:memory:`` and dir-less paths are no-ops)."""
+    prefix = "sqlite:///"
+    if not state_db.startswith(prefix):
+        return
+    parent = Path(state_db.removeprefix(prefix)).parent
+    if str(parent) not in (".", ""):
+        parent.mkdir(parents=True, exist_ok=True)
+
+
 def build_worker(env: EnvConfig) -> Worker:
     """Construct the live paper/► worker from config + the active (gated) venue."""
     venues = load_venues()
@@ -227,6 +239,7 @@ def build_worker(env: EnvConfig) -> Worker:
     adapter = build_adapter(venue_cfg, env)  # live-gate check (defence in depth)
     risk_config = load_risk_config()
     risk = RiskManager(risk_config)
+    _ensure_db_dir(env.state_db)
     store = StateStore(env.state_db)
     store.create_schema()
     clock = SystemClock()
