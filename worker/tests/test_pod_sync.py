@@ -251,6 +251,7 @@ async def test_command_ack_updates_the_row() -> None:
     assert record_id == "c1"
     assert data["status"] == "done"
     assert "acked_at" in data
+    assert "detail" not in data  # the commands table has no detail column (logged, not stored)
 
 
 async def test_command_ack_propagates_pod_errors() -> None:
