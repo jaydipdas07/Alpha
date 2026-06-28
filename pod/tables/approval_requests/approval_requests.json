@@ -25,8 +25,9 @@
     { "name": "market", "type": "ENUM", "options": ["crypto", "equity", "index_option"] },
     { "name": "venue", "type": "TEXT", "max_length": 16 },
     { "name": "mode", "type": "ENUM", "default": "paper", "options": ["paper", "live"] },
-    // the off-pod combined verdict — only `passed` rows are ever written; the workflow
-    // re-checks it as a defence-in-depth guard before showing the FORM.
+    // the off-pod combined verdict. The bridge (scripts/risk_officer_review.py) enforces the gate
+    // OFF-pod: write_approval_request raises on a non-passed review, so only `passed` rows are ever
+    // written here. Kept as an explicit, auditable field on every approved candidate.
     { "name": "gate_status", "type": "ENUM", "required": true, "default": "passed",
       "options": ["passed", "rejected"] },
     // paper-eval (statistics plane — FLOAT, never money)

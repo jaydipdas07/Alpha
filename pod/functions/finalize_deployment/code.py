@@ -13,8 +13,10 @@ function does the coordinated, auditable write that follows. It reads the *canon
   only role — the worker polls ``commands`` and is the *sole* executor; the pod never trades.
 * REJECT → record the rejection on the request / deployment / strategy; no command is issued.
 
-Idempotency-minded: the command is emitted exactly once per approval (one FORM submit → one run →
-one ``start`` row). Runs as the invoking (approving) user, so it stamps the decision with their id.
+Idempotent: the command is emitted **exactly once** per approval. A retry or re-trigger after the
+request has already been decided is a no-op (the early ``status != "pending"`` guard returns without
+re-issuing) — so a duplicated run can never produce a second ``start`` row (TEST-6 in spirit). Runs
+as the invoking (approving) user, so it stamps the decision with their id.
 """
 
 from datetime import UTC, datetime
@@ -49,6 +51,15 @@ async def finalize_deployment(
     req = pod.table("approval_requests").get(data.record_id)
     deployment_id = str(req["deployment_id"])
     strategy_id = req.get("strategy_id")
+
+    # Idempotency guard (TEST-8): only a still-`pending` request may be acted on. A retry or a
+    # re-fired workflow on an already-decided request returns the prior decision WITHOUT issuing a
+    # second `start` command — the pod must never emit a duplicate execution command.
+    if req.get("status") != "pending":
+        return FinalizeDeploymentResult(
+            decision=str(req.get("status")), deployment_id=deployment_id
+        )
+
     worker_id = DEFAULT_WORKER_ID
     dep = pod.table("deployments").get(deployment_id)
     if dep.get("worker_id"):

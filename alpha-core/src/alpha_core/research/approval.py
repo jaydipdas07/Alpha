@@ -89,12 +89,16 @@ class RiskOfficerReview:
             "holdout_reason": self.holdout.reason,
             "origin": self.origin,
             "status": "pending",
-            # a compact audit echo — still scalar summaries only, never a return series
+            # a compact audit echo — still scalar summaries only, never a return series.
+            # Every float is _finite()-coerced (same as the top-level columns) so a degenerate
+            # ±inf/NaN Sharpe can never reach json.dumps and produce non-standard JSON tokens.
             "detail": {
                 "paper": {
                     "passed": self.paper.passed,
                     "reason": self.paper.reason,
-                    **self.paper.metrics(),
+                    "paper_sharpe": _finite(self.paper.paper_sharpe),
+                    "backtest_sharpe": _finite(self.paper.backtest_sharpe),
+                    "sharpe_retention": _finite(self.paper.sharpe_retention),
                 },
                 "holdout": {
                     "passed": self.holdout.passed,

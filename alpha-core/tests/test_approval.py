@@ -78,8 +78,9 @@ def test_request_fields_shape_and_lowercase_market() -> None:
     assert fields["paper_sharpe"] == 1.2
     assert fields["holdout_oos_sharpe"] == 2.4
     assert fields["holdout_n_obs"] == 480
-    # JSON-serializable end to end (the bridge writes this to the pod verbatim)
-    json.dumps(fields)
+    # JSON-serializable end to end (the bridge writes this to the pod verbatim); allow_nan=False
+    # mirrors a strict server parser — no Infinity/NaN tokens may cross the boundary
+    json.dumps(fields, allow_nan=False)
 
 
 def test_request_fields_is_a_summary_only_no_return_series() -> None:
@@ -115,7 +116,13 @@ def test_non_finite_sharpe_coerced_to_none() -> None:
     assert fields["paper_sharpe"] is None
     assert fields["sharpe_retention"] is None
     assert fields["backtest_sharpe"] == 1.0
-    json.dumps(fields)  # null is JSON-safe; inf/nan would not be
+    # the detail JSON must be coerced too, else inf/NaN survives there
+    detail_paper = fields["detail"]["paper"]  # type: ignore[index]
+    assert detail_paper["paper_sharpe"] is None
+    assert detail_paper["sharpe_retention"] is None
+    assert detail_paper["backtest_sharpe"] == 1.0
+    # allow_nan=False is what a strict server JSON parser enforces — inf/NaN would raise here
+    json.dumps(fields, allow_nan=False)
 
 
 def test_origin_defaults_to_discovery_and_demo_is_labelled() -> None:
