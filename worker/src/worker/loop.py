@@ -113,6 +113,9 @@ class Worker:
         # Flatten once per distinct kill (by the risk manager's halt generation), so a
         # re-trip after a clear_halt re-arm is never skipped (review BLOCKER 2).
         self._handled_halt_generation = -1
+        # The kill generation last MIRRORED to the pod risk_events log (best-effort telemetry,
+        # off the money path — see _pod_status_loop). -1 until the pod-sync loop baselines it.
+        self._synced_halt_generation = -1
 
     def _now(self) -> datetime:
         return self._clock.now()
@@ -199,6 +202,10 @@ class Worker:
         pod outage cannot stall trading, the kill-switch, the deadman, or reconcile."""
         assert self._pod_status is not None  # only started when present
         cadence = self._env.pod_sync.heartbeat_seconds if self._env.pod_sync else 15.0
+        # Baseline the kill-event cursor at the CURRENT generation so a restart-while-halted
+        # (the latched halt restored on boot) does not re-report an old, already-alerted kill —
+        # only kills that trip AFTER the worker is up are mirrored to the pod risk_events log.
+        self._synced_halt_generation = self._risk.halt_generation
         while not self._control.stopped:
             try:
                 await self._pod_status.beat(
@@ -207,9 +214,32 @@ class Worker:
                     positions=self._oms.positions,
                     detail=self._status_detail(),
                 )
+                await self._maybe_sync_kill_event()
             except Exception as exc:  # self-healing: telemetry must never kill its own loop
                 self._log.warning("pod_status_loop_error", error=str(exc))
             await asyncio.sleep(cadence)
+
+    async def _maybe_sync_kill_event(self) -> None:
+        """Mirror a NEW kill-switch trip to the pod ``risk_events`` log (mission control). Detected
+        HERE, in the telemetry loop (off the money path) — never on the kill path — by the risk
+        manager's halt generation, so a pod write can never delay the flatten/kill-switch (TEST-8).
+        Best-effort: ``record_risk_event`` swallows pod errors. One row per distinct trip."""
+        if self._pod_status is None:
+            return
+        gen = self._risk.halt_generation
+        if self._risk.is_halted and gen != self._synced_halt_generation:
+            self._synced_halt_generation = gen  # claim before the await (no duplicate row)
+            trigger = self._risk.halt_trigger
+            await self._pod_status.record_risk_event(
+                kind="kill_tripped",
+                severity="critical",
+                now=self._now(),
+                detail={
+                    "worker_id": self._env.worker_id,
+                    "venue": self._env.venue,
+                    "trigger": trigger.value if trigger else None,
+                },
+            )
 
     async def _pod_token_refresh_loop(self) -> None:
         """Best-effort token rotation. The pod token is ~60-min and the worker reads ``$token_env``

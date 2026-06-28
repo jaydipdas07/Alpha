@@ -118,6 +118,24 @@ class PodStatusWriter:
         except Exception as exc:
             _log.warning("worker_status_beat_failed", error=str(exc))
 
+    async def record_risk_event(
+        self, *, kind: str, severity: str, now: datetime, detail: dict[str, Any]
+    ) -> None:
+        """Append one ``risk_events`` row so mission control sees a worker risk event (e.g. a
+        kill-switch trip). Append-only; no ``deployment_id`` (worker-scoped — optional column).
+        BEST-EFFORT (TEST-8): a pod hiccup is logged and ignored — never raised, and the caller is
+        the pod-sync loop (off the money path), so this can't touch trading or the kill-switch."""
+        data: dict[str, Any] = {
+            "kind": kind,
+            "severity": severity,
+            "ts": now.isoformat(),
+            "detail": detail,
+        }
+        try:
+            await asyncio.to_thread(self._pod.records.create, "risk_events", data)
+        except Exception as exc:
+            _log.warning("risk_event_sync_failed", error=str(exc), kind=kind)
+
     def _upsert(self, data: dict[str, Any]) -> None:
         if self._row_id is None:
             self._row_id = self._find_row_id()

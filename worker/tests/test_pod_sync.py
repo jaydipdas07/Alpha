@@ -202,6 +202,27 @@ async def test_beat_recovers_from_a_stale_cached_row_id() -> None:
     assert len(pod.records.created) == 2
 
 
+async def test_record_risk_event_appends_a_row() -> None:
+    pod = _FakePod()
+    await _writer(pod).record_risk_event(
+        kind="kill_tripped", severity="critical", now=NOW, detail={"trigger": "daily_loss"}
+    )
+    table, data = pod.records.created[0]
+    assert table == "risk_events"
+    assert data["kind"] == "kill_tripped"
+    assert data["severity"] == "critical"
+    assert data["ts"] == NOW.isoformat()
+    assert data["detail"] == {"trigger": "daily_loss"}
+    assert "deployment_id" not in data  # worker-scoped; the optional FK is omitted
+
+
+async def test_record_risk_event_swallows_pod_errors() -> None:
+    # TEST-8: a pod outage on the telemetry path must never raise into the worker.
+    await _writer(_FakePod(fail=True)).record_risk_event(
+        kind="kill_tripped", severity="critical", now=NOW, detail={}
+    )  # must not raise
+
+
 # --- PodCommandSource (pod -> worker) -------------------------------------------
 
 
