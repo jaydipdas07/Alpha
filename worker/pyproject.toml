@@ -10,6 +10,10 @@ dependencies = [
     # The crypto execution venue SDK (Binance/Delta) — the worker is the sole
     # executor, so ccxt lives here, never in alpha-core (no broker SDK in the kernel).
     "ccxt>=4.5.0",
+    # The Lemma pod SDK — best-effort worker->pod telemetry (worker_status, fills/pnl) +
+    # the pod-backed CommandSource. A WORKER dep (like ccxt), never alpha-core (no SDK in
+    # the kernel). Lemma is never on the money path (TEST-8).
+    "lemma-sdk>=0.5.3",
 ]
 
 [build-system]

@@ -53,6 +53,26 @@ class VenueConfig(BaseModel):
     testnet_url: str | None = None
 
 
+class PodSyncConfig(BaseModel):
+    """Best-effort worker → pod telemetry wiring (M3.4/M3.6).
+
+    The pod (Vault) is mission control; the worker pushes a ``worker_status`` heartbeat
+    here so the cockpit sees it live. The TOKEN is never in config — it is staged in the
+    gitignored ``.env`` as ``$token_env`` (self-fetched via ``lemma auth print-token``);
+    no token => pod-sync is simply off and the worker runs identically. Lemma is never on
+    the money path (TEST-8), so a pod outage cannot affect trading or safety.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool = True
+    pod_id: str  # the Vault pod (mission control)
+    base_url: str = "https://api.lemma.work"
+    heartbeat_seconds: float = Field(default=15.0, gt=0)  # worker_status upsert cadence
+    # per pod call — bounds how long a hung pod can delay worker shutdown
+    timeout_seconds: float = Field(default=10.0, gt=0)
+    token_env: str = "LEMMA_TOKEN"  # the .env var holding the 60-min pod token (never committed)
+
+
 class EnvConfig(BaseModel):
     """A run environment (``<env>.yaml``) — infra + the live gate."""
 
@@ -69,6 +89,7 @@ class EnvConfig(BaseModel):
     heartbeat_path: str
     command_poll_seconds: float = Field(gt=0)
     reconcile_interval_seconds: float = Field(gt=0)  # periodic reconcile + feed-stale check cadence
+    pod_sync: PodSyncConfig | None = None  # best-effort worker->pod telemetry (off without a token)
 
     @model_validator(mode="after")
     def _live_gate(self) -> Self:

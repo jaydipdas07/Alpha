@@ -18,3 +18,13 @@ state_db: sqlite:///var/alpha-worker.db  # durable orders/fills/positions/audit
 heartbeat_path: var/run/alpha-worker.heartbeat  # the deadman reads this (TEST-5)
 command_poll_seconds: 1.0   # pod commands watchChanges + ~1s fallback (R10)
 reconcile_interval_seconds: 30  # periodic broker-truth reconcile + in-band feed-stale check
+
+# Best-effort worker -> pod telemetry (the cockpit sees the worker live/armed). The pod
+# is mission control; Lemma is NEVER on the money path (TEST-8), so a pod outage cannot
+# affect trading or safety. The TOKEN is NOT here — it is staged in the gitignored .env as
+# LEMMA_TOKEN (self-fetched via `lemma auth print-token`); no token => pod-sync is off.
+pod_sync:
+  enabled: true
+  pod_id: "019ef606-7b77-76f1-853a-978ddf819415"  # Vault (mission control)
+  base_url: https://api.lemma.work
+  heartbeat_seconds: 15
