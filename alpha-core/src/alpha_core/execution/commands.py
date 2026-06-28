@@ -31,8 +31,8 @@ from enum import StrEnum
 from typing import Protocol, assert_never
 
 from alpha_core.execution.oms import OMS
-from alpha_core.execution.reconcile import Reconciler, ReconcileStatus
-from alpha_core.execution.session import handle_kill
+from alpha_core.execution.reconcile import Reconciler
+from alpha_core.execution.session import handle_kill, rearm_on_clean_reconcile
 from alpha_core.observability.logging import get_logger
 from alpha_core.observability.notify import LoggingNotifier, Notifier, Severity
 from alpha_core.risk.manager import KillTrigger, RiskManager
@@ -221,24 +221,20 @@ class CommandWatcher:
         return f"flattened {len(flattened)} position(s), paused"
 
     async def _clear_halt(self) -> str:
-        """Re-arm only on a CLEAN reconcile (broker = truth); never clear blind."""
+        """Re-arm only on a CLEAN reconcile (broker = truth); never clear blind. The
+        gated decision lives in ``rearm_on_clean_reconcile`` (shared with the offline
+        re-arm CLI); on success persist the clear (durable, symmetric with the kill —
+        else an idle worker would re-halt on restart) and resume the loop."""
         if self._reconciler is None:
             return "refused: no reconciler — cannot verify broker truth"
-        report = await self._reconciler.reconcile(
-            local_orders=self._oms.orders, local_positions=self._oms.positions
-        )
-        if report.status is not ReconcileStatus.CLEAN:
-            # reconcile already re-tripped the kill on a mismatch; halt is retained.
-            return f"refused: reconcile not clean ({len(report.issues)} issue(s)) — halt retained"
-        await self._oms.apply_reconciliation(
-            adopted_orders=report.adopted_orders, adopted_positions=report.adopted_positions
-        )
-        self._risk.rearm()
-        self._control.set(RunState.RUNNING)
-        self._notifier.send(
-            "command clear_halt: re-armed on clean reconcile", severity=Severity.WARNING
-        )
-        return "re-armed (clean reconcile)"
+        rearmed, detail = await rearm_on_clean_reconcile(self._oms, self._risk, self._reconciler)
+        if rearmed:
+            await self._oms.clear_persisted_halt()
+            self._control.set(RunState.RUNNING)
+            self._notifier.send(
+                "command clear_halt: re-armed on clean reconcile", severity=Severity.WARNING
+            )
+        return detail
 
     async def _refresh_token(self, cmd: Command) -> str:
         """Relay a fresh broker token (equities only); a no-op where none is needed."""

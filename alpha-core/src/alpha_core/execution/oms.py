@@ -663,6 +663,31 @@ class OMS:
                 payload={"trigger": trigger.value if trigger else None},
             )
 
+    async def clear_persisted_halt(self) -> None:
+        """Persist a re-armed (un-halted) state to today's daily-P&L row so a clean
+        re-arm survives a restart — the symmetric counterpart to ``persist_halt``
+        (ADR 0006). Without this an offline re-arm would clear the latch in memory but
+        leave ``daily_pnl.halted=True``, so ``restore_daily_state`` would re-halt on the
+        next boot. Writes a ``REARM`` audit row (the re-arm is a decision). Idempotent;
+        held under the OMS lock so the hash-chained audit write can't fork the chain."""
+        async with self._lock:
+            await asyncio.to_thread(self._clear_persisted_halt)
+
+    def _clear_persisted_halt(self) -> None:
+        now = self.now()
+        with self._store.transaction() as s:
+            self._store.upsert_daily_pnl(
+                s,
+                trading_date=self._trading_date(now),
+                day_start_equity=self._risk.base_capital,
+                realized=self._day_realized,
+                unrealized=self.total_unrealized_pnl(),
+                halted=False,
+                halt_trigger=None,
+                updated_at=now,
+            )
+            self._store.append_audit(s, event_type="REARM", payload={})
+
     def _persist_adopted_order(self, order: Order) -> None:
         """Persist an order adopted from broker truth + its RECONCILE audit row (EXEC-2)."""
         with self._store.transaction() as s:

@@ -11,8 +11,9 @@ from decimal import Decimal
 from alpha_core.core.enums import OrderType, Side
 from alpha_core.core.models import Bar, Order, Position, Signal, Tick
 from alpha_core.execution.oms import OMS
+from alpha_core.execution.reconcile import Reconciler, ReconcileStatus
 from alpha_core.observability.notify import LoggingNotifier, Notifier, Severity
-from alpha_core.risk.manager import KillTrigger
+from alpha_core.risk.manager import KillTrigger, RiskManager
 
 
 def quote_from_bar(bar: Bar) -> Tick:  # pragma: no cover - paper/backtest loop glue (B0.9d)
@@ -62,6 +63,32 @@ async def handle_kill(
     if drain:
         await oms.drain_events()
     return flattened
+
+
+async def rearm_on_clean_reconcile(
+    oms: OMS, risk: RiskManager, reconciler: Reconciler
+) -> tuple[bool, str]:
+    """Re-arm a latched kill-switch ONLY on a CLEAN reconcile — the single discipline
+    for clearing a halt (ADR 0006: the broker is truth, never clear blind).
+
+    Reconcile the local book against the broker; on a mismatch the reconciler re-trips
+    the kill and the halt is RETAINED; on CLEAN, adopt broker truth and ``rearm()``.
+    Returns ``(re_armed, detail)``. Shared by the ``clear_halt`` command (which then
+    resumes the loop) and the offline ``Worker.rearm`` path (which persists the clear)
+    — the caller owns run-state + persistence; this is only the gated decision, so the
+    one rule "re-arm iff a clean reconcile" lives in exactly one place.
+    """
+    report = await reconciler.reconcile(local_orders=oms.orders, local_positions=oms.positions)
+    if report.status is not ReconcileStatus.CLEAN:
+        return (
+            False,
+            f"refused: reconcile not clean ({len(report.issues)} issue(s)) — halt retained",
+        )
+    await oms.apply_reconciliation(
+        adopted_orders=report.adopted_orders, adopted_positions=report.adopted_positions
+    )
+    risk.rearm()
+    return True, "re-armed (clean reconcile)"
 
 
 # scheduled intraday square-off: wired + exercised by the scheduler/Phase-3 tests

@@ -39,7 +39,7 @@ from alpha_core.execution.commands import CommandWatcher, RunState, WorkerContro
 from alpha_core.execution.deadman import HeartbeatFile
 from alpha_core.execution.oms import OMS
 from alpha_core.execution.reconcile import Reconciler, ReconcileStatus
-from alpha_core.execution.session import handle_kill
+from alpha_core.execution.session import handle_kill, rearm_on_clean_reconcile
 from alpha_core.execution.state import StateStore
 from alpha_core.observability.logging import get_logger
 from alpha_core.observability.notify import LoggingNotifier, Notifier, Severity
@@ -233,6 +233,30 @@ class Worker:
                 notifier=self._notifier,
                 drain=self._drain_inline,
             )
+
+    async def rearm(self) -> tuple[bool, str]:
+        """Offline gated re-arm of a LATCHED halt (no market loop runs) — for an
+        operator clearing a worker stuck on a transient halt when the pod ``clear_halt``
+        command channel isn't up. Rebuild state + restore the latched halt (as a cold
+        start would), then re-arm ONLY on a clean reconcile (broker = truth) and PERSIST
+        the clear so it survives the next restart. A dirty book leaves the halt latched.
+        Returns ``(re_armed, detail)``. Closes the adapter on exit."""
+        try:
+            self._oms.rebuild_state()
+            self._oms.restore_daily_state(self._today())
+            if not self._risk.is_halted:
+                return True, "not halted — nothing to re-arm"
+            rearmed, detail = await rearm_on_clean_reconcile(
+                self._oms, self._risk, self._reconciler
+            )
+            if rearmed:
+                await self._oms.clear_persisted_halt()  # durable clear (survives restart)
+                self._notifier.send("worker re-armed on clean reconcile", severity=Severity.WARNING)
+            else:
+                self._notifier.send(f"worker re-arm refused: {detail}", severity=Severity.WARNING)
+            return rearmed, detail
+        finally:
+            await self._adapter.aclose()
 
     async def _shutdown(self) -> None:
         if self._drain_inline:
