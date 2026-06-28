@@ -127,6 +127,15 @@ repo, the `.env` keys, and SSH to the AWS box. A cloud/container session **canno
 or AWS — anything touching those is Mac-CLI-only. Plain-Python deliverables (`alpha-core`, `worker`,
 rigor) can be built and pushed from anywhere.
 
+## Lemma pod — working agreement (operator-set, obey exactly)
+- This repo is the **Vault** pod (`LEMMA_POD_ID = 019ef606-7b77-76f1-853a-978ddf819415`, mission
+  control). **Always pass `--pod Vault`** (capital V — lowercase `vault` does NOT resolve; or use the
+  id) on every `lemma` command. The machine's **global default pod belongs to another project**
+  (`job-hunt`) — never rely on it, and never change it machine-wide (scope per-command instead).
+- The `lemma daemon` is **shared per-device across all pods**. **Never run `lemma daemon stop` /
+  `restart`** while another pod's Claude session may be active — it kills their in-flight runs. (desk's
+  Opus runtime needs the daemon, but only restart it when you're certain no other pod is running.)
+
 ## How to proceed
 Orient with the **Session continuity** protocol (source-of-truth files in every checkout). The live
 worklist is the **⏳ Pending tracker at the end of `TASKS.md`** — work whatever is unblocked, **one
