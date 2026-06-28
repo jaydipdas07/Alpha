@@ -12,8 +12,9 @@ Concurrency (one event loop):
   and on a closed bar run the strategy → submit signals (only while RUNNING).
 - **events** — books fills from the venue's order-event stream (derived P&L, R11),
   or drains inline for a bounded/paper feed.
-- **periodic** — every ``reconcile_interval``: beat, check the feed-stale kill, and
-  reconcile against broker truth (adopt if clean, halt if not).
+- **periodic** — every ``reconcile_interval``: reconcile against broker truth (adopt
+  if clean, halt if not), then check the feed-stale kill. It does NOT beat the
+  heartbeat — that is market-loop-only (per tick), so a wedged loop trips the deadman.
 - **commands** — the pod→worker bus (start/stop/flatten/arm_kill/clear_halt), run
   only when a ``CommandWatcher`` is provided; ``build_worker`` wires it once the
   pod-backed ``CommandSource`` lands (the pod-sync increment).
@@ -175,8 +176,11 @@ class Worker:
         # position is open (a flat feed outage auto-recovers — see _check_feed_stale).
         while not self._control.stopped:
             await asyncio.sleep(self._env.reconcile_interval_seconds)
-            self._check_feed_stale()
+            # Reconcile FIRST so the feed-stale check sees the broker-truth book — a
+            # position adopted from the broker this cycle is detected in-band now, not
+            # one cycle later (a clean position adopts; genuine drift halts here).
             await self._reconcile()
+            self._check_feed_stale()
             await self._maybe_flatten_on_halt()
 
     def _check_feed_stale(self) -> None:

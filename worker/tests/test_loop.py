@@ -310,24 +310,11 @@ def test_ensure_db_dir_creates_parent(tmp_path) -> None:  # type: ignore[no-unty
     _ensure_db_dir("postgresql://x")  # non-sqlite -> no-op
 
 
-def _hold_position(oms: OMS, qty: str = "0.01") -> None:
-    """White-box: seed an OPEN position so feed-stale sees a book at risk."""
-    oms._positions[(Venue.BINANCE, SYMBOL)] = Position(
-        symbol=SYMBOL,
-        venue=Venue.BINANCE,
-        asset_class=AssetClass.CRYPTO,
-        quantity=Decimal(qty),
-        average_price=Decimal("100"),
-        last_price=Decimal("100"),
-        updated_at=NOW,
-    )
-
-
 async def test_check_feed_stale_trips_the_kill_when_holding(tmp_path) -> None:  # type: ignore[no-untyped-def]
     # Holding a position + a dead feed = flying blind on risk -> the LATCHING kill.
     worker, _venue, oms, _hb = _worker(tmp_path, _ticks(["100"]), strategy=_AlwaysBuy())
     worker._feed_stale_seconds = 5
-    _hold_position(oms)
+    oms._positions[(Venue.BINANCE, SYMBOL)] = _pos(SYMBOL, "0.01")  # an open position
     worker._check_feed_stale()  # no tick yet -> no trip (early return)
     assert worker._risk.is_halted is False
     worker._last_tick_at = NOW - timedelta(seconds=30)  # last tick 30s ago > 5s budget
@@ -343,6 +330,25 @@ async def test_feed_stale_is_soft_when_flat(tmp_path) -> None:  # type: ignore[n
     worker._last_tick_at = NOW - timedelta(seconds=300)  # long outage, but flat
     worker._check_feed_stale()
     assert worker._risk.is_halted is False  # nothing held -> nothing to protect
+
+
+async def test_feed_stale_is_soft_with_only_a_closed_out_position(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # A fully closed-out position is a zero-qty row (average_price=None) -> still FLAT,
+    # so the `quantity != 0` predicate must read it as flat and NOT latch a stale feed.
+    worker, _venue, oms, _hb = _worker(tmp_path, _ticks(["100"]), strategy=_AlwaysBuy())
+    worker._feed_stale_seconds = 5
+    oms._positions[(Venue.BINANCE, SYMBOL)] = Position(
+        venue=Venue.BINANCE,
+        symbol=SYMBOL,
+        asset_class=AssetClass.CRYPTO,
+        quantity=Decimal("0"),
+        average_price=None,  # validator: average_price is set iff quantity != 0
+        last_price=Decimal("100"),
+        updated_at=NOW,
+    )
+    worker._last_tick_at = NOW - timedelta(seconds=300)
+    worker._check_feed_stale()
+    assert worker._risk.is_halted is False  # a closed-out residual is flat
 
 
 async def test_periodic_reconciles_once(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
