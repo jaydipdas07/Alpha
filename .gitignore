@@ -44,3 +44,6 @@ data_holdout/
 
 # B1b.4 nightly-discovery per-run JSON records (syncable to the pod discovery_runs table)
 discovery_runs/
+
+# local git worktrees (parallel-work checkouts)
+.claude/worktrees/
