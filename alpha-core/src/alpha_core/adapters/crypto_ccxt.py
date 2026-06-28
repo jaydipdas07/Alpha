@@ -210,7 +210,10 @@ class CcxtAdapter(BrokerAdapter):
         if known is None or known.venue_order_id is None:
             return  # idempotent: nothing we placed -> safe no-op
         vid, symbol = known.venue_order_id, known.symbol
-        await self._call(lambda: self._ex.cancel_order(vid, symbol), idempotent=True)
+        try:
+            await self._call(lambda: self._ex.cancel_order(vid, symbol), idempotent=True)
+        except UnknownOrder:
+            return  # already filled/cancelled at the venue -> safe no-op (idempotent cancel)
 
     async def cancel_all(self) -> list[str]:
         """Cancel every open order against **broker truth** — independent-deadman safe.
