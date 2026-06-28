@@ -53,8 +53,21 @@ def test_no_backtest_edge_passes_on_paper_alone() -> None:
     assert res.passed and res.sharpe_retention == 1.0
 
 
-def test_default_config_loads_from_rigor_yaml() -> None:
+def test_config_mirrors_rigor_yaml() -> None:
+    from alpha_core.helpers.config import load_rigor_config
+
+    cfg = load_rigor_config().paper_eval  # the shipped config/rigor.yaml paper_eval section
     res = evaluate_paper_run(
-        paper_returns=_series(0.02, 0.01), backtest_returns=_series(0.02, 0.01)
-    )  # config=None -> PaperEvalConfig() defaults (mirrors config/rigor.yaml)
-    assert res.passed
+        paper_returns=_series(0.02, 0.01), backtest_returns=_series(0.02, 0.01), config=cfg
+    )
+    assert res.passed and cfg.min_obs > 0
+
+
+def test_paper_run_too_short_fails() -> None:
+    # A short paper run could post a lucky Sharpe -> reject before judging (min_obs guard).
+    res = evaluate_paper_run(
+        paper_returns=_series(0.02, 0.01, n=10),  # 10 obs < the 60 floor
+        backtest_returns=_series(0.02, 0.01),
+        config=CFG,
+    )
+    assert res.passed is False and "too short" in res.reason

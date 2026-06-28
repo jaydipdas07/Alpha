@@ -49,6 +49,11 @@ def evaluate_paper_run(
     is treated as 1.0 if the paper run is itself positive, else 0.0 (and the absolute floor
     still applies)."""
     cfg = config or PaperEvalConfig()
+    if len(paper_returns) < cfg.min_obs:
+        # Too few bars -> a Sharpe that cleared the floor by luck; never confirm on it.
+        return PaperEvaluation(
+            False, 0.0, 0.0, 0.0, f"paper run too short ({len(paper_returns)} < {cfg.min_obs} obs)"
+        )
     ps = sharpe(paper_returns)
     bs = sharpe(backtest_returns)
     retention = (ps / bs) if bs > 0 else (1.0 if ps > 0 else 0.0)

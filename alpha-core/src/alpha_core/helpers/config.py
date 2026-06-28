@@ -208,6 +208,9 @@ class PaperEvalConfig(BaseModel):
     of the backtest Sharpe (so slippage / fees / real fills haven't eaten the edge)."""
 
     model_config = ConfigDict(extra="forbid")
+    min_obs: int = Field(
+        default=60, gt=0
+    )  # min paper return-obs: too few -> a lucky Sharpe -> fail
     min_paper_sharpe: float = 0.5  # absolute floor on the live paper Sharpe
     min_sharpe_retention: float = Field(
         default=0.5, ge=0, le=1

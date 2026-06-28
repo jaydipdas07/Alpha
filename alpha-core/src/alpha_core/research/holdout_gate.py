@@ -102,6 +102,10 @@ class HoldoutGate:
         the never-seen holdout. ``n_trials`` is the cell's cumulative trial count (the holdout
         is one further test of the cell, so the DSR deflation still applies)."""
         returns = self._backtester.run(proposal)  # the single legitimate holdout read (TEST-3)
+        # oos_fraction=None -> the quant-analyst's CALIBRATED operating point (rigor.yaml). The
+        # DSR threshold (0.92) was calibrated at that oos_fraction, so judging the holdout at the
+        # same slice keeps the threshold valid (a different slice would invalidate the calibration);
+        # it is also conservative — it can only make PROMOTE harder, never falsely promote.
         assessment = self._qa.assess(
             returns,
             n_trials=n_trials,

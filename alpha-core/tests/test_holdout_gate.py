@@ -1,4 +1,6 @@
-"""One-shot holdout gate tests (M3.7, Workflow B) — incl. TEST-3 holdout-read isolation."""
+"""One-shot holdout gate tests (M3.7, Workflow B). HoldoutBarsFor is the gate's read path;
+the structural TEST-3 isolation (the holdout being unreachable elsewhere) is proven in
+test_cold_store_bars / test_holdout."""
 
 from __future__ import annotations
 
