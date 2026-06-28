@@ -171,7 +171,8 @@ class Worker:
     async def _periodic(self) -> None:
         # NB: the heartbeat is beaten ONLY from the market loop (per tick), never here —
         # so a wedged market loop (no ticks) stops beating and the INDEPENDENT deadman
-        # fires (TEST-5). The feed-stale self-trip is the in-band complement.
+        # fires (TEST-5). The feed-stale self-trip is the in-band complement when a
+        # position is open (a flat feed outage auto-recovers — see _check_feed_stale).
         while not self._control.stopped:
             await asyncio.sleep(self._env.reconcile_interval_seconds)
             self._check_feed_stale()
@@ -179,12 +180,29 @@ class Worker:
             await self._maybe_flatten_on_halt()
 
     def _check_feed_stale(self) -> None:
+        """A stale feed is only a *safety* event while a position is OPEN — then we
+        are flying blind on live risk, so trip the LATCHING kill (TEST-4) and let
+        ``handle_kill`` flatten (the independent deadman is the backstop, TEST-5).
+
+        While FLAT, a stale feed protects nothing: there is nothing to flatten and no
+        signal can be generated without ticks (the market loop is simply parked on the
+        next tick). So we log and AUTO-RECOVER when ticks resume — never latching a
+        halt that would need a manual re-arm. This matches the documented intent
+        (``config/risk.yaml``: "no tick on a HELD symbol") and keeps the held-position
+        guard tight for live, while letting a flaky paper feed (e.g. the Delta testnet
+        REST poll) ride out transient outages during the idle no-trade soak."""
         if self._last_tick_at is None or self._risk.is_halted:
             return
         age = (self._now() - self._last_tick_at).total_seconds()
-        if age > self._feed_stale_seconds:
-            self._log.error("feed_stale", age_seconds=age)
+        if age <= self._feed_stale_seconds:
+            return
+        holding = any(p.quantity != 0 for p in self._oms.positions)
+        if holding:
+            self._log.error("feed_stale", age_seconds=age, holding=True)
             self._risk.trip(KillTrigger.FEED_STALE)
+        else:
+            # Flat soak: a flaky feed is not a risk event. Surface it, don't latch.
+            self._log.warning("feed_stale_flat", age_seconds=age)
 
     async def _reconcile(self) -> None:
         # Atomic against the live book: holds the OMS lock across the snapshot + broker

@@ -19,6 +19,10 @@ kill_switch:
     daily_loss_breach: true
     consecutive_errors: 3           # >=3 consecutive rejects/errors
     feed_stale_seconds: 60          # no tick on a HELD symbol for >60s = dead feed.
+                                    # ENFORCED position-aware (worker._check_feed_stale):
+                                    # stale + HOLDING a position -> latching kill (flatten);
+                                    # stale + FLAT -> soft, auto-recovers (the idle soak/a
+                                    # flaky paper feed protects nothing while flat).
                                     # Crypto streams via watch_trades (ticks only ON a
                                     # trade), so a thin/low-volume symbol can be quiet for
                                     # tens of seconds without the feed being dead — keep

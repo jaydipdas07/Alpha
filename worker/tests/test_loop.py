@@ -310,14 +310,39 @@ def test_ensure_db_dir_creates_parent(tmp_path) -> None:  # type: ignore[no-unty
     _ensure_db_dir("postgresql://x")  # non-sqlite -> no-op
 
 
-async def test_check_feed_stale_trips_the_kill(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    worker, *_ = _worker(tmp_path, _ticks(["100"]), strategy=_AlwaysBuy())
+def _hold_position(oms: OMS, qty: str = "0.01") -> None:
+    """White-box: seed an OPEN position so feed-stale sees a book at risk."""
+    oms._positions[(Venue.BINANCE, SYMBOL)] = Position(
+        symbol=SYMBOL,
+        venue=Venue.BINANCE,
+        asset_class=AssetClass.CRYPTO,
+        quantity=Decimal(qty),
+        average_price=Decimal("100"),
+        last_price=Decimal("100"),
+        updated_at=NOW,
+    )
+
+
+async def test_check_feed_stale_trips_the_kill_when_holding(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # Holding a position + a dead feed = flying blind on risk -> the LATCHING kill.
+    worker, _venue, oms, _hb = _worker(tmp_path, _ticks(["100"]), strategy=_AlwaysBuy())
     worker._feed_stale_seconds = 5
+    _hold_position(oms)
     worker._check_feed_stale()  # no tick yet -> no trip (early return)
     assert worker._risk.is_halted is False
     worker._last_tick_at = NOW - timedelta(seconds=30)  # last tick 30s ago > 5s budget
     worker._check_feed_stale()
     assert worker._risk.is_halted and worker._risk.halt_trigger is KillTrigger.FEED_STALE
+
+
+async def test_feed_stale_is_soft_when_flat(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # The idle paper soak: a flaky feed stalls while FLAT -> no latch, auto-recovers
+    # (the market loop just waits for the next tick). This is the soak-stability fix.
+    worker, _venue, _oms, _hb = _worker(tmp_path, _ticks(["100"]), strategy=_AlwaysBuy())
+    worker._feed_stale_seconds = 5
+    worker._last_tick_at = NOW - timedelta(seconds=300)  # long outage, but flat
+    worker._check_feed_stale()
+    assert worker._risk.is_halted is False  # nothing held -> nothing to protect
 
 
 async def test_periodic_reconciles_once(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
