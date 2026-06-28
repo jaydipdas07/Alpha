@@ -478,9 +478,7 @@ async def test_build_worker_constructs_from_paper_config(tmp_path, monkeypatch) 
         await worker._adapter.aclose()
 
 
-async def test_build_worker_non_streaming_venue_uses_background_consume(
-    tmp_path, monkeypatch
-) -> None:  # type: ignore[no-untyped-def]
+async def test_build_worker_non_streaming_uses_consume(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     # REGRESSION: a non-streaming (REST-poll) venue's order_events() is an INFINITE poll,
     # so the worker must consume it via the background consume_events task — NOT the inline
     # drain_events, which would `async for` the infinite poll forever and wedge the market
