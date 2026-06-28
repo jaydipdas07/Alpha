@@ -179,6 +179,10 @@
         "min_oos_sharpe": 0.0,
         "fold_consistency_min": 0.6,
         "oos_fraction": 0.5
+      },
+      "paper_eval": {
+        "min_paper_sharpe": 0.5,
+        "min_sharpe_retention": 0.5
       }
     },
     "instruments": {
