@@ -48,6 +48,9 @@ class VenueConfig(BaseModel):
     testnet: bool
     streaming: bool = True  # ccxt.pro ws (Binance) vs REST poll (Delta)
     key_env: str  # .env prefix: <key_env>_API_KEY / _API_SECRET
+    # Override ccxt's built-in testnet URL when the venue's sandbox lives elsewhere —
+    # e.g. Delta INDIA demo is cdn-ind.testnet.deltaex.org, not ccxt's global testnet.
+    testnet_url: str | None = None
 
 
 class EnvConfig(BaseModel):

@@ -100,3 +100,17 @@ def test_build_unknown_exchange_fails_fast(monkeypatch) -> None:  # type: ignore
     monkeypatch.setenv("TESTKEY_API_SECRET", "s")
     with pytest.raises(RuntimeError, match="unknown exchange"):
         build_adapter(_venue(exchange="not_a_real_exchange"), _env())
+
+
+async def test_testnet_url_override_applied(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # A venue whose sandbox isn't ccxt's default testnet (Delta India demo) overrides
+    # the ccxt api url so requests hit the right endpoint.
+    monkeypatch.setenv("TESTKEY_API_KEY", "k")
+    monkeypatch.setenv("TESTKEY_API_SECRET", "s")
+    url = "https://cdn-ind.testnet.deltaex.org"
+    venue = _venue(exchange="delta", market_type="swap", streaming=False, testnet_url=url)
+    adapter = build_adapter(venue, _env())
+    try:
+        assert adapter._ex.urls["api"] == {"public": url, "private": url}  # type: ignore[attr-defined]
+    finally:
+        await adapter.aclose()
