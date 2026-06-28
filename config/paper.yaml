@@ -9,10 +9,10 @@ mode: paper
 allow_live: false          # the live gate — never true in paper
 
 worker_id: alpha-paper-1
-venue: binance-spot-testnet # active venue (key in venues.yaml); Delta-testnet when keyed
+venue: delta-testnet        # Alpha's real crypto venue (perps); keyed + 3.GATE-proven 2026-06-28
 strategy: idle              # no-trade soak by default; swap to a real edge per deployment
 symbols:
-  - BTC/USDT
+  - BTC/USD:USD             # Delta India BTC perp (0.001 BTC/contract)
 bar_interval_seconds: 60    # build 1-minute bars from the tick stream
 state_db: sqlite:///var/alpha-worker.db  # durable orders/fills/positions/audit
 heartbeat_path: var/run/alpha-worker.heartbeat  # the deadman reads this (TEST-5)

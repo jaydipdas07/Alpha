@@ -92,4 +92,4 @@ def test_active_venue_resolves_testnet_venue() -> None:
     venues = load_venues()
     env = load_env_config("paper")
     vc = active_venue(env, venues)
-    assert vc.testnet is True and vc.venue is Venue.BINANCE
+    assert vc.testnet is True and vc.venue in (Venue.BINANCE, Venue.DELTA)  # the shipped paper venue
