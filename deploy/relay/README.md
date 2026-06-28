@@ -1,5 +1,16 @@
 # Lemma token relay (pod-sync token persistence)
 
+> ⚠️ **The Mac launchd relay is DEPRECATED and uninstalled (operator decision, 2026-06-28).** Running
+> a token-minting job on the operator's *laptop* is the wrong place — the laptop sleeps/moves, and it
+> leaves a background job on a personal machine. The clean answers are (1) a **Lemma long-lived /
+> service token** for the box (the real fix; the CLI doesn't expose one yet) or (2) **box self-mint**
+> (give the always-on box its own Lemma auth so the refresh runs there, not the laptop). The
+> **worker-side `.env` hot-reload below is KEPT** — it is delivery-agnostic: it picks up a fresh token
+> in ≤60s with no restart, however the token is staged (a manual re-stage, a future box-side timer, or
+> the Lemma service token). This script + plist are kept as reference for a box-side adaptation. To
+> uninstall the laptop job: `launchctl unload ~/Library/LaunchAgents/com.alpha.lemma-token-relay.plist
+> && rm ~/Library/LaunchAgents/com.alpha.lemma-token-relay.plist` (already done).
+
 The worker↔pod telemetry token (`LEMMA_TOKEN`) is a ~60-min access token, and the worker reads it
 only at startup. Without help, a long-lived worker loses pod-sync after the token expires (the
 cockpit stops seeing it; commands stop being polled) — best-effort, so trading/safety are never
