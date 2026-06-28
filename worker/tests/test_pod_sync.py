@@ -295,6 +295,8 @@ def test_read_envfile_token(tmp_path: Any) -> None:
     )
     assert read_envfile_token(str(f), "LEMMA_TOKEN") == "eyJ.aGVhZA.sig"
     assert read_envfile_token(str(f), "MISSING") is None  # key absent -> None
+    (tmp_path / "pad.env").write_text("LEMMA_TOKEN=a.b.cc==\n", encoding="utf-8")
+    assert read_envfile_token(str(tmp_path / "pad.env"), "LEMMA_TOKEN") == "a.b.cc=="  # `=` kept
     (tmp_path / "quoted.env").write_text('LEMMA_TOKEN="q.u.oted"\n', encoding="utf-8")
     assert read_envfile_token(str(tmp_path / "quoted.env"), "LEMMA_TOKEN") == "q.u.oted"
     (tmp_path / "empty.env").write_text("LEMMA_TOKEN=\n", encoding="utf-8")

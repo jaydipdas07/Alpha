@@ -705,6 +705,13 @@ async def test_token_refresh_no_swap_when_unchanged(
         return object()
 
     monkeypatch.setattr("worker.loop.build_pod_client", _track_build)
+    reads = {"n": 0}
+
+    def _counting_read(path: str, key: str) -> str:
+        reads["n"] += 1
+        return "same.token"  # what the file holds — unchanged vs the startup token
+
+    monkeypatch.setattr("worker.loop.read_envfile_token", _counting_read)
     envfile = tmp_path / ".env"
     envfile.write_text("LEMMA_TOKEN=same.token\n", encoding="utf-8")  # unchanged vs startup
     env = EnvConfig.model_validate(
@@ -735,6 +742,7 @@ async def test_token_refresh_no_swap_when_unchanged(
         await asyncio.sleep(0.05)  # several iterations
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-        assert builds == []  # unchanged token -> never rebuilt
+        assert reads["n"] >= 1  # the loop DID iterate + read the file...
+        assert builds == []  # ...and correctly did not rebuild on an unchanged token
     finally:
         await worker._adapter.aclose()
