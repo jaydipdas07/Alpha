@@ -16,12 +16,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from lemma_sdk import Pod
 
 from alpha_core.core.models import Position
+from alpha_core.execution.commands import Command, CommandKind, CommandStatus
 from alpha_core.observability.logging import get_logger
 from worker.config import EnvConfig
 
@@ -119,3 +120,69 @@ class PodStatusWriter:
             if isinstance(item, dict) and item.get("worker_id") == self._worker_id:
                 return str(item["id"])
         return None
+
+
+def _to_command(item: dict[str, Any]) -> Command:
+    """Map a pod ``commands`` row to the kernel's ``Command`` (kind from the table enum)."""
+    return Command(
+        id=str(item["id"]),
+        kind=CommandKind(item["kind"]),
+        worker_id=item.get("worker_id"),
+        deployment_id=item.get("deployment_id"),
+        payload=item.get("payload"),
+    )
+
+
+class PodCommandSource:
+    """Pod-backed ``CommandSource`` — the cockpit's governance commands reach the worker.
+
+    The cockpit issues commands (arm/flatten/halt/start/stop) into the pod ``commands``
+    table; this polls the PENDING ones for the worker's ``CommandWatcher`` and acks them
+    back. TEST-8: the pod only ISSUES commands — the worker is the sole executor; this is
+    just the read/ack adapter, never a trading path.
+
+    READ is best-effort: a pod outage => ``poll`` returns ``[]`` (the worker keeps running
+    per its local state; commands arrive when the pod returns). ACK PROPAGATES on failure
+    so the watcher never executes a command it couldn't first mark acked (no double-fire).
+    """
+
+    def __init__(self, pod: Pod) -> None:
+        self._pod = pod
+        self._poll_ok = True
+
+    async def poll(self) -> list[Command]:
+        try:
+            items = await asyncio.to_thread(self._fetch_pending)
+        except Exception as exc:  # best-effort read: surface once, keep the worker running
+            if self._poll_ok:
+                _log.warning("command_poll_failed", error=str(exc))
+                self._poll_ok = False
+            return []
+        if not self._poll_ok:
+            _log.info("command_poll_recovered")
+            self._poll_ok = True
+        commands: list[Command] = []
+        for item in items:
+            try:
+                commands.append(_to_command(item))
+            except Exception as exc:  # one malformed row must not drop the whole batch
+                _log.warning("command_parse_skipped", error=str(exc), row=item.get("id"))
+        return commands
+
+    def _fetch_pending(self) -> list[dict[str, Any]]:
+        resp = self._pod.query(
+            "SELECT id, kind, worker_id, deployment_id, payload FROM commands "
+            "WHERE status = 'pending'"
+        )
+        return [it for it in resp.to_dict().get("items", []) if isinstance(it, dict)]
+
+    async def ack(
+        self, command_id: str, status: CommandStatus, *, detail: str | None = None
+    ) -> None:
+        """Move the command to ``status`` + stamp ``acked_at``. Propagates a pod error so
+        the watcher retries rather than executing a command it couldn't mark (the
+        ``commands`` table has no detail column, so ``detail`` is logged, not stored)."""
+        if detail is not None:
+            _log.info("command_ack", command_id=command_id, status=status.value, detail=detail)
+        data: dict[str, Any] = {"status": status.value, "acked_at": datetime.now(UTC).isoformat()}
+        await asyncio.to_thread(self._pod.records.update, "commands", command_id, data)

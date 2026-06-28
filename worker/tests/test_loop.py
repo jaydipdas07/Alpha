@@ -585,3 +585,36 @@ async def test_build_worker_non_streaming_uses_consume(tmp_path, monkeypatch) ->
         assert worker._drain_inline is False  # background consume_events, never inline drain
     finally:
         await worker._adapter.aclose()
+
+
+async def test_build_worker_wires_pod_sync_when_a_pod_is_present(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # With a pod client present, build_worker wires BOTH the command bus (pod -> worker)
+    # and the status heartbeat (worker -> pod); absent a pod, both stay None (default path).
+    from worker.loop import build_worker
+
+    monkeypatch.setenv("BINANCE_TESTNET_API_KEY", "k")
+    monkeypatch.setenv("BINANCE_TESTNET_API_SECRET", "s")
+    monkeypatch.setattr("worker.loop.build_pod_client", lambda env: object())  # a non-None pod
+    env = EnvConfig.model_validate(
+        {
+            "env": "paper",
+            "mode": "paper",
+            "allow_live": False,
+            "worker_id": "w",
+            "venue": "binance-spot-testnet",
+            "strategy": "idle",
+            "symbols": [SYMBOL],
+            "bar_interval_seconds": 60,
+            "state_db": "sqlite:///:memory:",
+            "heartbeat_path": f"{tmp_path}/hb",
+            "command_poll_seconds": 1.0,
+            "reconcile_interval_seconds": 30,
+            "pod_sync": {"pod_id": "p-1"},
+        }
+    )
+    worker = build_worker(env)
+    try:
+        assert worker._command_watcher is not None
+        assert worker._pod_status is not None
+    finally:
+        await worker._adapter.aclose()

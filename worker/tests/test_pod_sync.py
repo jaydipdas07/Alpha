@@ -15,8 +15,9 @@ from lemma_sdk import Pod
 
 from alpha_core.core.enums import AssetClass, Venue
 from alpha_core.core.models import Position
+from alpha_core.execution.commands import CommandKind, CommandStatus
 from worker.config import EnvConfig
-from worker.pod_sync import PodStatusWriter, build_pod_client, positions_hash
+from worker.pod_sync import PodCommandSource, PodStatusWriter, build_pod_client, positions_hash
 
 NOW = datetime(2026, 6, 28, 12, 0, tzinfo=UTC)
 
@@ -53,8 +54,22 @@ class _FakeRecords:
 
 
 class _FakePod:
-    def __init__(self, existing: list[dict[str, Any]] | None = None, *, fail: bool = False) -> None:
+    def __init__(
+        self,
+        existing: list[dict[str, Any]] | None = None,
+        *,
+        fail: bool = False,
+        pending: list[dict[str, Any]] | None = None,
+        query_fail: bool = False,
+    ) -> None:
         self.records = _FakeRecords(existing or [], fail=fail)
+        self._pending = pending or []
+        self._query_fail = query_fail
+
+    def query(self, sql: str) -> _FakeListResp:
+        if self._query_fail:
+            raise RuntimeError("pod query down")
+        return _FakeListResp(self._pending)
 
 
 def _pos(symbol: str, qty: str) -> Position:
@@ -179,6 +194,70 @@ async def test_beat_recovers_from_a_stale_cached_row_id() -> None:
     pod.records._fail = False
     await writer.beat(now=NOW, armed=True, positions=[], detail={})  # re-creates
     assert len(pod.records.created) == 2
+
+
+# --- PodCommandSource (pod -> worker) -------------------------------------------
+
+
+def _cmd_src(pod: _FakePod) -> PodCommandSource:
+    return PodCommandSource(cast(Pod, pod))
+
+
+async def test_command_poll_maps_pending_commands() -> None:
+    pod = _FakePod(
+        pending=[
+            {
+                "id": "c1",
+                "kind": "flatten",
+                "worker_id": "alpha-paper-1",
+                "deployment_id": None,
+                "payload": {"x": 1},
+            },
+            {"id": "c2", "kind": "clear_halt", "worker_id": None, "deployment_id": "d9"},
+        ]
+    )
+    cmds = await _cmd_src(pod).poll()
+    assert [c.id for c in cmds] == ["c1", "c2"]
+    assert cmds[0].kind is CommandKind.FLATTEN
+    assert cmds[0].worker_id == "alpha-paper-1"
+    assert cmds[0].payload == {"x": 1}
+    assert cmds[1].kind is CommandKind.CLEAR_HALT
+    assert cmds[1].worker_id is None  # a global command (the watcher applies it)
+
+
+async def test_command_poll_returns_empty_on_pod_error() -> None:
+    assert await _cmd_src(_FakePod(query_fail=True)).poll() == []  # best-effort read; no crash
+
+
+async def test_command_poll_recovers_after_a_failure() -> None:
+    pod = _FakePod(pending=[{"id": "c1", "kind": "flatten"}], query_fail=True)
+    src = _cmd_src(pod)
+    assert await src.poll() == []  # fails
+    pod._query_fail = False
+    assert [c.id for c in await src.poll()] == ["c1"]  # recovers
+
+
+async def test_command_poll_skips_a_malformed_row() -> None:
+    pod = _FakePod(pending=[{"id": "good", "kind": "flatten"}, {"id": "bad", "kind": "not_a_kind"}])
+    cmds = await _cmd_src(pod).poll()
+    assert [c.id for c in cmds] == ["good"]  # the unknown-kind row drops, not the whole batch
+
+
+async def test_command_ack_updates_the_row() -> None:
+    pod = _FakePod()
+    await _cmd_src(pod).ack("c1", CommandStatus.DONE, detail="re-armed (clean reconcile)")
+    table, record_id, data = pod.records.updated[0]
+    assert table == "commands"
+    assert record_id == "c1"
+    assert data["status"] == "done"
+    assert "acked_at" in data
+    assert "detail" not in data  # the commands table has no detail column (logged, not stored)
+
+
+async def test_command_ack_propagates_pod_errors() -> None:
+    # ACK must raise on failure so the watcher retries, never executing an un-acked command.
+    with pytest.raises(RuntimeError):
+        await _cmd_src(_FakePod(fail=True)).ack("c1", CommandStatus.DONE)
 
 
 def test_build_pod_client_swallows_construction_errors(monkeypatch: pytest.MonkeyPatch) -> None:
