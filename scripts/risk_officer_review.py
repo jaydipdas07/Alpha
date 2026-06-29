@@ -33,15 +33,31 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 
 from alpha_core.core.enums import AssetClass
+from alpha_core.data.holdout import HoldoutStore
+from alpha_core.data.store import BarStore
+from alpha_core.helpers.config import DiscoveryCellConfig, load_discovery_config, load_yaml
 from alpha_core.research.approval import RiskOfficerReview, assemble_review
 from alpha_core.research.holdout_gate import HoldoutGateResult
 from alpha_core.research.paper_eval import evaluate_paper_run
+from alpha_core.research.promote import (
+    build_survivor_backtesters,
+    make_proposal,
+    parse_params,
+    reconstruct_deflation_inputs,
+    review_survivor,
+)
+from alpha_core.research.proposal_ledger import ProposalLedger
 from alpha_core.research.quant_analyst import Verdict
+from alpha_core.risk.limits import load_risk_config
+
+_ROOT = Path(__file__).resolve().parents[1]
 
 POD = "Vault"  # the Lemma agreement: always --pod Vault (mission control)
 WORKER_ID = "alpha-paper-1"  # mirrors config/paper.yaml — the deployment's worker
@@ -225,6 +241,182 @@ def run_demo(pod: str = POD) -> str:
     return request_id
 
 
+def _store_root(env: str, default: str, override: str | None) -> Path:
+    """A store root: an explicit ``--…-root`` override, else ``$ENV``, else the repo default."""
+    if override:
+        return Path(override)
+    return Path(os.environ.get(env) or (_ROOT / default))
+
+
+def load_survivor_from_run(run_path: Path, window: str) -> tuple[str, dict[str, str]]:
+    """Pull a survivor (family + params) from a ``discovery_runs/*.json`` record for ``window``."""
+    record = json.loads(run_path.read_text())
+    reports = record.get("reports", [])
+    for report in reports:
+        if report.get("window") == window and report.get("promoted"):
+            promoted = report["promoted"][0]  # the cell's promoted survivor
+            return str(report["family"]), dict(promoted["params"])
+    have = [r["window"] for r in reports if r.get("promoted")]
+    raise SystemExit(f"no survivor for window {window!r} in {run_path} (survivors at: {have})")
+
+
+def _render_review(review: RiskOfficerReview, *, name: str, n_trials: int) -> str:
+    """A human summary of both gates (scalar verdicts only — the same TEST-3-safe figures)."""
+    p, h = review.paper, review.holdout
+    return "\n".join(
+        [
+            f"=== risk-officer review — {name} (origin={review.origin}) ===",
+            f"  gate_status : {review.gate_status.upper()}  (passed={review.passed})",
+            f"  HOLDOUT  verdict={h.verdict.value}  passed={h.passed}  "
+            f"oos_sharpe={h.oos_sharpe:+.4f}  n_obs={h.n_obs}  (n_trials={n_trials})",
+            f"           {h.reason}",
+            f"  PAPER    passed={p.passed}  paper_sharpe={p.paper_sharpe:+.4f}  "
+            f"backtest_sharpe={p.backtest_sharpe:+.4f}  retention={p.sharpe_retention:.0%}",
+            f"           {p.reason}",
+        ]
+    )
+
+
+def _surface_survivor(
+    review: RiskOfficerReview,
+    *,
+    cell: DiscoveryCellConfig,
+    template: str,
+    params: dict[str, object],
+    venue: str,
+    name: str,
+    capital: str | None,
+    pod: str,
+) -> int:
+    """Create the ``strategies`` / ``deployments`` / ``paper_runs`` rows + the approval request
+    (origin=discovery). Reached ONLY when both gates passed."""
+    strategy_id = _lemma_create(
+        "strategies",
+        {
+            "name": name,
+            "family": template,
+            "market": cell.market.value.lower(),
+            "status": "paper",
+            "origin": "discovery",
+            "config": {k: str(v) for k, v in params.items()},
+            "rationale": (
+                f"Discovered survivor {template} {dict(params)} on "
+                f"{cell.market.value}/{cell.window} — cleared the holdout + paper gates."
+            ),
+        },
+        pod=pod,
+    )
+    deployment_id = _lemma_create(
+        "deployments",
+        {
+            "strategy_id": strategy_id,
+            "venue": venue,
+            "mode": "paper",
+            "status": "pending_approval",
+            "worker_id": WORKER_ID,
+            "capital": str(capital or cell.starting_cash),  # money: string-Decimal (B5)
+            "risk_limits": {"note": "discovery survivor"},
+        },
+        pod=pod,
+    )
+    _lemma_create(
+        "paper_runs",
+        {
+            "deployment_id": deployment_id,
+            "status": "passed",
+            "window": cell.window,
+            "metrics": review.paper.metrics(),
+        },
+        pod=pod,
+    )
+    request_id = write_approval_request(
+        review, deployment_id=deployment_id, strategy_id=strategy_id, pod=pod
+    )
+    print(
+        "\n".join(
+            [
+                f"\nrequest written ({request_id}) — the human FORM is now waiting.",
+                f"  strategy_id    {strategy_id}  ({name})",
+                f"  deployment_id  {deployment_id}  (pending_approval, paper)",
+                f"  [You] approve: lemma workflows runs waiting --pod {pod}",
+            ]
+        )
+    )
+    return 0
+
+
+def run_survivor(args: argparse.Namespace) -> int:
+    """Drive a REAL discovered survivor through both Workflow-B gates; surface to the FORM iff it
+    passes. ``write_approval_request`` refuses a non-passing review, so a holdout-rejected survivor
+    (band_bps=55) is correctly never surfaced — the gate working."""
+    if args.from_run:
+        template, raw_params = load_survivor_from_run(Path(args.from_run), args.window)
+    else:
+        template = args.template
+        raw_params = dict(p.split("=", 1) for p in (args.params or []))
+    params = parse_params(raw_params, template)
+    cell = next((c for c in load_discovery_config().cells if c.window == args.window), None)
+    if cell is None:
+        raise SystemExit(f"no discovery cell for window {args.window!r} in config/discovery.yaml")
+
+    research = BarStore(_store_root("ALPHA_RESEARCH_ROOT", "data_research", args.research_root))
+    holdout = HoldoutStore(_store_root("ALPHA_HOLDOUT_ROOT", "data_holdout", args.holdout_root))
+    ledger_path = Path(args.ledger) if args.ledger else (_ROOT / "proposal_ledger.sqlite")
+    risk_config = load_risk_config()
+    cost_config = load_yaml("costs.yaml")
+    with ProposalLedger(ledger_path) as ledger:
+        n_trials, variance = reconstruct_deflation_inputs(
+            template=template,
+            cell=cell,
+            research_store=research,
+            ledger=ledger,
+            risk_config=risk_config,
+            cost_config=cost_config,
+        )
+    in_bt, hold_bt = build_survivor_backtesters(
+        cell=cell,
+        research_store=research,
+        holdout_store=holdout,
+        risk_config=risk_config,
+        cost_config=cost_config,
+    )
+    paper_returns = json.loads(Path(args.paper_returns_file).read_text())
+
+    venue = args.venue or cell.venue.value
+    name = args.strategy_name or (
+        f"{template}-{cell.window}-" + "-".join(f"{k}{v}" for k, v in sorted(params.items()))
+    )
+    review = review_survivor(
+        proposal=make_proposal(template, params, cell, trial_index=n_trials),
+        in_sample_backtester=in_bt,
+        holdout_backtester=hold_bt,
+        paper_returns=paper_returns,
+        n_trials=n_trials,
+        trial_sharpe_variance=variance,
+        strategy_name=name,
+        venue=venue,
+        origin="discovery",
+    )
+    print(_render_review(review, name=name, n_trials=n_trials))
+    if not review.passed:
+        print(
+            "\nNOT SURFACED — the review did not clear both gates (above); no approval_requests "
+            "row written, nothing reaches the FORM. This is the gate working.",
+            file=sys.stderr,
+        )
+        return 1
+    return _surface_survivor(
+        review,
+        cell=cell,
+        template=template,
+        params=dict(params),
+        venue=venue,
+        name=name,
+        capital=args.capital,
+        pod=args.pod,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -234,20 +426,41 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="drive a labelled TEST strategy through the whole pipeline up to the waiting FORM",
     )
+    parser.add_argument(
+        "--survivor",
+        action="store_true",
+        help="drive a REAL discovered survivor through both gates (holdout + paper) to the FORM",
+    )
+    parser.add_argument("--from-run", help="discovery_runs/*.json record to load the survivor from")
+    parser.add_argument("--window", help="the survivor's cell window (e.g. avaxusdt-1d)")
+    parser.add_argument("--template", help="strategy family (when not using --from-run)")
+    parser.add_argument("--params", nargs="*", help="params as key=value (e.g. band_bps=55)")
+    parser.add_argument("--paper-returns-file", help="JSON list of forward paper returns")
+    parser.add_argument("--strategy-name", help="deployment strategy name (default: derived)")
+    parser.add_argument("--venue", help="execution venue (default: the cell's venue)")
+    parser.add_argument("--capital", help="deployment capital (default: the cell's starting_cash)")
+    parser.add_argument("--research-root", help="research store root ($ALPHA_RESEARCH_ROOT)")
+    parser.add_argument("--holdout-root", help="holdout store root ($ALPHA_HOLDOUT_ROOT)")
+    parser.add_argument("--ledger", help="proposal ledger path (./proposal_ledger.sqlite)")
     parser.add_argument("--pod", default=POD, help="Lemma pod (default: Vault)")
     args = parser.parse_args(argv)
 
-    if not args.demo:
-        parser.print_help()
-        print(
-            "\nNo --demo: the real path (a discovered survivor's actual paper/backtest returns + "
-            "the one-shot HoldoutGate over the gate-only HoldoutStore) is wired in alpha_core and "
-            "runs when M3.0 vendor data exists; see the module docstring.",
-            file=sys.stderr,
-        )
-        return 2
-    run_demo(args.pod)
-    return 0
+    if args.survivor:
+        if not (args.window and args.paper_returns_file):
+            parser.error("--survivor needs --window and --paper-returns-file")
+        if not (args.from_run or args.template):
+            parser.error("--survivor needs --from-run <record> or --template <family> --params …")
+        return run_survivor(args)
+    if args.demo:
+        run_demo(args.pod)
+        return 0
+    parser.print_help()
+    print(
+        "\nPass --demo (a synthetic labelled pipeline test) or --survivor (a real discovered "
+        "survivor driven through both gates). See the module docstring.",
+        file=sys.stderr,
+    )
+    return 2
 
 
 if __name__ == "__main__":
