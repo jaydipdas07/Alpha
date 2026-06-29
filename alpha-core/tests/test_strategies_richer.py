@@ -96,7 +96,10 @@ def test_macd_strategy_triggers_and_validates() -> None:
     s = Macd(MacdConfig(fast_period=5, slow_period=12, signal_period=4))
     sigs = _run(s, _sine_bars())
     assert sigs and all(isinstance(x, Signal) for x in sigs)
-    assert s.on_tick.__self__ is s and list(s.on_tick(None)) == []  # type: ignore[arg-type]
+    assert any(x.score is not None for x in sigs) and any(
+        x.score is None for x in sigs
+    )  # entry+exit
+    assert list(s.on_tick(None)) == []  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="fast_period < slow_period"):
         Macd(MacdConfig(fast_period=20, slow_period=10))
 
@@ -132,6 +135,7 @@ def test_trend_pullback_buys_the_dip() -> None:
     dip = [_bar(158 - j * 0.5, 60 + j) for j in range(8)]
     sigs = _run(s, up + dip)
     assert any(x.side is Side.BUY and x.score is not None for x in sigs)
+    assert any(x.score is None for x in sigs)  # the exit (RSI recovered / trend flip)
     with pytest.raises(ValueError, match="0 < pullback_level < 50"):
         TrendPullback(TrendPullbackConfig(pullback_level=Decimal("60")))
 

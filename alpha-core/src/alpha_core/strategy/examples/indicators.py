@@ -130,6 +130,6 @@ def donchian(
 ) -> tuple[Decimal, Decimal] | None:
     """``(highest high, lowest low)`` over the last ``period`` bars (the Donchian channel). For a
     breakout test pass the PRIOR bars (exclude the current) so a close can break the channel."""
-    if period <= 0 or len(highs) < period or len(lows) < period:
+    if period <= 0 or len(highs) < period or len(lows) != len(highs):
         return None
     return max(highs[-period:]), min(lows[-period:])
