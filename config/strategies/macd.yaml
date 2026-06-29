@@ -1,0 +1,6 @@
+# config/strategies/macd.yaml — MACD momentum (richer templates, M3.0).
+strategy_id: macd
+fast_period: 12
+slow_period: 26
+signal_period: 9
+quantity: "1"

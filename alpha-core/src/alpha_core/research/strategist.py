@@ -35,13 +35,17 @@ from pydantic import BaseModel, ValidationError
 from alpha_core.core.enums import AssetClass
 from alpha_core.core.interfaces import Strategy
 from alpha_core.research.proposal_ledger import ProposalLedger, cell_key
+from alpha_core.strategy.examples.bollinger_squeeze import BollingerSqueeze, BollingerSqueezeConfig
+from alpha_core.strategy.examples.donchian_atr import DonchianAtr, DonchianAtrConfig
 from alpha_core.strategy.examples.ma_crossover import MaCrossover, MaCrossoverConfig
+from alpha_core.strategy.examples.macd import Macd, MacdConfig
 from alpha_core.strategy.examples.momentum_roc import MomentumRoc, MomentumRocConfig
 from alpha_core.strategy.examples.opening_range_breakout import (
     OpeningRangeBreakout,
     OpeningRangeBreakoutConfig,
 )
 from alpha_core.strategy.examples.rsi_bollinger import RsiBollinger, RsiBollingerConfig
+from alpha_core.strategy.examples.trend_pullback import TrendPullback, TrendPullbackConfig
 from alpha_core.strategy.examples.vwap_reversion import VwapReversion, VwapReversionConfig
 
 ParamValue = int | Decimal
@@ -165,6 +169,51 @@ TEMPLATES: dict[str, StrategyTemplate] = {
         {
             "opening_range_minutes": IntRange(5, 60),
             "breakout_buffer_bps": DecimalRange(Decimal("2"), Decimal("30"), Decimal("2")),
+        },
+    ),
+    # Richer templates (M3.0): EMA momentum, volatility-regime breakouts, multi-signal confluence.
+    "macd": StrategyTemplate(
+        "macd",
+        "macd",
+        MacdConfig,
+        Macd,
+        {
+            "fast_period": IntRange(5, 20),
+            "slow_period": IntRange(21, 50),
+            "signal_period": IntRange(5, 15),
+        },
+    ),
+    "donchian_atr": StrategyTemplate(
+        "donchian_atr",
+        "donchian_atr",
+        DonchianAtrConfig,
+        DonchianAtr,
+        {
+            "channel_period": IntRange(10, 50),
+            "atr_period": IntRange(7, 21),
+            "atr_floor_bps": DecimalRange(Decimal("10"), Decimal("100"), Decimal("10")),
+        },
+    ),
+    "bollinger_squeeze": StrategyTemplate(
+        "bollinger_squeeze",
+        "bollinger_squeeze",
+        BollingerSqueezeConfig,
+        BollingerSqueeze,
+        {
+            "period": IntRange(10, 40),
+            "num_std": DecimalRange(Decimal("1.5"), Decimal("3.0"), Decimal("0.5")),
+            "squeeze_bps": DecimalRange(Decimal("50"), Decimal("300"), Decimal("50")),
+        },
+    ),
+    "trend_pullback": StrategyTemplate(
+        "trend_pullback",
+        "trend_pullback",
+        TrendPullbackConfig,
+        TrendPullback,
+        {
+            "trend_period": IntRange(20, 100),
+            "rsi_period": IntRange(7, 21),
+            "pullback_level": DecimalRange(Decimal("20"), Decimal("45"), Decimal("5")),
         },
     ),
 }

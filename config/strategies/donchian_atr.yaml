@@ -1,0 +1,6 @@
+# config/strategies/donchian_atr.yaml — Donchian breakout + ATR regime filter (M3.0).
+strategy_id: donchian_atr
+channel_period: 20
+atr_period: 14
+atr_floor_bps: "30"
+quantity: "1"

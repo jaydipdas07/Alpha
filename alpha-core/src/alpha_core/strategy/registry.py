@@ -12,12 +12,16 @@ from collections.abc import Callable
 
 from alpha_core.core.interfaces import Strategy
 from alpha_core.helpers.config import ConfigError
+from alpha_core.strategy.examples.bollinger_squeeze import BollingerSqueeze
+from alpha_core.strategy.examples.donchian_atr import DonchianAtr
 from alpha_core.strategy.examples.idle import IdleStrategy
 from alpha_core.strategy.examples.ma_crossover import MaCrossover
+from alpha_core.strategy.examples.macd import Macd
 from alpha_core.strategy.examples.momentum_roc import MomentumRoc
 from alpha_core.strategy.examples.opening_range_breakout import OpeningRangeBreakout
 from alpha_core.strategy.examples.placeholder import PlaceholderStrategy
 from alpha_core.strategy.examples.rsi_bollinger import RsiBollinger
+from alpha_core.strategy.examples.trend_pullback import TrendPullback
 from alpha_core.strategy.examples.vwap_reversion import VwapReversion
 
 # name (as written in config) -> zero-arg builder. Two Vega strategies stay deferred until
@@ -30,6 +34,11 @@ _BUILDERS: dict[str, Callable[[], Strategy]] = {
     "rsi_bollinger": RsiBollinger.from_config,
     "momentum_roc": MomentumRoc.from_config,
     "vwap_reversion": VwapReversion.from_config,
+    # Richer templates (M3.0) — EMA momentum, volatility-regime breakouts, multi-signal confluence.
+    "macd": Macd.from_config,
+    "donchian_atr": DonchianAtr.from_config,
+    "bollinger_squeeze": BollingerSqueeze.from_config,
+    "trend_pullback": TrendPullback.from_config,
     "placeholder": PlaceholderStrategy,
     "idle": IdleStrategy,  # no-trade: infra soak / live smoke check
 }
