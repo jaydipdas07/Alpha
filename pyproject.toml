@@ -37,6 +37,11 @@ dev = [
     "pyarrow>=17.0.0",
     "pytz>=2025.1",  # duckdb needs it for TIMESTAMPTZ ops (the store's tz-aware `start`)
     "vectorbt>=1.0.0",
+    # The Kite Connect SDK for the Indian 1-minute historical ingest (scripts/ingest_kite.py):
+    # the daily-2FA auth flow + historical_data fetch. A research/ingest-plane dep like the cold
+    # store above — NEVER alpha-core (no broker SDK in the kernel) and NEVER the lean worker prod
+    # (its live executor is ccxt); only CI/research/dev pull it via --all-groups.
+    "kiteconnect>=5.0.1",
 ]
 
 [tool.ruff]
