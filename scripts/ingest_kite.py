@@ -17,6 +17,11 @@ CC never enters a login / credential, and the access-token value is never printe
     # Just check staleness (pure, no network, no SDK) — exit 0 fresh / 2 stale.
     uv run python scripts/ingest_kite.py --check
 
+    # Push the token to BOTH Mac and box on login (set KITE_BOX_SSH_TARGET in .env first),
+    # or stage the current token to the box without logging in again:
+    uv run python scripts/ingest_kite.py --request-token XXXX   # login -> Mac + box (auto)
+    uv run python scripts/ingest_kite.py --stage-to-box         # push the current token, then exit
+
 With a valid token it resolves each store symbol (``NSE:RELIANCE``) to its Kite instrument token
 via the instruments dump, paginates ``historical_data(token, from, to, "minute")`` within Kite's
 60-day-per-request cap, folds the IST rows to tz-UTC ``Bar``s, and writes them to the cold store.
@@ -26,13 +31,22 @@ the same series window). Exit codes: 0 ok · 1 error · 2 human reauth required.
 
 Mac-CLI / network — **not a CI test** (the pure transforms in ``data/ingest/kite.py`` are the tested
 part; this is the SDK glue). ``kiteconnect`` is lazy-imported so ``--check`` needs no SDK.
+
+**Box staging (the "both Mac and box" flow).** If ``KITE_BOX_SSH_TARGET`` (``user@host``) is set in
+the ``.env``, a successful login also pushes the ``KITE_*`` keys to the worker box's ``.env`` over
+ssh (best-effort — a failure leaves the Mac ``.env`` updated; suppress with ``--no-stage-to-box``).
+Optional config: ``KITE_BOX_SSH_KEY`` (identity file) and ``KITE_BOX_ENV_PATH`` (box ``.env`` path,
+default ``alpha/.env``). It is opt-in by config because the push sends broker secrets to the box.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import secrets
+import shlex
 import stat
+import subprocess
 import sys
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -160,6 +174,113 @@ def _exchange_request_token(
     return access_token
 
 
+# Runs ON THE BOX (python3, stdlib only): merge the piped KITE_* lines into argv[1]'s .env
+# (replace-or-append, atomic, mode-preserved). Sent over ssh, so the box needs no Alpha code.
+_BOX_MERGE_SRC = """
+import sys, os, stat
+from pathlib import Path
+p = Path(sys.argv[1]).expanduser()
+updates = {}
+for line in sys.stdin.read().splitlines():
+    s = line.strip()
+    if "=" in s and not s.startswith("#"):
+        k, _, v = s.partition("=")
+        updates[k.strip()] = v
+lines = p.read_text().splitlines() if p.exists() else []
+seen = set(); out = []
+for line in lines:
+    s = line.strip()
+    key = s.partition("=")[0].strip() if "=" in s and not s.startswith("#") else None
+    if key in updates:
+        out.append(f"{key}={updates[key]}"); seen.add(key)
+    else:
+        out.append(line)
+out += [f"{k}={v}" for k, v in updates.items() if k not in seen]
+tmp = p.with_name(p.name + ".kite.tmp")
+tmp.write_text("\\n".join(out) + "\\n")
+os.chmod(tmp, stat.S_IMODE(p.stat().st_mode) if p.exists() else 0o600)
+os.replace(tmp, p)
+print(f"merged {len(updates)} KITE_ keys -> {p} ({len(out)} lines)")
+"""
+
+
+def _box_target(env: dict[str, str]) -> tuple[str, str | None, str] | None:
+    """The ``(ssh_target, ssh_key_or_None, box_env_path)`` for box-staging, or ``None`` if unset.
+
+    From the ``.env``: ``KITE_BOX_SSH_TARGET`` (``user@host`` — set this to enable box staging),
+    ``KITE_BOX_SSH_KEY`` (identity file; unset -> ssh config / agent decides), and
+    ``KITE_BOX_ENV_PATH`` (box ``.env`` path, default ``alpha/.env`` relative to the ssh home)."""
+    target = env.get("KITE_BOX_SSH_TARGET", "").strip()
+    if not target:
+        return None
+    key_raw = env.get("KITE_BOX_SSH_KEY", "").strip()
+    key = os.path.expanduser(key_raw) if key_raw else None
+    box_env = env.get("KITE_BOX_ENV_PATH", "").strip() or "alpha/.env"
+    return target, key, box_env
+
+
+def _box_payload(env: dict[str, str]) -> str:
+    """The KITE_* lines to push to the box — keys/token, never the ``KITE_BOX_*`` config."""
+    return "\n".join(
+        f"{k}={v}"
+        for k, v in env.items()
+        if k.startswith("KITE_") and not k.startswith("KITE_BOX_")
+    )
+
+
+def _stage_to_box(env: dict[str, str]) -> bool:
+    """Push the local KITE_* keys to the worker box's ``.env`` over ssh (opt-in by config).
+
+    Two ssh calls: install a tiny stdlib merge helper on the box, then pipe the KITE_* lines to it
+    (replace-or-append into the box ``.env``, atomic, mode-preserved). Values transit ssh, never
+    printed. Returns ``True`` on success / when box-staging isn't configured (a no-op); ``False`` on
+    a stage failure — the local ``.env`` is already updated, so box staging is best-effort.
+    """
+    cfg = _box_target(env)
+    if cfg is None:
+        return True  # not configured -> Mac-only; nothing to do
+    target, key, box_env = cfg
+    ssh = ["ssh", *(["-i", key] if key else [])]  # omit -i so ssh config / agent can choose the key
+    ssh += [
+        "-o",
+        "ConnectTimeout=40",
+        "-o",
+        "ServerAliveInterval=10",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        target,
+    ]
+    helper = f"/tmp/_alpha_kite_merge_{secrets.token_hex(8)}.py"  # unpredictable box-side temp
+    quoted_env = shlex.quote(box_env)  # operator config, but quote so a space can't word-split argv
+    try:
+        subprocess.run(
+            [*ssh, f"cat > {helper}"],
+            input=_BOX_MERGE_SRC,
+            text=True,
+            check=True,
+            capture_output=True,
+            timeout=90,
+        )
+        # `rc=$?; rm; exit $rc` keeps python3's exit code — a bare `;` would mask it behind rm's 0,
+        # turning a box-merge failure into a false success (the stage must surface failures).
+        done = subprocess.run(
+            [*ssh, f"python3 {helper} {quoted_env}; rc=$?; rm -f {helper}; exit $rc"],
+            input=_box_payload(env),
+            text=True,
+            check=True,
+            capture_output=True,
+            timeout=90,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        print(
+            f"[box] WARNING: staging to {target} failed ({exc}); the Mac .env is still updated",
+            file=sys.stderr,
+        )
+        return False
+    print(f"[box] {done.stdout.strip() or ('staged to ' + target)}")
+    return True
+
+
 def _nse_universe(symbols_arg: list[str] | None) -> list[str]:
     """The NSE store symbols to ingest: ``--symbols``, else every NSE equity in instruments.yaml."""
     if symbols_arg:
@@ -243,6 +364,16 @@ def main() -> int:
     ap.add_argument(
         "--check", action="store_true", help="report token staleness and exit (no network)"
     )
+    ap.add_argument(
+        "--stage-to-box",
+        action="store_true",
+        help="push the current token to the worker box .env (needs KITE_BOX_SSH_TARGET) and exit",
+    )
+    ap.add_argument(
+        "--no-stage-to-box",
+        action="store_true",
+        help="suppress the automatic box-stage after a login",
+    )
     ap.add_argument("--env-file", default=str(_ROOT / ".env"), help="path to the .env (gitignored)")
     args = ap.parse_args()
 
@@ -263,6 +394,12 @@ def main() -> int:
         print(f"Kite token: {state} (KITE_ACCESS_TOKEN_AT={at})")
         return 2 if stale else 0
 
+    if args.stage_to_box:  # standalone: push the current local token to the box and exit
+        if _box_target(env) is None:
+            print("[error] --stage-to-box needs KITE_BOX_SSH_TARGET set in .env", file=sys.stderr)
+            return 1
+        return 0 if _stage_to_box(_read_env(env_path)) else 1
+
     start, end = date.fromisoformat(args.start), date.fromisoformat(args.end)
     if start > end:  # fail fast on a reversed range, before any auth/network
         print(f"[error] --from {start} is after --to {end}", file=sys.stderr)
@@ -276,6 +413,10 @@ def main() -> int:
             request_token=args.request_token,
             env_path=env_path,
         )
+        if (
+            not args.no_stage_to_box
+        ):  # auto-push the fresh token to the box (no-op if not configured)
+            _stage_to_box(_read_env(env_path))
     elif stale or args.reauth:  # phase 1: stop and let the human log in
         _print_login_url(api_key)
         return 2
