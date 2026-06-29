@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import itertools
 from collections.abc import Iterator, Mapping, Sequence
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
+from typing import Any
 
 from alpha_core.data.holdout import HoldoutStore
 from alpha_core.data.store import BarStore
@@ -174,6 +175,8 @@ def reconstruct_deflation_inputs(
     grid, keep the configs whose fingerprint is in the ledger (the tried set), and backtest only
     those in-sample — as ``deflation_inputs`` does in the discovery cycle. Cost is bounded by the
     number of *tried* configs (a handful), not the whole grid (only hashed to match fingerprints).
+    The variance is over the cell's *cumulative* tried set (vs a single cycle's trials) — identical
+    for a single-cycle cell (M3.0), conservative for one searched across multiple nightly runs.
     """
     qa = quant_analyst or QuantAnalyst()
     family = TEMPLATES[template].family
@@ -190,6 +193,8 @@ def reconstruct_deflation_inputs(
             population.append(
                 list(in_sample.run(make_proposal(template, params, cell, trial_index=n_trials)))
             )
+            if len(population) == len(tried):
+                break  # found every tried fingerprint — no need to hash the rest of the grid
     _, variance = deflation_inputs(population, oos_fraction=qa.oos_fraction)
     return n_trials, variance
 
@@ -205,5 +210,39 @@ def parse_params(raw: Mapping[str, str], template: str) -> dict[str, ParamValue]
             raise ValueError(
                 f"unknown param {name!r} for template {template!r}; known: {sorted(space)}"
             )
-        out[name] = int(value) if isinstance(spec, IntRange) else Decimal(str(value))
+        try:
+            out[name] = int(value) if isinstance(spec, IntRange) else Decimal(str(value))
+        except (ValueError, InvalidOperation) as exc:
+            raise ValueError(
+                f"param {name}={value!r} is not a valid {type(spec).__name__}"
+            ) from exc
     return out
+
+
+def pick_survivor(
+    record: Mapping[str, Any], *, window: str, template: str | None = None
+) -> tuple[str, dict[str, str]]:
+    """Pick a survivor (family + params) from a discovery run record (``NightlyReport.summary``).
+
+    A window has up to one report per family, so several families can survive it. ``template``
+    disambiguates; without it a window with exactly one promoted family is taken, and an ambiguous
+    one (multiple promoted families, or >1 config in a family) **raises** rather than silently
+    choosing. Raises ``ValueError`` when nothing matches."""
+    reports = [
+        r for r in record.get("reports", []) if r.get("window") == window and r.get("promoted")
+    ]
+    if template is not None:
+        reports = [r for r in reports if r.get("family") == template]
+    if not reports:
+        suffix = f" / template {template!r}" if template else ""
+        raise ValueError(f"no survivor for window {window!r}{suffix}")
+    if len(reports) > 1:
+        families = sorted(str(r["family"]) for r in reports)
+        raise ValueError(f"window {window!r} has survivors in families {families}; pass --template")
+    promoted = reports[0]["promoted"]
+    if len(promoted) > 1:
+        raise ValueError(
+            f"window {window!r} / {reports[0]['family']!r} has {len(promoted)} survivors; "
+            "narrow the selection (pass explicit --template/--params)"
+        )
+    return str(reports[0]["family"]), dict(promoted[0]["params"])

@@ -27,11 +27,12 @@ from alpha_core.research.promote import (
     build_survivor_backtesters,
     make_proposal,
     parse_params,
+    pick_survivor,
     reconstruct_deflation_inputs,
     review_survivor,
 )
 from alpha_core.research.proposal_ledger import ProposalLedger
-from alpha_core.research.quant_analyst import Verdict
+from alpha_core.research.quant_analyst import QuantAnalyst, Verdict, deflation_inputs
 from alpha_core.research.strategist import TEMPLATES, StrategyProposal, proposal_fingerprint
 from alpha_core.risk.limits import load_risk_config
 
@@ -140,6 +141,8 @@ def test_parse_params_coerces_to_spec_types() -> None:
     assert parse_params({"band_bps": "55"}, "vwap_reversion") == {"band_bps": Decimal("55")}
     with pytest.raises(ValueError, match="unknown param"):
         parse_params({"bogus": "1"}, "vwap_reversion")
+    with pytest.raises(ValueError, match="not a valid"):
+        parse_params({"band_bps": "abc"}, "vwap_reversion")
 
 
 def _avax_bars(n: int = 60) -> list[Bar]:
@@ -206,8 +209,69 @@ def test_reconstruct_and_build_survivor_backtesters(tmp_path: Path) -> None:
     assert isinstance(list(in_bt.run(_survivor())), list)
     assert isinstance(list(hold_bt.run(_survivor())), list)
 
+    # faithfulness: the reconstructed variance == deflation_inputs over exactly the 3 tried configs
+    of = QuantAnalyst().oos_fraction
+    population = [
+        list(in_bt.run(make_proposal("vwap_reversion", {"band_bps": b}, CELL, trial_index=3)))
+        for b in (Decimal("50"), Decimal("55"), Decimal("60"))
+    ]
+    _, expected_variance = deflation_inputs(population, oos_fraction=of)
+    assert variance == pytest.approx(expected_variance)
+
 
 def test_param_grid_covers_int_and_decimal_specs() -> None:
     grid = list(_param_grid(TEMPLATES["momentum_roc"].param_space))
     assert len(grid) == 38 * 10  # period 3..40 (IntRange) x threshold_pct 0.5..5 step 0.5 (Decimal)
     assert {"period": 10, "threshold_pct": Decimal("2.5")} in grid
+
+
+def _run_record(*families: tuple[str, dict[str, str]]) -> dict[str, object]:
+    """A discovery run record (NightlyReport.summary shape) promoting the given families on
+    avaxusdt-1d, plus a non-surviving btcusdt-1d report."""
+    reports: list[dict[str, object]] = [
+        {"window": "avaxusdt-1d", "family": fam, "survivors": 1, "promoted": [{"params": params}]}
+        for fam, params in families
+    ]
+    reports.append(
+        {"window": "btcusdt-1d", "family": "ma_crossover", "survivors": 0, "promoted": []}
+    )
+    return {"reports": reports}
+
+
+def test_pick_survivor_happy_path() -> None:
+    rec = _run_record(("vwap_reversion", {"band_bps": "55"}))
+    assert pick_survivor(rec, window="avaxusdt-1d") == ("vwap_reversion", {"band_bps": "55"})
+
+
+def test_pick_survivor_no_match_raises() -> None:
+    rec = _run_record(("vwap_reversion", {"band_bps": "55"}))
+    with pytest.raises(ValueError, match="no survivor"):
+        pick_survivor(rec, window="ethusdt-1d")
+
+
+def test_pick_survivor_ambiguous_requires_template() -> None:
+    rec = _run_record(
+        ("vwap_reversion", {"band_bps": "55"}),
+        ("ma_crossover", {"fast_period": "5", "slow_period": "20"}),
+    )
+    with pytest.raises(ValueError, match="pass --template"):
+        pick_survivor(rec, window="avaxusdt-1d")
+    assert pick_survivor(rec, window="avaxusdt-1d", template="ma_crossover") == (
+        "ma_crossover",
+        {"fast_period": "5", "slow_period": "20"},
+    )
+
+
+def test_pick_survivor_multiple_configs_in_family_raises() -> None:
+    rec: dict[str, object] = {
+        "reports": [
+            {
+                "window": "avaxusdt-1d",
+                "family": "vwap_reversion",
+                "survivors": 2,
+                "promoted": [{"params": {"band_bps": "55"}}, {"params": {"band_bps": "60"}}],
+            }
+        ]
+    }
+    with pytest.raises(ValueError, match="narrow the selection"):
+        pick_survivor(rec, window="avaxusdt-1d")

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -50,6 +51,7 @@ from alpha_core.research.promote import (
     build_survivor_backtesters,
     make_proposal,
     parse_params,
+    pick_survivor,
     reconstruct_deflation_inputs,
     review_survivor,
 )
@@ -248,16 +250,15 @@ def _store_root(env: str, default: str, override: str | None) -> Path:
     return Path(os.environ.get(env) or (_ROOT / default))
 
 
-def load_survivor_from_run(run_path: Path, window: str) -> tuple[str, dict[str, str]]:
-    """Pull a survivor (family + params) from a ``discovery_runs/*.json`` record for ``window``."""
-    record = json.loads(run_path.read_text())
-    reports = record.get("reports", [])
-    for report in reports:
-        if report.get("window") == window and report.get("promoted"):
-            promoted = report["promoted"][0]  # the cell's promoted survivor
-            return str(report["family"]), dict(promoted["params"])
-    have = [r["window"] for r in reports if r.get("promoted")]
-    raise SystemExit(f"no survivor for window {window!r} in {run_path} (survivors at: {have})")
+def load_survivor_from_run(
+    run_path: Path, window: str, template: str | None
+) -> tuple[str, dict[str, str]]:
+    """Pull a survivor (family + params) from a ``discovery_runs/*.json`` record (via pick_survivor;
+    ``template`` disambiguates a window with multiple promoted families)."""
+    try:
+        return pick_survivor(json.loads(run_path.read_text()), window=window, template=template)
+    except ValueError as exc:
+        raise SystemExit(f"{exc} (in {run_path})") from exc
 
 
 def _render_review(review: RiskOfficerReview, *, name: str, n_trials: int) -> str:
@@ -288,8 +289,10 @@ def _surface_survivor(
     capital: str | None,
     pod: str,
 ) -> int:
-    """Create the ``strategies`` / ``deployments`` / ``paper_runs`` rows + the approval request
-    (origin=discovery). Reached ONLY when both gates passed."""
+    """Create the ``strategies`` / ``deployments`` / ``paper_runs`` rows + the approval request.
+    Reached ONLY when both gates passed. NB the two ``origin`` columns differ: ``strategies.origin``
+    is ``constrained|freeform|manual`` (the strategist is the constrained one), while
+    ``approval_requests.origin`` is ``discovery|demo`` (set on the RiskOfficerReview)."""
     strategy_id = _lemma_create(
         "strategies",
         {
@@ -297,7 +300,7 @@ def _surface_survivor(
             "family": template,
             "market": cell.market.value.lower(),
             "status": "paper",
-            "origin": "discovery",
+            "origin": "constrained",  # strategies.origin ENUM: constrained|freeform|manual
             "config": {k: str(v) for k, v in params.items()},
             "rationale": (
                 f"Discovered survivor {template} {dict(params)} on "
@@ -350,7 +353,9 @@ def run_survivor(args: argparse.Namespace) -> int:
     passes. ``write_approval_request`` refuses a non-passing review, so a holdout-rejected survivor
     (band_bps=55) is correctly never surfaced — the gate working."""
     if args.from_run:
-        template, raw_params = load_survivor_from_run(Path(args.from_run), args.window)
+        template, raw_params = load_survivor_from_run(
+            Path(args.from_run), args.window, args.template
+        )
     else:
         template = args.template
         raw_params = dict(p.split("=", 1) for p in (args.params or []))
@@ -381,11 +386,21 @@ def run_survivor(args: argparse.Namespace) -> int:
         cost_config=cost_config,
     )
     paper_returns = json.loads(Path(args.paper_returns_file).read_text())
+    if (
+        not isinstance(paper_returns, list)
+        or not paper_returns
+        or not all(isinstance(x, (int, float)) and math.isfinite(x) for x in paper_returns)
+    ):
+        raise SystemExit("--paper-returns-file must be a non-empty JSON list of finite numbers")
 
-    venue = args.venue or cell.venue.value
-    name = args.strategy_name or (
-        f"{template}-{cell.window}-" + "-".join(f"{k}{v}" for k, v in sorted(params.items()))
-    )
+    # default to the EXECUTION venue (Binance is data-only; crypto paper-trades on Delta testnet)
+    venue = args.venue or (VENUE if cell.market is AssetClass.CRYPTO else "")
+    if not venue:
+        raise SystemExit(f"--venue is required for a {cell.market.value} survivor (no default)")
+    name = (
+        args.strategy_name
+        or f"{template}-{cell.window}-" + "-".join(f"{k}{v}" for k, v in sorted(params.items()))
+    )[:120]  # strategies.name / approval_requests.strategy_name are max_length 120
     review = review_survivor(
         proposal=make_proposal(template, params, cell, trial_index=n_trials),
         in_sample_backtester=in_bt,
