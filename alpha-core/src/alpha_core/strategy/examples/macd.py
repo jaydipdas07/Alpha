@@ -52,7 +52,7 @@ class Macd(Strategy):
         if not 0 < self._cfg.fast_period < self._cfg.slow_period or self._cfg.signal_period <= 0:
             raise ValueError("require 0 < fast_period < slow_period and signal_period > 0")
         # the recursive EMA is recomputed over a sliding window each bar, so the burn-in scales with
-        # slow_period (~5 time-constants) for the SMA-seeded EMAs to converge before the cross is read
+        # slow_period (~5 time-constants) for the SMA-seeded EMAs to converge before the cross
         self._window = self._cfg.slow_period * 5 + self._cfg.signal_period
         self._state: dict[str, _State] = {}
 
