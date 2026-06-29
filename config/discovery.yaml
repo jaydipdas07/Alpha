@@ -167,7 +167,7 @@ cells:
     venue: BINANCE
     interval_seconds: 86400
     starting_cash: "1000000"   # USDT
-  # --- NIFTY constituents (daily) ---
+  # --- NIFTY constituents (daily, Yahoo) ---
   - market: EQUITY
     window: "reliance-1d"
     symbol: "NSE:RELIANCE"
@@ -191,4 +191,33 @@ cells:
     symbol: "NSE:HDFCBANK"
     venue: NSE
     interval_seconds: 86400
+    starting_cash: "1000000"   # INR
+  # --- NIFTY constituents (1-minute, Kite — M3.0 Indian leg) ---
+  # Ingested by scripts/ingest_kite.py (kiteconnect historical_data, "minute"). Until that ingest
+  # has run on the cold store (it needs a fresh daily Kite token + the operator's 2FA — an
+  # operational step), these cells have no bars and the nightly's cell_ready guard skips them
+  # (recorded, trial count preserved); they activate automatically once the 1-minute data lands.
+  - market: EQUITY
+    window: "reliance-1m"
+    symbol: "NSE:RELIANCE"
+    venue: NSE
+    interval_seconds: 60
+    starting_cash: "1000000"   # INR
+  - market: EQUITY
+    window: "tcs-1m"
+    symbol: "NSE:TCS"
+    venue: NSE
+    interval_seconds: 60
+    starting_cash: "1000000"   # INR
+  - market: EQUITY
+    window: "infy-1m"
+    symbol: "NSE:INFY"
+    venue: NSE
+    interval_seconds: 60
+    starting_cash: "1000000"   # INR
+  - market: EQUITY
+    window: "hdfcbank-1m"
+    symbol: "NSE:HDFCBANK"
+    venue: NSE
+    interval_seconds: 60
     starting_cash: "1000000"   # INR

@@ -1,17 +1,21 @@
-"""Kite Connect historical candles -> core Bars (M3.0, Indian equities, 1-minute+).
+"""Kite Connect data-plane transforms -> core Bars + the daily-token staleness check (M3.0).
 
-Pure transform of the ``KiteConnect.historical_data()`` output (a list of OHLCV rows); the network
-fetch + the daily-token auth (the ``KITE_ACCESS_TOKEN_AT``-staleness → 2FA reauth flow) live in the
-ingest script, never here — same split as ``binance.py`` / ``yahoo.py`` (no broker SDK in the
-kernel). Kite timestamps are **IST** (``Asia/Kolkata``); they are converted to tz-aware **UTC** so
-the cold store is uniform (the engine never reads a non-UTC time). The caller passes the internal
-store symbol (e.g. ``NSE:RELIANCE``) and the bar interval in seconds (60 for ``minute``).
+Pure, SDK-free helpers for the Indian-equities (1-minute+) leg: ``candles_to_bars`` (the
+``KiteConnect.historical_data()`` OHLCV rows) and ``access_token_is_stale`` (the daily-token
+rollover predicate). The **SDK-using** parts — the 2FA reauth flow (``login_url`` +
+``generate_session``), the ``.env`` token persistence, and the network ``historical_data`` fetch —
+live in ``scripts/ingest_kite.py``, never here (same split as ``binance.py`` / ``yahoo.py``: no
+broker SDK in the kernel). The staleness math is pure (a fixed +05:30 IST offset + an injected
+``now``), so it is unit-tested in CI beside the candle transform. Kite timestamps are **IST**
+(``Asia/Kolkata``); they are converted to tz-aware **UTC** so the cold store is uniform (the engine
+never reads a non-UTC time). The caller passes the internal store symbol (e.g. ``NSE:RELIANCE``) and
+the bar interval in seconds (60 for ``minute``).
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -60,3 +64,29 @@ def candles_to_bars(
             )
         )
     return bars
+
+
+# Kite Connect access tokens are issued per login and expire at ~06:00 IST the next morning
+# (Zerodha's documented daily invalidation); a fresh one needs an interactive 2FA login. IST has no
+# DST, so a fixed +05:30 offset is exact (no tzdata dependency in the kernel).
+_IST = timezone(timedelta(hours=5, minutes=30))
+KITE_TOKEN_EXPIRY_HOUR_IST = 6  # the daily ~06:00 IST rollover after which a token is dead
+
+
+def access_token_is_stale(token_at: datetime, *, now: datetime) -> bool:
+    """Has the daily Kite token rolled over since it was minted? (pure, SDK-free, no I/O).
+
+    A token minted at ``token_at`` is valid until the first 06:00 IST that falls after it; once an
+    06:00-IST boundary lies in ``(token_at, now]`` the token is stale and the ingest script must
+    re-run the 2FA login (the human) + ``generate_session`` exchange (the script). Both datetimes
+    must be tz-aware — ``now`` is *injected*, never read from the wall clock here (the engine
+    invariant). Erring toward *stale* is the safe direction: a spurious re-auth costs one login,
+    while a stale token used against the API just errors.
+    """
+    if token_at.tzinfo is None or now.tzinfo is None:
+        raise ValueError("access_token_is_stale needs tz-aware datetimes (token_at, now)")
+    now_ist = now.astimezone(_IST)
+    boundary = now_ist.replace(hour=KITE_TOKEN_EXPIRY_HOUR_IST, minute=0, second=0, microsecond=0)
+    if now_ist < boundary:  # before today's 06:00 IST -> the live expiry boundary is yesterday's
+        boundary -= timedelta(days=1)
+    return token_at < boundary

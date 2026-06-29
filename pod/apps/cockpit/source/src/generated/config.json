@@ -636,6 +636,38 @@
           "venue": "NSE",
           "interval_seconds": 86400,
           "starting_cash": "1000000"
+        },
+        {
+          "market": "EQUITY",
+          "window": "reliance-1m",
+          "symbol": "NSE:RELIANCE",
+          "venue": "NSE",
+          "interval_seconds": 60,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "EQUITY",
+          "window": "tcs-1m",
+          "symbol": "NSE:TCS",
+          "venue": "NSE",
+          "interval_seconds": 60,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "EQUITY",
+          "window": "infy-1m",
+          "symbol": "NSE:INFY",
+          "venue": "NSE",
+          "interval_seconds": 60,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "EQUITY",
+          "window": "hdfcbank-1m",
+          "symbol": "NSE:HDFCBANK",
+          "venue": "NSE",
+          "interval_seconds": 60,
+          "starting_cash": "1000000"
         }
       ]
     },

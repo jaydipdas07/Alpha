@@ -9,7 +9,7 @@ import pytest
 
 from alpha_core.core.enums import AssetClass, Venue
 from alpha_core.data.ingest.binance import aggtrades_to_bars, kline_to_bar, klines_to_bars
-from alpha_core.data.ingest.kite import candles_to_bars
+from alpha_core.data.ingest.kite import access_token_is_stale, candles_to_bars
 from alpha_core.data.ingest.yahoo import chart_to_bars
 
 _IST = timezone(timedelta(hours=5, minutes=30))  # Kite returns IST timestamps
@@ -214,3 +214,52 @@ def test_kite_candles_rejects_naive_date() -> None:
 
 def test_kite_candles_empty_is_empty() -> None:
     assert candles_to_bars([], symbol="NSE:RELIANCE", interval_seconds=60) == []
+
+
+# --- Kite daily-token staleness (the 06:00-IST rollover predicate) ---------------------------
+
+
+def test_kite_token_fresh_same_day_after_expiry() -> None:
+    # Minted at 09:00 IST; checked the same afternoon -> no 06:00 boundary crossed -> fresh.
+    token_at = datetime(2026, 6, 29, 9, 0, tzinfo=_IST)
+    now = datetime(2026, 6, 29, 14, 0, tzinfo=_IST)
+    assert access_token_is_stale(token_at, now=now) is False
+
+
+def test_kite_token_stale_after_6am_rollover() -> None:
+    # Minted yesterday morning; checked past today's 06:00 IST -> the boundary was crossed -> stale.
+    token_at = datetime(2026, 6, 28, 9, 0, tzinfo=_IST)
+    now = datetime(2026, 6, 29, 7, 0, tzinfo=_IST)
+    assert access_token_is_stale(token_at, now=now) is True
+
+
+def test_kite_token_fresh_before_todays_expiry() -> None:
+    # Minted yesterday morning, checked at 05:00 IST today (before 06:00) -> the live boundary is
+    # *yesterday's* 06:00, which the token post-dates -> still fresh.
+    token_at = datetime(2026, 6, 28, 9, 0, tzinfo=_IST)
+    now = datetime(2026, 6, 29, 5, 0, tzinfo=_IST)
+    assert access_token_is_stale(token_at, now=now) is False
+
+
+def test_kite_token_minted_at_boundary_is_fresh() -> None:
+    # A token minted exactly at the 06:00 IST boundary is valid for that day (strict <, not <=).
+    token_at = datetime(2026, 6, 29, 6, 0, tzinfo=_IST)
+    now = datetime(2026, 6, 29, 10, 0, tzinfo=_IST)
+    assert access_token_is_stale(token_at, now=now) is False
+
+
+def test_kite_token_staleness_handles_utc_inputs() -> None:
+    # The .env stores UTC; the predicate converts to IST. 2026-06-28 04:00Z = 09:30 IST (28th),
+    # 2026-06-29 02:00Z = 07:30 IST (29th) -> a 06:00-IST rollover (the 29th) sits between -> stale.
+    token_at = datetime(2026, 6, 28, 4, 0, tzinfo=UTC)
+    now = datetime(2026, 6, 29, 2, 0, tzinfo=UTC)
+    assert access_token_is_stale(token_at, now=now) is True
+
+
+def test_kite_token_staleness_rejects_naive() -> None:
+    aware = datetime(2026, 6, 29, 10, 0, tzinfo=UTC)
+    naive = datetime(2026, 6, 29, 10, 0)  # intentionally naive, to assert the tz-aware guard
+    with pytest.raises(ValueError, match="tz-aware"):
+        access_token_is_stale(naive, now=aware)
+    with pytest.raises(ValueError, match="tz-aware"):
+        access_token_is_stale(aware, now=naive)
