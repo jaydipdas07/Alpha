@@ -2,9 +2,11 @@
 
 Loads a **richer** research dataset from public endpoints (no keys):
 
-- Binance **BTC-perp 5m** over ~7 weeks (paginated, <=1500 klines/request) + **BTC-perp daily** over
-  ~3 years — the intraday and daily crypto series.
-- Four **NIFTY-constituent daily** series (RELIANCE, TCS, INFY, HDFCBANK) over ~3 years via Yahoo.
+- A **wider Binance USDT-perp universe** (M3.0): 8 top symbols, each at {5m, 1h, 1d}, paginated from
+  public futures API (no keys). 1-second bars come from the data.binance.vision archive
+  (``scripts/ingest_binance_archive.py``) — a heavier batch, kept separate from this loader.
+- Four **NIFTY-constituent daily** series (RELIANCE, TCS, INFY, HDFCBANK) over ~3 years via Yahoo
+  (the Kite 1-minute Indian leg expands this at M3.0).
 
 Fixed past windows + the store's idempotent, deterministic writes mean re-running never duplicates
 and is byte-stable (reproducibility, B1a.7). The store root defaults to the repo's gitignored
@@ -45,9 +47,33 @@ _HEADERS = {"User-Agent": "Mozilla/5.0 (alpha-research cold-store ingest)"}
 # Fixed past windows (reproducible — a fixed end, never "now").
 _END = datetime(2026, 6, 21, tzinfo=UTC)  # recent boundary (covers the B1a.1b seed -> contiguous)
 _3Y = datetime(2023, 6, 1, tzinfo=UTC)  # ~3 years of daily history
+_1Y = datetime(2025, 6, 21, tzinfo=UTC)  # ~1 year of hourly history
 _INTRADAY_START = datetime(2026, 5, 1, tzinfo=UTC)  # ~7 weeks of 5-minute intraday
 
+# M3.0 crypto leg — a WIDER free-Binance universe (operator-directed 2026-06-28). Top liquid USDT
+# perps, multi-timeframe, from Binance's public futures API (no keys). 1-second bars come from the
+# data.binance.vision archive (aggTrades; Binance has no 1s futures klines) via
+# scripts/ingest_binance_archive.py — a heavier batch, kept separate from this REST loader.
+_CRYPTO_SYMBOLS = [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "XRPUSDT",
+    "ADAUSDT",
+    "DOGEUSDT",
+    "AVAXUSDT",
+]
+# (binance_interval, interval_seconds, window_start, label) — the REST-ingestable timeframes.
+_CRYPTO_TFS = [
+    ("5m", 300, _INTRADAY_START, "5m ~7wk"),
+    ("1h", 3600, _1Y, "1h ~1y"),
+    ("1d", 86400, _3Y, "1d ~3y"),
+]
+
 # (yahoo_symbol, store_symbol) NIFTY constituents — store symbols match instruments.yaml.
+# (The Kite 1-minute Indian leg — kiteconnect + the KITE_ACCESS_TOKEN_AT-staleness reauth — expands
+# this universe at M3.0; this free-Yahoo daily set carries equities until then.)
 _EQUITIES = [
     ("RELIANCE.NS", "NSE:RELIANCE"),
     ("TCS.NS", "NSE:TCS"),
@@ -100,18 +126,18 @@ def _binance_klines(
 
 
 def ingest_binance(store: BarStore) -> int:
-    """BTC-perp 5m (~7 weeks, paginated) + BTC-perp daily (~3y) from Binance's public API."""
+    """The wider crypto universe: each ``_CRYPTO_SYMBOLS`` perp at each ``_CRYPTO_TFS`` timeframe,
+    paginated from Binance's public futures API (no keys); idempotent (store dedups by start)."""
     total = 0
-    for interval, seconds, start, label in (
-        ("5m", 300, _INTRADAY_START, "5m ~7wk"),
-        ("1d", 86400, _3Y, "1d ~3y"),
-    ):
-        bars = _binance_klines(
-            "BTCUSDT", interval=interval, interval_seconds=seconds, start=start, end=_END
-        )
-        on_disk = store.write_bars(bars)
-        print(f"[binance] BTCUSDT {label}: fetched {len(bars)} bars -> {on_disk} on disk")
-        total += len(bars)
+    for symbol in _CRYPTO_SYMBOLS:
+        for interval, seconds, start, label in _CRYPTO_TFS:
+            bars = _binance_klines(
+                symbol, interval=interval, interval_seconds=seconds, start=start, end=_END
+            )
+            on_disk = store.write_bars(bars)
+            print(f"[binance] {symbol} {label}: fetched {len(bars)} bars -> {on_disk} on disk")
+            total += len(bars)
+            time.sleep(0.2)  # polite to the public endpoint
     return total
 
 
