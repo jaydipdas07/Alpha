@@ -423,8 +423,184 @@
         },
         {
           "market": "CRYPTO",
+          "window": "btcusdt-1h",
+          "symbol": "BTCUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 3600,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
           "window": "btcusdt-1d",
           "symbol": "BTCUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 86400,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "ethusdt-5m",
+          "symbol": "ETHUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 300,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "ethusdt-1h",
+          "symbol": "ETHUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 3600,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "ethusdt-1d",
+          "symbol": "ETHUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 86400,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "solusdt-5m",
+          "symbol": "SOLUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 300,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "solusdt-1h",
+          "symbol": "SOLUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 3600,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "solusdt-1d",
+          "symbol": "SOLUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 86400,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "bnbusdt-5m",
+          "symbol": "BNBUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 300,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "bnbusdt-1h",
+          "symbol": "BNBUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 3600,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "bnbusdt-1d",
+          "symbol": "BNBUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 86400,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "xrpusdt-5m",
+          "symbol": "XRPUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 300,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "xrpusdt-1h",
+          "symbol": "XRPUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 3600,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "xrpusdt-1d",
+          "symbol": "XRPUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 86400,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "adausdt-5m",
+          "symbol": "ADAUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 300,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "adausdt-1h",
+          "symbol": "ADAUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 3600,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "adausdt-1d",
+          "symbol": "ADAUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 86400,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "dogeusdt-5m",
+          "symbol": "DOGEUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 300,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "dogeusdt-1h",
+          "symbol": "DOGEUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 3600,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "dogeusdt-1d",
+          "symbol": "DOGEUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 86400,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "avaxusdt-5m",
+          "symbol": "AVAXUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 300,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "avaxusdt-1h",
+          "symbol": "AVAXUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 3600,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "avaxusdt-1d",
+          "symbol": "AVAXUSDT",
           "venue": "BINANCE",
           "interval_seconds": 86400,
           "starting_cash": "1000000"
