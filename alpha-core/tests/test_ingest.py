@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
 
 from alpha_core.core.enums import AssetClass, Venue
 from alpha_core.data.ingest.binance import aggtrades_to_bars, kline_to_bar, klines_to_bars
+from alpha_core.data.ingest.kite import candles_to_bars
 from alpha_core.data.ingest.yahoo import chart_to_bars
+
+_IST = timezone(timedelta(hours=5, minutes=30))  # Kite returns IST timestamps
 
 # A real-shaped Binance fapi 5m kline (openTime ms, then string OHLCV, closeTime, ...).
 _KLINE = [1719360000000, "60000.00", "60100.50", "59900.10", "60050.25", "123.456", 1719360299999]
@@ -152,3 +155,62 @@ def test_yahoo_chart_to_bars_skips_null_days() -> None:
         Decimal("1234567"),
     )
     assert bars[1].close == Decimal("2955.0")
+
+
+def _kite_candle(minute: int, **ov: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "date": datetime(2024, 6, 26, 9, minute, tzinfo=_IST),
+        "open": 2900.0,
+        "high": 2950.0,
+        "low": 2890.0,
+        "close": 2940.0,
+        "volume": 12345,
+    }
+    row.update(ov)
+    return row
+
+
+def test_kite_candles_to_bars_ist_to_utc_and_decimal() -> None:
+    bars = candles_to_bars(
+        [_kite_candle(15), _kite_candle(16, close=2935.5, volume=6789)],
+        symbol="NSE:RELIANCE",
+        interval_seconds=60,
+    )
+    assert len(bars) == 2
+    assert bars[0].venue is Venue.NSE and bars[0].asset_class is AssetClass.EQUITY
+    assert bars[0].start == datetime(2024, 6, 26, 3, 45, tzinfo=UTC)  # 09:15 IST -> 03:45 UTC
+    assert bars[1].start == datetime(2024, 6, 26, 3, 46, tzinfo=UTC)
+    assert bars[0].interval == timedelta(minutes=1)
+    assert (bars[0].open, bars[0].close, bars[0].volume) == (
+        Decimal("2900.0"),
+        Decimal("2940.0"),
+        Decimal("12345"),
+    )
+    assert isinstance(bars[0].close, Decimal)  # money is never a float
+    assert bars[1].close == Decimal("2935.5")
+
+
+def test_kite_candles_skips_incomplete_rows() -> None:
+    bars = candles_to_bars(
+        [_kite_candle(15), _kite_candle(16, open=None)],  # second row missing OHLCV
+        symbol="NSE:RELIANCE",
+        interval_seconds=60,
+    )
+    assert len(bars) == 1
+
+
+def test_kite_candles_rejects_naive_date() -> None:
+    naive = {
+        "date": datetime(2024, 6, 26, 9, 15),
+        "open": 1.0,
+        "high": 1.0,
+        "low": 1.0,
+        "close": 1.0,
+        "volume": 1,
+    }
+    with pytest.raises(ValueError, match="tz-aware"):
+        candles_to_bars([naive], symbol="NSE:RELIANCE", interval_seconds=60)
+
+
+def test_kite_candles_empty_is_empty() -> None:
+    assert candles_to_bars([], symbol="NSE:RELIANCE", interval_seconds=60) == []
