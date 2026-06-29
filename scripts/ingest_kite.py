@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import stat
 import sys
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -52,9 +53,12 @@ STORE_ROOT = Path(os.environ.get("ALPHA_COLD_ROOT") or (_ROOT / "data_cold"))
 DEFAULT_FROM = "2026-05-01"
 DEFAULT_TO = "2026-06-21"
 
-_INTERVAL_SECONDS = {"minute": 60, "day": 86400}
-# Kite caps one historical_data request's span per interval — paginate wider windows.
-_KITE_MAX_SPAN_DAYS = {"minute": 60, "day": 2000}
+# This script is the NSE *1-minute* leg only. Kite "day" candles use a different start-of-bar
+# convention than the Yahoo daily leg (which already populates NSE dailies), so they would not dedup
+# but accumulate into a double-stamped series — so daily is deliberately not exposed here.
+_KITE_INTERVAL = "minute"
+_INTERVAL_SECONDS = 60
+_KITE_MINUTE_MAX_SPAN_DAYS = 60  # Kite caps one "minute" historical_data request at 60 days
 
 
 def _new_kite(api_key: str) -> KiteConnect:
@@ -81,20 +85,28 @@ def _read_env(path: Path) -> dict[str, str]:
 def _persist_env(path: Path, updates: dict[str, str]) -> None:
     """Replace-or-append each key in ``.env``, preserving every other line/comment/order.
 
-    The ``.env`` is gitignored (B3); the values written here (the access token) are never
-    printed or committed — only persisted to the local file."""
+    The ``.env`` is gitignored (B3) and holds the operator's reused secrets; the values written here
+    (the access token) are never printed or committed — only persisted to the local file. The write
+    is **atomic** (temp file + ``os.replace``, mode preserved) so a crash mid-write can never
+    truncate the secrets file, and *every* occurrence of an updated key is rewritten so a last-wins
+    read after the write always sees the fresh value."""
     lines = path.read_text().splitlines() if path.is_file() else []
-    remaining = dict(updates)
+    seen: set[str] = set()
     out: list[str] = []
     for line in lines:
         stripped = line.strip()
         key = stripped.partition("=")[0].strip() if "=" in stripped and stripped[0] != "#" else None
-        if key is not None and key in remaining:
-            out.append(f"{key}={remaining.pop(key)}")
+        if key is not None and key in updates:
+            out.append(f"{key}={updates[key]}")  # rewrite every occurrence, not just the first
+            seen.add(key)
         else:
             out.append(line)
-    out.extend(f"{key}={value}" for key, value in remaining.items())
-    path.write_text("\n".join(out) + "\n")
+    out.extend(f"{key}={value}" for key, value in updates.items() if key not in seen)
+    tmp = path.with_name(f"{path.name}.tmp")
+    tmp.write_text("\n".join(out) + "\n")
+    if path.exists():
+        os.chmod(tmp, stat.S_IMODE(path.stat().st_mode))  # don't loosen a 600 secrets file
+    os.replace(tmp, path)
 
 
 def _token_is_stale(env: dict[str, str], *, now: datetime) -> bool:
@@ -201,17 +213,16 @@ def _date_chunks(start: date, end: date, max_days: int) -> list[tuple[date, date
 
 
 def _fetch_bars(
-    kc: KiteConnect, *, token: int, store_symbol: str, interval: str, start: date, end: date
+    kc: KiteConnect, *, token: int, store_symbol: str, start: date, end: date
 ) -> list:  # list[Bar] — Bar is alpha_core's; kept unannotated to avoid an import here
-    """Paginate ``historical_data`` over ``[start, end]`` and fold the IST rows to tz-UTC Bars."""
-    interval_seconds = _INTERVAL_SECONDS[interval]
+    """Paginate 1-minute ``historical_data`` over ``[start, end]`` (IST rows -> UTC Bars)."""
     bars = []
-    for chunk_start, chunk_end in _date_chunks(start, end, _KITE_MAX_SPAN_DAYS[interval]):
+    for chunk_start, chunk_end in _date_chunks(start, end, _KITE_MINUTE_MAX_SPAN_DAYS):
         candles = kc.historical_data(
-            token, chunk_start.isoformat(), chunk_end.isoformat(), interval
+            token, chunk_start.isoformat(), chunk_end.isoformat(), _KITE_INTERVAL
         )
         bars.extend(
-            candles_to_bars(candles, symbol=store_symbol, interval_seconds=interval_seconds)
+            candles_to_bars(candles, symbol=store_symbol, interval_seconds=_INTERVAL_SECONDS)
         )
     return bars
 
@@ -223,7 +234,6 @@ def main() -> int:
     ap.add_argument(
         "--symbols", nargs="*", help="store symbols (default: NSE equities in instruments.yaml)"
     )
-    ap.add_argument("--interval", choices=sorted(_INTERVAL_SECONDS), default="minute")
     ap.add_argument("--from", dest="start", default=DEFAULT_FROM, help="YYYY-MM-DD (inclusive)")
     ap.add_argument("--to", dest="end", default=DEFAULT_TO, help="YYYY-MM-DD (inclusive)")
     ap.add_argument(
@@ -253,6 +263,11 @@ def main() -> int:
         print(f"Kite token: {state} (KITE_ACCESS_TOKEN_AT={at})")
         return 2 if stale else 0
 
+    start, end = date.fromisoformat(args.start), date.fromisoformat(args.end)
+    if start > end:  # fail fast on a reversed range, before any auth/network
+        print(f"[error] --from {start} is after --to {end}", file=sys.stderr)
+        return 1
+
     # phase 2: a human-provided request_token takes precedence over staleness
     if args.request_token:
         access_token = _exchange_request_token(
@@ -274,26 +289,23 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    start, end = date.fromisoformat(args.start), date.fromisoformat(args.end)
-
     kc = _new_kite(api_key)
     kc.set_access_token(access_token)
     tokens = _resolve_tokens(kc, store_symbols)
 
     store = BarStore(STORE_ROOT)
-    print(f"=== Kite {args.interval} ingest {start}..{end} -> {STORE_ROOT} ===")
+    print(f"=== Kite 1-minute ingest {start}..{end} -> {STORE_ROOT} ===")
     total = 0
     for store_symbol in store_symbols:
         bars = _fetch_bars(
             kc,
             token=tokens[store_symbol],
             store_symbol=store_symbol,
-            interval=args.interval,
             start=start,
             end=end,
         )
         on_disk = store.write_bars(bars)
-        print(f"[kite] {store_symbol} {args.interval}: {len(bars)} bars -> {on_disk} on disk")
+        print(f"[kite] {store_symbol} 1m: {len(bars)} bars -> {on_disk} on disk")
         total += len(bars)
 
     if total == 0:
