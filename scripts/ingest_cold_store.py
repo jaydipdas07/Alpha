@@ -49,6 +49,7 @@ _END = datetime(2026, 6, 21, tzinfo=UTC)  # recent boundary (covers the B1a.1b s
 _3Y = datetime(2023, 6, 1, tzinfo=UTC)  # ~3 years of daily history
 _1Y = datetime(2025, 6, 21, tzinfo=UTC)  # ~1 year of hourly history
 _INTRADAY_START = datetime(2026, 5, 1, tzinfo=UTC)  # ~7 weeks of 5-minute intraday
+_1MIN_START = datetime(2026, 5, 31, tzinfo=UTC)  # ~3 weeks of 1-minute (box-safe ~30k bars/cell)
 
 # M3.0 crypto leg — a WIDER free-Binance universe (operator-directed 2026-06-28). Top liquid USDT
 # perps, multi-timeframe, from Binance's public futures API (no keys). 1-second bars come from the
@@ -66,6 +67,7 @@ _CRYPTO_SYMBOLS = [
 ]
 # (binance_interval, interval_seconds, window_start, label) — the REST-ingestable timeframes.
 _CRYPTO_TFS = [
+    ("1m", 60, _1MIN_START, "1m ~3wk"),
     ("5m", 300, _INTRADAY_START, "5m ~7wk"),
     ("1h", 3600, _1Y, "1h ~1y"),
     ("1d", 86400, _3Y, "1d ~3y"),
