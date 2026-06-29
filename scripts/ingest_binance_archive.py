@@ -77,6 +77,45 @@ def _aggtrades_url(market: str, symbol: str, day: date) -> str:
     return f"{_BASE}/{mp}/daily/aggTrades/{symbol}/{symbol}-aggTrades-{day.isoformat()}.zip"
 
 
+def store_symbol_for(symbol: str, market: str) -> str:
+    """The cold-store identity for a Binance symbol. Spot and futures are economically distinct
+    instruments (different price/funding) sharing ``Venue.BINANCE``, so a bare symbol would collide
+    in the cold store (one Parquet per (venue, symbol, interval)). Futures keeps the bare symbol
+    (the existing perp convention); spot gets a ``.SPOT`` suffix."""
+    return symbol if market == "futures" else f"{symbol}.SPOT"
+
+
+def ingest_symbol(
+    store: BarStore, *, symbol: str, kind: str, interval: str, market: str, start: date, end: date
+) -> int:
+    """Download the daily archive ZIPs for one symbol over ``[start, end]``, write ``Bar``s, and
+    return the bar count. Per-day writes are idempotent (``write_bars`` overwrites the same window),
+    so a transient error on a later day never discards earlier days and memory stays bounded over a
+    long range. The caller validates the kind/market/interval combo (e.g. no 1s futures klines)."""
+    interval_seconds = _INTERVAL_SECONDS[interval]
+    store_symbol = store_symbol_for(symbol, market)
+    total = 0
+    for day in _daily_dates(start, end):
+        url = (
+            _klines_url(market, symbol, interval, day)
+            if kind == "klines"
+            else _aggtrades_url(market, symbol, day)
+        )
+        rows = _download_csv_rows(url)
+        if rows is None:
+            print(f"[skip] {symbol} {day} not published")
+            continue
+        bars = (
+            klines_to_bars(rows, symbol=store_symbol, interval_seconds=interval_seconds)
+            if kind == "klines"
+            else aggtrades_to_bars(rows, symbol=store_symbol, interval_seconds=interval_seconds)
+        )
+        on_disk = store.write_bars(bars)
+        total += len(bars)
+        print(f"[{symbol} {day}] {kind}: {len(bars)} bars -> {on_disk} on disk")
+    return total
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Ingest the Binance free archive into the cold store.")
     ap.add_argument("--symbol", required=True, help="e.g. BTCUSDT")
@@ -91,42 +130,23 @@ def main() -> int:
         ap.error(f"unknown interval {args.interval!r}; known: {sorted(_INTERVAL_SECONDS)}")
     if args.market == "futures" and args.kind == "klines" and args.interval == "1s":
         ap.error("Binance has no 1s futures klines; use --kind aggTrades for 1s perp bars")
-    interval_seconds = _INTERVAL_SECONDS[args.interval]
     start = datetime.strptime(args.start, "%Y-%m-%d").replace(tzinfo=UTC).date()
     end = datetime.strptime(args.end, "%Y-%m-%d").replace(tzinfo=UTC).date()
 
-    # Disambiguate the stored identity: spot and futures are economically distinct
-    # instruments (different price/funding) but share Venue.BINANCE, so a bare symbol
-    # would collide in the cold store (one Parquet per (venue, symbol, interval)).
-    # Futures keeps the bare symbol (the existing perp convention); spot gets a suffix.
-    store_symbol = args.symbol if args.market == "futures" else f"{args.symbol}.SPOT"
-
     store = BarStore(os.environ.get("ALPHA_COLD_ROOT", "data_cold"))
-    total = 0
-    for day in _daily_dates(start, end):
-        url = (
-            _klines_url(args.market, args.symbol, args.interval, day)
-            if args.kind == "klines"
-            else _aggtrades_url(args.market, args.symbol, day)
-        )
-        rows = _download_csv_rows(url)
-        if rows is None:
-            print(f"[skip] {day} not published")
-            continue
-        bars = (
-            klines_to_bars(rows, symbol=store_symbol, interval_seconds=interval_seconds)
-            if args.kind == "klines"
-            else aggtrades_to_bars(rows, symbol=store_symbol, interval_seconds=interval_seconds)
-        )
-        # Write per day: write_bars is idempotent, so a transient error on a later day
-        # never discards earlier days, and memory stays bounded over a long range.
-        on_disk = store.write_bars(bars)
-        total += len(bars)
-        print(f"[{day}] {args.kind}: {len(bars)} bars -> {on_disk} on disk")
-
+    total = ingest_symbol(
+        store,
+        symbol=args.symbol,
+        kind=args.kind,
+        interval=args.interval,
+        market=args.market,
+        start=start,
+        end=end,
+    )
     if total == 0:
         print("no bars ingested (no published days in range)")
         return 1
+    store_symbol = store_symbol_for(args.symbol, args.market)
     print(f"=== {store_symbol} {args.kind} {args.interval}: {total} bars -> {store.root} ===")
     return 0
 

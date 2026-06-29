@@ -167,6 +167,59 @@ cells:
     venue: BINANCE
     interval_seconds: 86400
     starting_cash: "1000000"   # USDT
+  # --- 1-second perps (Binance aggTrades archive — M3.0 1-second leg) ---
+  # Ingested by scripts/ingest_binance_1s_universe.py (data.binance.vision aggTrades -> 1s bars).
+  # 1s tick data is large, so the heavy archive run is the research box's job over a focused window;
+  # until that data lands the nightly's cell_ready guard skips these cells (trial count preserved),
+  # and they activate automatically once the 1-second data is ingested into the cold store.
+  - market: CRYPTO
+    window: "btcusdt-1s"
+    symbol: "BTCUSDT"
+    venue: BINANCE
+    interval_seconds: 1
+    starting_cash: "1000000"   # USDT
+  - market: CRYPTO
+    window: "ethusdt-1s"
+    symbol: "ETHUSDT"
+    venue: BINANCE
+    interval_seconds: 1
+    starting_cash: "1000000"   # USDT
+  - market: CRYPTO
+    window: "solusdt-1s"
+    symbol: "SOLUSDT"
+    venue: BINANCE
+    interval_seconds: 1
+    starting_cash: "1000000"   # USDT
+  - market: CRYPTO
+    window: "bnbusdt-1s"
+    symbol: "BNBUSDT"
+    venue: BINANCE
+    interval_seconds: 1
+    starting_cash: "1000000"   # USDT
+  - market: CRYPTO
+    window: "xrpusdt-1s"
+    symbol: "XRPUSDT"
+    venue: BINANCE
+    interval_seconds: 1
+    starting_cash: "1000000"   # USDT
+  - market: CRYPTO
+    window: "adausdt-1s"
+    symbol: "ADAUSDT"
+    venue: BINANCE
+    interval_seconds: 1
+    starting_cash: "1000000"   # USDT
+  - market: CRYPTO
+    window: "dogeusdt-1s"
+    symbol: "DOGEUSDT"
+    venue: BINANCE
+    interval_seconds: 1
+    starting_cash: "1000000"   # USDT
+  - market: CRYPTO
+    window: "avaxusdt-1s"
+    symbol: "AVAXUSDT"
+    venue: BINANCE
+    interval_seconds: 1
+    starting_cash: "1000000"   # USDT
   # --- NIFTY constituents (daily, Yahoo) ---
   - market: EQUITY
     window: "reliance-1d"
