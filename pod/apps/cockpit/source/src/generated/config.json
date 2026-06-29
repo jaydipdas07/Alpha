@@ -670,6 +670,70 @@
           "starting_cash": "1000000"
         },
         {
+          "market": "CRYPTO",
+          "window": "btcusdt-1m",
+          "symbol": "BTCUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 60,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "ethusdt-1m",
+          "symbol": "ETHUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 60,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "solusdt-1m",
+          "symbol": "SOLUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 60,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "bnbusdt-1m",
+          "symbol": "BNBUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 60,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "xrpusdt-1m",
+          "symbol": "XRPUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 60,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "adausdt-1m",
+          "symbol": "ADAUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 60,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "dogeusdt-1m",
+          "symbol": "DOGEUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 60,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "CRYPTO",
+          "window": "avaxusdt-1m",
+          "symbol": "AVAXUSDT",
+          "venue": "BINANCE",
+          "interval_seconds": 60,
+          "starting_cash": "1000000"
+        },
+        {
           "market": "EQUITY",
           "window": "reliance-1d",
           "symbol": "NSE:RELIANCE",
