@@ -43,6 +43,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import secrets
+import shlex
 import stat
 import subprocess
 import sys
@@ -196,23 +198,23 @@ for line in lines:
 out += [f"{k}={v}" for k, v in updates.items() if k not in seen]
 tmp = p.with_name(p.name + ".kite.tmp")
 tmp.write_text("\\n".join(out) + "\\n")
-if p.exists():
-    os.chmod(tmp, stat.S_IMODE(p.stat().st_mode))
+os.chmod(tmp, stat.S_IMODE(p.stat().st_mode) if p.exists() else 0o600)
 os.replace(tmp, p)
 print(f"merged {len(updates)} KITE_ keys -> {p} ({len(out)} lines)")
 """
 
 
-def _box_target(env: dict[str, str]) -> tuple[str, str, str] | None:
-    """The ``(ssh_target, ssh_key, box_env_path)`` for box-staging, or ``None`` if not configured.
+def _box_target(env: dict[str, str]) -> tuple[str, str | None, str] | None:
+    """The ``(ssh_target, ssh_key_or_None, box_env_path)`` for box-staging, or ``None`` if unset.
 
     From the ``.env``: ``KITE_BOX_SSH_TARGET`` (``user@host`` — set this to enable box staging),
-    ``KITE_BOX_SSH_KEY`` (identity file, default ``~/.ssh/id_rsa``), ``KITE_BOX_ENV_PATH`` (the box
-    ``.env`` path, default ``alpha/.env`` relative to the ssh login home)."""
+    ``KITE_BOX_SSH_KEY`` (identity file; unset -> ssh config / agent decides), and
+    ``KITE_BOX_ENV_PATH`` (box ``.env`` path, default ``alpha/.env`` relative to the ssh home)."""
     target = env.get("KITE_BOX_SSH_TARGET", "").strip()
     if not target:
         return None
-    key = os.path.expanduser(env.get("KITE_BOX_SSH_KEY", "").strip() or "~/.ssh/id_rsa")
+    key_raw = env.get("KITE_BOX_SSH_KEY", "").strip()
+    key = os.path.expanduser(key_raw) if key_raw else None
     box_env = env.get("KITE_BOX_ENV_PATH", "").strip() or "alpha/.env"
     return target, key, box_env
 
@@ -238,10 +240,8 @@ def _stage_to_box(env: dict[str, str]) -> bool:
     if cfg is None:
         return True  # not configured -> Mac-only; nothing to do
     target, key, box_env = cfg
-    ssh = [
-        "ssh",
-        "-i",
-        key,
+    ssh = ["ssh", *(["-i", key] if key else [])]  # omit -i so ssh config / agent can choose the key
+    ssh += [
         "-o",
         "ConnectTimeout=40",
         "-o",
@@ -250,7 +250,8 @@ def _stage_to_box(env: dict[str, str]) -> bool:
         "StrictHostKeyChecking=accept-new",
         target,
     ]
-    helper = "/tmp/_alpha_kite_merge.py"  # box-side temp on the operator's own VPS
+    helper = f"/tmp/_alpha_kite_merge_{secrets.token_hex(8)}.py"  # unpredictable box-side temp
+    quoted_env = shlex.quote(box_env)  # operator config, but quote so a space can't word-split argv
     try:
         subprocess.run(
             [*ssh, f"cat > {helper}"],
@@ -260,8 +261,10 @@ def _stage_to_box(env: dict[str, str]) -> bool:
             capture_output=True,
             timeout=90,
         )
+        # `rc=$?; rm; exit $rc` keeps python3's exit code — a bare `;` would mask it behind rm's 0,
+        # turning a box-merge failure into a false success (the stage must surface failures).
         done = subprocess.run(
-            [*ssh, f"python3 {helper} {box_env}; rm -f {helper} {box_env}.kite.tmp"],
+            [*ssh, f"python3 {helper} {quoted_env}; rc=$?; rm -f {helper}; exit $rc"],
             input=_box_payload(env),
             text=True,
             check=True,
