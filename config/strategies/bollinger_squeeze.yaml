@@ -1,0 +1,6 @@
+# config/strategies/bollinger_squeeze.yaml — Bollinger squeeze breakout (M3.0).
+strategy_id: bollinger_squeeze
+period: 20
+num_std: "2"
+squeeze_bps: "150"
+quantity: "1"
