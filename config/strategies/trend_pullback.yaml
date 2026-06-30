@@ -1,0 +1,6 @@
+# config/strategies/trend_pullback.yaml — trend + RSI-pullback confluence (M3.0).
+strategy_id: trend_pullback
+trend_period: 50
+rsi_period: 14
+pullback_level: "40"
+quantity: "1"
