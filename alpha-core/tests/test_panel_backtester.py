@@ -6,6 +6,7 @@ earlier returns untouched (look-ahead-clean, TEST-1)."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -20,6 +21,7 @@ from alpha_core.research.panel_backtester import (
     PANEL_TEMPLATES,
     ColdStorePanelBarsFor,
     PanelBacktester,
+    _simulate,
     turnover_cost_fraction,
 )
 from alpha_core.research.proposal_ledger import ProposalLedger
@@ -192,6 +194,53 @@ def test_no_lookahead_a_future_bar_leaves_earlier_returns_unchanged() -> None:
     bumped_closes = {**_DISTINCT, "A": [*_DISTINCT["A"][:-1], "999"]}  # only the last bar
     bumped = list(_bt(_panel(bumped_closes)).run(_proposal("cross_sectional_momentum", params)))
     assert base[:-1] == bumped[:-1]  # only the last return (which uses the last bar) may move
+
+
+class _SpyStrategy:
+    """Records the bar index at each rebalance (the length of a sliced series minus one)."""
+
+    def __init__(self, config: CrossSectionalConfig, calls: list[int]) -> None:
+        self._config = config
+        self._calls = calls
+
+    @property
+    def config(self) -> CrossSectionalConfig:
+        return self._config
+
+    def target_weights(self, closes: Mapping[str, Sequence[Decimal]]) -> dict[str, Decimal]:
+        self._calls.append(len(next(iter(closes.values()))) - 1)
+        return {}
+
+
+def test_holding_period_controls_the_rebalance_cadence() -> None:
+    # _simulate re-ranks only every `holding_period` bars (between, it holds the prior book by
+    # construction — `held` is reassigned only inside the cadence branch).
+    closes = {sym: [Decimal(1)] * 12 for sym in ("A", "B", "C", "D")}
+    calls: list[int] = []
+    cfg = CrossSectionalConfig(lookback=2, top_k=1, holding_period=3)
+    _simulate(_SpyStrategy(cfg, calls), closes, n=12, cost=Decimal(0))
+    assert calls == [2, 5, 8]  # warmup=2, then every 3 bars over range(2, 11)
+
+
+class _FixedBook:
+    """A strategy that always holds the same book — to drive a held symbol onto a gap close."""
+
+    config = CrossSectionalConfig(lookback=1, top_k=1)
+
+    def target_weights(self, closes: Mapping[str, Sequence[Decimal]]) -> dict[str, Decimal]:
+        return {"A": Decimal(1), "B": Decimal(-1)}
+
+
+def test_nonpositive_close_for_a_held_symbol_does_not_crash() -> None:
+    # A's close is 0 at bar index 2 (a data gap); A is held, so without the guard the i=2 forward
+    # return divides by it -> DivisionByZero. The guard skips it (flat), so the run completes.
+    closes = {
+        "A": [Decimal(x) for x in ("1", "2", "0", "4", "5")],
+        "B": [Decimal(1)] * 5,
+    }
+    returns = _simulate(_FixedBook(), closes, n=5, cost=Decimal(0))
+    assert len(returns) == 5 - 1 - 1
+    assert all(isinstance(r, float) for r in returns)
 
 
 def test_too_few_aligned_bars_raises() -> None:

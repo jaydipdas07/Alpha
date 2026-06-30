@@ -117,8 +117,14 @@ def _simulate(
             )
             cost_i = turnover * cost
             held = target
+        # a held symbol whose current close is non-positive (a data gap/artifact, not a real
+        # -100%) contributes a flat 0 — guards the division, mirroring the base<=0 score guard.
         bar_return = sum(
-            (held[s] * (closes[s][i + 1] / closes[s][i] - Decimal(1)) for s in held),
+            (
+                held[s] * (closes[s][i + 1] / closes[s][i] - Decimal(1))
+                for s in held
+                if closes[s][i] > 0
+            ),
             Decimal(0),
         )
         returns.append(float(bar_return - cost_i))
