@@ -18,6 +18,7 @@ funding to the in-sample window (the *structural* funding seal lands with the ho
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from datetime import timedelta
 from decimal import Decimal
 from typing import cast
 
@@ -118,6 +119,14 @@ class FundingPanelBacktester:
         strategy = cast(PanelStrategy, template.build(proposal.params))
         bars = self._panel_bars_for(proposal.market, proposal.window)
         funding = self._panel_funding_for(proposal.market, proposal.window)
+        # daily_funding buckets to UTC days, so the carry backtest assumes a daily panel — fail loud
+        # on an intraday one (funding would land only on each day's 00:00 bar, undercounted).
+        sample = next((bar for series in bars.values() for bar in series), None)
+        if sample is not None and sample.interval != timedelta(days=1):
+            raise NotImplementedError(
+                f"funding carry assumes a daily panel (funding aggregates to UTC days); got "
+                f"interval {sample.interval} for {proposal.market.value}/{proposal.window}"
+            )
         timeline, closes = align_closes(bars)
         # daily-aggregate each member's funding, aligned to the price timeline (0 if a day has
         # none); only members with funding enter the cross-section.

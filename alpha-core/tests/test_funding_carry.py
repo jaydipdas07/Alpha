@@ -32,23 +32,28 @@ def _seq(d: dict[str, list[str]]) -> dict[str, list[Decimal]]:
     return {k: [Decimal(x) for x in v] for k, v in d.items()}
 
 
-def _flat_bars(symbol: str, n: int, price: str = "100") -> list[Bar]:
-    p = Decimal(price)
-    return [
-        Bar(
-            symbol=symbol,
-            venue=Venue.BINANCE,
-            asset_class=_CRYPTO,
-            start=START + i * DAY,
-            interval=DAY,
-            open=p,
-            high=p,
-            low=p,
-            close=p,
-            volume=Decimal(1),
-        )
-        for i in range(n)
-    ]
+def _bar(symbol: str, i: int, price: Decimal, interval: timedelta) -> Bar:
+    return Bar(
+        symbol=symbol,
+        venue=Venue.BINANCE,
+        asset_class=_CRYPTO,
+        start=START + i * interval,
+        interval=interval,
+        open=price,
+        high=price,
+        low=price,
+        close=price,
+        volume=Decimal(1),
+    )
+
+
+def _flat_bars(symbol: str, n: int, price: str = "100", interval: timedelta = DAY) -> list[Bar]:
+    return [_bar(symbol, i, Decimal(price), interval) for i in range(n)]
+
+
+def _price_bars(symbol: str, prices: list[str]) -> list[Bar]:
+    """Daily bars whose close follows ``prices`` (so the book earns a real price return)."""
+    return [_bar(symbol, i, Decimal(px), DAY) for i, px in enumerate(prices)]
 
 
 def _funding(symbol: str, rates: list[str]) -> list[FundingRate]:
@@ -118,6 +123,51 @@ def test_return_is_pure_carry_when_prices_are_flat() -> None:
     returns = list(_bt(prices, funding).run(_proposal(_PARAMS)))
     # flat prices -> 0 price P&L; carry = -w_B*f_B - w_A*f_A = +0.001 (long B) + 0.001 (short A).
     assert returns and all(r == pytest.approx(0.002) for r in returns)
+
+
+def test_carry_uses_next_day_funding_not_the_current_day() -> None:
+    # pins the i+1 carry timing: A's funding rises day by day while it stays the highest (shorted),
+    # so each bar's carry must use the NEXT day's funding (a regression to funding[i] would shift).
+    n = 6
+    prices = {s: _flat_bars(s, n) for s in ("A", "B", "C", "D")}
+    funding = {
+        "A": _funding(
+            "A", ["0.010", "0.011", "0.012", "0.013", "0.014", "0.015"]
+        ),  # highest -> short
+        "B": _funding("B", ["-0.010"] * n),  # lowest -> long
+        "C": _funding("C", ["0.001"] * n),
+        "D": _funding("D", ["0.002"] * n),
+    }
+    # held = {B:+1, A:-1}; carry[i] = -f_B[i+1] + f_A[i+1] = 0.010 + A[i+1]; i in {1,2,3,4}.
+    returns = list(_bt(prices, funding).run(_proposal(_PARAMS)))
+    assert returns == pytest.approx([0.022, 0.023, 0.024, 0.025])
+
+
+def test_return_composes_price_move_and_carry() -> None:
+    # pins price + carry together: long B (price x0.9 -> -0.1), short A (price x1.1 -> +0.1) -> the
+    # price book is -0.2/bar; carry +0.02/bar; return -0.18/bar.
+    prices = {
+        "A": _price_bars("A", ["100", "110", "121", "133.1", "146.41", "161.051"]),  # x1.1, shorted
+        "B": _price_bars("B", ["100", "90", "81", "72.9", "65.61", "59.049"]),  # x0.9, longed
+        "C": _flat_bars("C", 6),
+        "D": _flat_bars("D", 6),
+    }
+    funding = {
+        "A": _funding("A", ["0.01"] * 6),  # highest -> short
+        "B": _funding("B", ["-0.01"] * 6),  # lowest -> long
+        "C": _funding("C", ["0.001"] * 6),
+        "D": _funding("D", ["0.002"] * 6),
+    }
+    returns = list(_bt(prices, funding).run(_proposal(_PARAMS)))
+    assert returns == pytest.approx([-0.18] * 4)  # price (-0.2) + carry (+0.02)
+
+
+def test_carry_requires_a_daily_panel() -> None:
+    # daily_funding buckets to UTC days -> an intraday panel must fail loud, not undercount.
+    hourly = {s: _flat_bars(s, 30, interval=timedelta(hours=1)) for s in ("A", "B", "C", "D")}
+    funding = {s: _funding(s, ["0.0001"] * 30) for s in ("A", "B", "C", "D")}
+    with pytest.raises(NotImplementedError, match="daily panel"):
+        _bt(hourly, funding).run(_proposal(_PARAMS))
 
 
 def test_carry_holding_period_holds_book_between_rebalances() -> None:
