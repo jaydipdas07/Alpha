@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -54,6 +55,17 @@ _SCHEMA = pa.schema(
         ("rate", _RATE),
     ]
 )
+
+
+def daily_funding(rates: Sequence[FundingRate]) -> dict[datetime, Decimal]:
+    """Sum the intraday (8h) funding within each UTC day -> the total charged that day, keyed by the
+    day's UTC-midnight start (so it aligns to the daily bars' ``start``). A position held that day
+    pays/receives this sum (longs pay when it is > 0)."""
+    daily: dict[datetime, Decimal] = {}
+    for rate in rates:
+        day = rate.funding_time.replace(hour=0, minute=0, second=0, microsecond=0)
+        daily[day] = daily.get(day, Decimal(0)) + rate.rate
+    return daily
 
 
 def _safe(symbol: str) -> str:

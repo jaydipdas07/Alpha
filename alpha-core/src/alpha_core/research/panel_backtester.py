@@ -81,7 +81,7 @@ def turnover_cost_fraction(market: AssetClass) -> Decimal:
     return slippage_bps / Decimal(10000) + fee
 
 
-def _align_closes(
+def align_closes(
     panel: Mapping[str, list[Bar]],
 ) -> tuple[list[datetime], dict[str, list[Decimal]]]:
     """Inner-join the panel's member series on bar-start, returning the common timeline and each
@@ -161,7 +161,7 @@ class PanelBacktester:
             )
         strategy = cast(PanelStrategy, template.build(proposal.params))
         panel = self._panel_bars_for(proposal.market, proposal.window)
-        timeline, closes = _align_closes(panel)
+        timeline, closes = align_closes(panel)
         # one return per bar from `lookback` to the second-to-last aligned bar.
         n_returns = max(len(timeline) - 1 - strategy.config.lookback, 0)
         if n_returns < self._min_bars:
