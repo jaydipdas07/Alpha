@@ -60,13 +60,14 @@ def test_funding_rate_rejects_a_float() -> None:
 
 def test_store_write_read_roundtrip_preserves_signed_decimal(tmp_path: Path) -> None:
     store = FundingStore(tmp_path)
-    store.write([_rate("BTCUSDT", T0, "0.0001"), _rate("BTCUSDT", T0 + H8, "-0.0002")])
+    # realistic 8-dp Binance precision, signed — must survive the DECIMAL(38,18) round-trip.
+    store.write([_rate("BTCUSDT", T0, "0.00002096"), _rate("BTCUSDT", T0 + H8, "-0.00010000")])
     got = store.read(symbol="BTCUSDT", venue=Venue.BINANCE)
     assert [r.funding_time for r in got] == [T0, T0 + H8]  # sorted by time
     assert [r.rate for r in got] == [
-        Decimal("0.0001"),
-        Decimal("-0.0002"),
-    ]  # Decimal, signed, exact
+        Decimal("0.00002096"),
+        Decimal("-0.0001"),
+    ]  # value-exact, signed
 
 
 def test_store_dedup_by_time_is_idempotent_newest_wins(tmp_path: Path) -> None:

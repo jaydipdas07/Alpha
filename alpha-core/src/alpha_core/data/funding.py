@@ -43,7 +43,9 @@ class FundingRate(BaseModel):
     rate: Money  # signed: > 0 longs pay shorts, < 0 shorts pay longs
 
 
-_RATE = pa.decimal128(38, 18)  # native DECIMAL — preserves the signed Decimal exactly (no float)
+_RATE = pa.decimal128(
+    38, 18
+)  # native DECIMAL — the signed Decimal value (scale-normalized; no float)
 _SCHEMA = pa.schema(
     [
         ("symbol", pa.string()),
@@ -140,7 +142,7 @@ class FundingStore:
         con = duckdb.connect()
         files = sorted(self._root.glob("*.parquet"))
         if files:
-            globbed = str(self._root / "*.parquet")
+            globbed = str(self._root / "*.parquet").replace("'", "''")  # escape for the SQL literal
             con.execute(f"CREATE VIEW funding AS SELECT * FROM read_parquet('{globbed}')")
         else:
             con.execute(

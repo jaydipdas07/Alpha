@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import urllib.error
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
@@ -92,7 +93,12 @@ def main() -> None:
     print(f"=== funding ingest ({len(symbols)} perps) -> {STORE_ROOT} ===")
     total = 0
     for symbol in symbols:
-        rates = fetch_funding(symbol, start=_START, end=_END)
+        try:
+            rates = fetch_funding(symbol, start=_START, end=_END)
+        except (urllib.error.URLError, RuntimeError) as exc:
+            # a delisted/invalid member (HTTP 400) or page-cap must not abort the whole 42-name run.
+            print(f"[funding] {symbol}: SKIPPED ({type(exc).__name__}: {exc})")
+            continue
         on_disk = store.write(rates)
         print(f"[funding] {symbol}: fetched {len(rates)} -> {on_disk} on disk")
         total += len(rates)
