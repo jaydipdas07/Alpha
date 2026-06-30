@@ -28,9 +28,11 @@ import asyncio
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from decimal import Decimal
+from typing import cast
 
 from alpha_core.backtest.runner import run_backtest
 from alpha_core.core.enums import AssetClass, Venue
+from alpha_core.core.interfaces import Strategy
 from alpha_core.core.models import Bar
 from alpha_core.execution.costs import InstrumentMeta
 from alpha_core.helpers.config import load_rigor_config
@@ -96,7 +98,9 @@ class EngineBacktester:
                 f"too few in-sample bars for cell {proposal.market.value}/{proposal.window}: "
                 f"{len(bars)} < {self._min_bars} (need >= 2*cpcv.n_groups for the rigor gate)"
             )
-        strategy = template.build(proposal.params)
+        # build() is typed `object` (it backs both registries — see StrategyTemplate); TEMPLATES is
+        # the single-instrument registry, so its builds are Strategy instances.
+        strategy = cast(Strategy, template.build(proposal.params))
         result = asyncio.run(
             run_backtest(
                 bars=bars,

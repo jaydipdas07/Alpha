@@ -25,15 +25,14 @@ from __future__ import annotations
 import hashlib
 import json
 import random
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Protocol
+from typing import Protocol
 
 from pydantic import BaseModel, ValidationError
 
 from alpha_core.core.enums import AssetClass
-from alpha_core.core.interfaces import Strategy
 from alpha_core.research.proposal_ledger import ProposalLedger, cell_key
 from alpha_core.strategy.examples.bollinger_squeeze import BollingerSqueeze, BollingerSqueezeConfig
 from alpha_core.strategy.examples.donchian_atr import DonchianAtr, DonchianAtrConfig
@@ -106,19 +105,23 @@ ParamSpace = Mapping[str, ParamSpec]
 class StrategyTemplate:
     """A vetted template + its bounded edge-parameter space. ``build`` validates a proposal by
     *constructing the strategy* — the config model + the strategy ``__init__`` together reject any
-    invalid combination (e.g. ``fast_period >= slow_period``)."""
+    invalid combination (e.g. ``fast_period >= slow_period``).
+
+    ``strategy_cls`` is typed loosely (``Callable[..., object]``) so the *same* template machinery
+    backs both the single-instrument ``Strategy`` registry (``TEMPLATES``) and the cross-sectional
+    ``PanelBacktester`` registry (whose strategies aren't single-bar ``Strategy`` objects). The
+    strategist only ``build``s to *validate* (it discards the result); a backtester that needs the
+    concrete type casts it (each backtester knows which registry it was handed)."""
 
     name: str
     family: str
     config_cls: type[BaseModel]
-    strategy_cls: type[Strategy]
+    strategy_cls: Callable[..., object]
     param_space: ParamSpace
 
-    def build(self, params: Mapping[str, ParamValue]) -> Strategy:
+    def build(self, params: Mapping[str, ParamValue]) -> object:
         config = self.config_cls.model_validate(dict(params))
-        builder: Any = self.strategy_cls
-        strategy: Strategy = builder(config)
-        return strategy
+        return self.strategy_cls(config)
 
 
 # The R7 seed templates (tunable EDGE params only — position size/`quantity` is the risk overlay's
@@ -286,11 +289,18 @@ class Strategist:
     """
 
     def __init__(
-        self, ledger: ProposalLedger, *, proposer: Proposer | None = None, max_attempts: int = 50
+        self,
+        ledger: ProposalLedger,
+        *,
+        proposer: Proposer | None = None,
+        max_attempts: int = 50,
+        templates: Mapping[str, StrategyTemplate] | None = None,
     ) -> None:
         self._ledger = ledger
         self._proposer = proposer if proposer is not None else RandomProposer()
         self._max_attempts = max_attempts
+        # default = the single-instrument registry; the panel path injects PANEL_TEMPLATES.
+        self._templates = templates if templates is not None else TEMPLATES
 
     def propose(self, template_name: str, *, market: AssetClass, window: str) -> StrategyProposal:
         """Return a valid, original proposal for ``template_name`` in the ``(market, window)`` cell,
@@ -298,9 +308,11 @@ class Strategist:
         trial count the DSR deflates by). Raises ``StrategistError`` for an unknown template, an
         invalid cell (e.g. a ``window`` the ledger rejects), or if no original valid proposal is
         found within ``max_attempts`` (the cell is saturated)."""
-        template = TEMPLATES.get(template_name)
+        template = self._templates.get(template_name)
         if template is None:
-            raise StrategistError(f"unknown template {template_name!r}; known: {sorted(TEMPLATES)}")
+            raise StrategistError(
+                f"unknown template {template_name!r}; known: {sorted(self._templates)}"
+            )
         try:  # fail fast (and in-contract) on a bad cell, before touching the proposer
             cell_key(market, template.family, window)
         except ValueError as exc:
