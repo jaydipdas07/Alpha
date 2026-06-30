@@ -15,7 +15,7 @@ import pytest
 from pydantic import ValidationError
 
 from alpha_core.core.enums import Venue
-from alpha_core.data.funding import FundingRate, FundingStore
+from alpha_core.data.funding import FundingRate, FundingStore, daily_funding
 from alpha_core.data.ingest.binance_funding import funding_rows_to_rates
 
 T0 = datetime(2023, 6, 1, tzinfo=UTC)
@@ -47,6 +47,19 @@ def test_funding_rows_to_rates_parses_signed_decimal_and_utc() -> None:
 
 def test_funding_rows_empty_page() -> None:
     assert funding_rows_to_rates([], symbol="BTCUSDT") == []
+
+
+def test_daily_funding_sums_intraday_by_utc_day() -> None:
+    # three 8h payments on day 0 sum; the day-1 payment is its own day, keyed by UTC midnight.
+    day1 = T0 + timedelta(days=1)
+    rates = [
+        _rate("BTCUSDT", T0, "0.0001"),
+        _rate("BTCUSDT", T0 + H8, "0.0002"),
+        _rate("BTCUSDT", T0 + 2 * H8, "0.0003"),
+        _rate("BTCUSDT", day1, "-0.0005"),
+    ]
+    daily = daily_funding(rates)
+    assert daily == {T0: Decimal("0.0006"), day1: Decimal("-0.0005")}
 
 
 def test_funding_rate_rejects_a_float() -> None:

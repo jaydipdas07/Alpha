@@ -48,6 +48,27 @@ class PanelStrategy(Protocol):
     def target_weights(self, closes: Mapping[str, Sequence[Decimal]]) -> dict[str, Decimal]: ...
 
 
+def dollar_neutral_book(scores: Mapping[str, Decimal], top_k: int) -> dict[str, Decimal]:
+    """Long the top ``top_k`` names by score and short the bottom ``top_k``, equal-weight and
+    dollar-neutral (longs sum ``+1``, shorts ``-1``; gross 2, net 0). Returns ``{}`` when fewer than
+    ``2 * top_k`` names are scored. Deterministic: score descending, symbol as the tiebreak."""
+    if len(scores) < 2 * top_k:
+        return {}
+    ranked = sorted(scores, key=lambda s: (-scores[s], s))
+    leg = Decimal(1) / Decimal(top_k)  # equal-weight within each leg
+    weights = dict.fromkeys(ranked[:top_k], leg)
+    weights.update(dict.fromkeys(ranked[-top_k:], -leg))
+    return weights
+
+
+def _trailing_mean(values: Sequence[Decimal], period: int) -> Decimal | None:
+    """Mean of the last ``period`` values, or ``None`` if the series is too short."""
+    if period <= 0 or len(values) < period:
+        return None
+    window = values[-period:]
+    return sum(window, Decimal(0)) / Decimal(period)
+
+
 class _CrossSectional:
     """Shared dollar-neutral long-top / short-bottom rank logic; ``_SIGN`` is the only difference
     between momentum (+1, long the winners) and reversal (-1, long the losers)."""
@@ -86,15 +107,7 @@ class _CrossSectional:
             for symbol, series in closes.items()
             if (ret := self._trailing_return(series)) is not None
         }
-        k = self._cfg.top_k
-        if len(scores) < 2 * k:
-            return {}
-        # rank by score desc (symbol tiebreak); long the top k, short the bottom k.
-        ranked = sorted(scores, key=lambda s: (-scores[s], s))
-        leg = Decimal(1) / Decimal(k)  # equal-weight within each leg
-        weights = dict.fromkeys(ranked[:k], leg)
-        weights.update(dict.fromkeys(ranked[-k:], -leg))
-        return weights
+        return dollar_neutral_book(scores, self._cfg.top_k)
 
 
 class CrossSectionalMomentum(_CrossSectional):
@@ -107,3 +120,33 @@ class CrossSectionalReversal(_CrossSectional):
     """Long the weakest trailing-return names, short the strongest (cross-sectional reversal)."""
 
     _SIGN = -1
+
+
+class FundingCarry:
+    """Cross-sectional funding **carry** (M3.0): rank the panel by trailing-mean funding and go
+    dollar-neutral — **short** the highest-funding perps (a short receives funding) and **long** the
+    lowest / most-negative (a long is paid to hold them). The harvested spread is a *cash flow*, a
+    different return source than price direction.
+
+    Structurally a ``PanelStrategy`` (config + ``target_weights``), so the panel machinery drives
+    it, but the funding backtester feeds it the funding cross-section (not closes) and adds the
+    carry P&L to the price P&L. Look-ahead-clean: the caller passes funding up to the current bar.
+    """
+
+    def __init__(self, config: CrossSectionalConfig) -> None:
+        self._cfg = config
+
+    @property
+    def config(self) -> CrossSectionalConfig:
+        return self._cfg
+
+    def target_weights(self, funding: Mapping[str, Sequence[Decimal]]) -> dict[str, Decimal]:
+        """Dollar-neutral weights from the cross-section of trailing-mean funding (each sequence is
+        a symbol's per-bar funding up to the current bar). Carry scores by -(trailing funding): the
+        lowest-funding names rank highest (long), the highest-funding lowest (short)."""
+        scores = {
+            symbol: -mean
+            for symbol, series in funding.items()
+            if (mean := _trailing_mean(series, self._cfg.lookback)) is not None
+        }
+        return dollar_neutral_book(scores, self._cfg.top_k)
