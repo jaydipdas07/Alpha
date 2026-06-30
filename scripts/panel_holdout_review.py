@@ -4,14 +4,18 @@ TEST-3 read).
 The panel analogue of ``scripts/risk_officer_review.py``'s survivor path, scoped to the holdout gate
 (the paper-eval + the human FORM are post-pass and [You]-gated). Reproducible by design: a *seeded*
 in-sample sweep over the **sealed research** store (holdout-free, TEST-3) locks the frozen
-survivor(s) and the DSR deflation inputs (the cell's cumulative trial count + the cross-trial Sharpe
-variance over the in-sample population — what ``discovery.run_discovery_cycle`` deflates by); then
-each survivor is read **once** on the gate-only ``HoldoutStore`` via ``HoldoutPanelBarsFor`` —
-the single legitimate holdout read.
+survivor(s) and the DSR deflation inputs (the trial count + the cross-trial Sharpe variance over the
+in-sample population); then each survivor is read **once** on the gate-only ``HoldoutStore`` via
+``HoldoutPanelBarsFor`` (wired by ``promote.build_panel_backtesters``) — the single legitimate read.
 
-The sweep is inlined here (rather than calling ``run_discovery_cycle``) only so the runner can keep
-the in-sample population to hand the holdout gate the same deflation inputs; the propose -> backtest
--> assess steps are identical to the discovery cycle.
+``n_trials`` here is **this seeded sweep's** count, from a fresh in-memory ledger — a self-contained
+search, NOT the cell's durable cumulative count across nightly runs (which ``promote`` reads for the
+production single-instrument path). A durable cell would carry more trials → a harsher DSR penalty,
+so this standalone read is, if anything, optimistic toward PROMOTE — a REJECT here is conservative.
+
+The sweep is inlined (rather than calling ``run_discovery_cycle``) only so the runner can keep the
+in-sample population to hand the holdout gate the same deflation inputs; the propose -> backtest ->
+assess steps are identical to the discovery cycle.
 
 Roots from ``ALPHA_RESEARCH_ROOT`` / ``ALPHA_HOLDOUT_ROOT`` (like ``seal_cold_store.py``). Run AFTER
 seal::
@@ -29,12 +33,9 @@ from pathlib import Path
 from alpha_core.core.enums import AssetClass
 from alpha_core.data.holdout import HoldoutStore
 from alpha_core.data.store import BarStore
-from alpha_core.research.holdout_gate import HoldoutGate, HoldoutPanelBarsFor
-from alpha_core.research.panel_backtester import (
-    PANEL_TEMPLATES,
-    ColdStorePanelBarsFor,
-    PanelBacktester,
-)
+from alpha_core.research.holdout_gate import HoldoutGate
+from alpha_core.research.panel_backtester import PANEL_TEMPLATES
+from alpha_core.research.promote import build_panel_backtesters
 from alpha_core.research.proposal_ledger import ProposalLedger
 from alpha_core.research.quant_analyst import QuantAnalyst, Verdict, deflation_inputs
 from alpha_core.research.strategist import (
@@ -63,9 +64,13 @@ def main() -> None:
     holdout = HoldoutStore(Path(os.environ["ALPHA_HOLDOUT_ROOT"]))
     family = PANEL_TEMPLATES[args.template].family
     qa = QuantAnalyst()
+    # the TEST-3-critical wiring (in-sample <- research store; holdout <- gate-only store) lives in
+    # one tested place so a future edit can't silently cross the two.
+    in_sample, holdout_backtester = build_panel_backtesters(
+        research_store=research, holdout_store=holdout
+    )
 
     # 1. in-sample sweep over the sealed research store (holdout untouched) — keep the population.
-    in_sample = PanelBacktester(panel_bars_for=ColdStorePanelBarsFor.from_config(research))
     proposals: list[StrategyProposal] = []
     returns: list[Sequence[float]] = []
     with ProposalLedger() as ledger:
@@ -81,8 +86,8 @@ def main() -> None:
             returns.append(list(in_sample.run(proposal)))
         n_trials = ledger.count(market, family, args.panel)
 
-    # 2. the DSR deflation inputs (the cell's cumulative count + the cross-trial variance), then the
-    #    in-sample verdicts — exactly as the discovery cycle adjudicates.
+    # 2. the DSR deflation inputs (this sweep's trial count + the cross-trial variance over the
+    #    in-sample population), then the in-sample verdicts — as the discovery cycle adjudicates.
     _, variance = deflation_inputs(returns, oos_fraction=qa.oos_fraction)
     assessments = [
         (
@@ -107,10 +112,7 @@ def main() -> None:
         return
 
     # 3. THE ONE-SHOT HOLDOUT READ (TEST-3) — each frozen survivor, once, on the gate-only store.
-    gate = HoldoutGate(
-        backtester=PanelBacktester(panel_bars_for=HoldoutPanelBarsFor.from_config(holdout)),
-        quant_analyst=qa,
-    )
+    gate = HoldoutGate(backtester=holdout_backtester, quant_analyst=qa)
     passes = 0
     for proposal, assessment in survivors:
         result = gate.evaluate(proposal, n_trials=n_trials, trial_sharpe_variance=variance)

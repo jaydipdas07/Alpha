@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -27,6 +28,7 @@ from alpha_core.research.panel_backtester import (
     _simulate,
     turnover_cost_fraction,
 )
+from alpha_core.research.promote import build_panel_backtesters
 from alpha_core.research.proposal_ledger import ProposalLedger
 from alpha_core.research.quant_analyst import QuantAnalyst
 from alpha_core.research.strategist import (
@@ -291,6 +293,26 @@ def test_cold_store_panel_unmapped_raises(tmp_path: object) -> None:
     source = ColdStorePanelBarsFor(BarStore(tmp_path), {})  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="no discovery panel mapped"):
         source(_CRYPTO, "not-a-panel")
+
+
+def test_cold_store_panel_rejects_asset_class_mismatch(tmp_path: object) -> None:
+    store = BarStore(tmp_path)  # type: ignore[arg-type]
+    store.write_bars(_bars("BTCUSDT", ["1", "2", "3"]))  # BTCUSDT bars are CRYPTO
+    panels = {(AssetClass.EQUITY, "p"): [SeriesCoord("BTCUSDT", Venue.BINANCE, 86400)]}
+    with pytest.raises(ValueError, match="not EQUITY"):
+        ColdStorePanelBarsFor(store, panels)(AssetClass.EQUITY, "p")  # claims EQUITY -> fail fast
+
+
+def test_build_panel_backtesters_wires_the_test3_boundary(tmp_path: Path) -> None:
+    # the load-bearing TEST-3 wiring: in-sample reads the cold/research store, holdout the gate-only
+    # store. A future edit that swapped the two would flip these reader types and fail here.
+    in_sample, holdout_bt = build_panel_backtesters(
+        research_store=BarStore(tmp_path / "research"),
+        holdout_store=HoldoutStore(tmp_path / "holdout"),
+    )
+    assert isinstance(in_sample, PanelBacktester) and isinstance(holdout_bt, PanelBacktester)
+    assert isinstance(in_sample._panel_bars_for, ColdStorePanelBarsFor)
+    assert isinstance(holdout_bt._panel_bars_for, HoldoutPanelBarsFor)
 
 
 # --- the gate-only holdout panel boundary (TEST-3 — the single legitimate read) ------------------
