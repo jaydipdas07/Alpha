@@ -249,6 +249,14 @@ def _check_templates(value: list[str] | None) -> list[str] | None:
     return value
 
 
+def _reject_pipe(value: str, *, label: str) -> str:
+    """Shared cell/panel rule: the value doubles as a proposal-ledger cell key, where ``|`` is the
+    field separator (``proposal_ledger.cell_key``): reject it at load, not at key-build time."""
+    if "|" in value:
+        raise ValueError(f"{label} must not contain the '|' cell-key separator")
+    return value
+
+
 class DiscoveryCellConfig(BaseModel):
     """One discovery cell: the ``(market, window)`` the loop searches mapped to the cold-store
     series it backtests on. The bars are **in-sample only** — the cold store holds no holdout
@@ -270,10 +278,7 @@ class DiscoveryCellConfig(BaseModel):
     @field_validator("window")
     @classmethod
     def _no_key_separator(cls, value: str) -> str:
-        # the window doubles as the proposal-ledger cell key, where "|" is the field separator.
-        if "|" in value:
-            raise ValueError("window must not contain the '|' cell-key separator")
-        return value
+        return _reject_pipe(value, label="window")
 
     @field_validator("templates")
     @classmethod
@@ -303,16 +308,16 @@ class DiscoveryPanelConfig(BaseModel):
     @field_validator("name")
     @classmethod
     def _no_key_separator(cls, value: str) -> str:
-        # the name doubles as the proposal-ledger cell key, where "|" is the field separator.
-        if "|" in value:
-            raise ValueError("panel name must not contain the '|' cell-key separator")
-        return value
+        return _reject_pipe(value, label="panel name")
 
     @field_validator("symbols")
     @classmethod
-    def _symbols_non_empty_and_unique(cls, value: list[str]) -> list[str]:
-        if any(not s.strip() for s in value):
-            raise ValueError("panel symbols must each be non-empty")
+    def _symbols_clean_and_unique(cls, value: list[str]) -> list[str]:
+        for symbol in value:
+            if not symbol.strip():
+                raise ValueError("panel symbols must each be non-empty")
+            if symbol != symbol.strip():  # surrounding whitespace -> the same instrument twice
+                raise ValueError(f"panel symbol {symbol!r} must not have surrounding whitespace")
         if len(set(value)) != len(value):
             raise ValueError("panel symbols must be unique within a panel")
         return value

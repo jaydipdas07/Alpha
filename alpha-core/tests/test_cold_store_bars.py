@@ -275,10 +275,23 @@ def test_panel_rejects_blank_symbol() -> None:
         DiscoveryPanelConfig.model_validate(_panel_dict(symbols=["BTCUSDT", "  "]))
 
 
+def test_panel_rejects_symbol_with_surrounding_whitespace() -> None:
+    # " BTCUSDT" is the same instrument as "BTCUSDT" — reject it so uniqueness stays semantic and
+    # the raw string is never sent to the venue API.
+    with pytest.raises(ValidationError, match="surrounding whitespace"):
+        DiscoveryPanelConfig.model_validate(_panel_dict(symbols=["BTCUSDT", " ETHUSDT"]))
+
+
 def test_panel_rejects_pipe_in_name() -> None:
     # the name doubles as the proposal-ledger cell key, where "|" separates fields.
     with pytest.raises(ValidationError, match="must not contain"):
         DiscoveryPanelConfig.model_validate(_panel_dict(name="a|b"))
+
+
+def test_panel_rejects_overlong_name() -> None:
+    # the name doubles as the proposal-ledger cell key — bounded to the pod column limit (64 chars).
+    with pytest.raises(ValidationError, match="at most 64"):
+        DiscoveryPanelConfig.model_validate(_panel_dict(name="x" * 65))
 
 
 def test_panel_rejects_empty_templates_list() -> None:

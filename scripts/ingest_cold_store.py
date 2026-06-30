@@ -37,7 +37,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from alpha_core.core.enums import AssetClass
+from alpha_core.core.enums import Venue
 from alpha_core.core.models import Bar
 from alpha_core.data.ingest.binance import klines_to_bars
 from alpha_core.data.ingest.yahoo import chart_to_bars
@@ -157,11 +157,12 @@ def ingest_panels(store: BarStore) -> int:
     symbol at the panel's interval, over the same fixed window as the matching single-instrument
     timeframe, via the paginated public futures API (no keys). Idempotent (the store dedups by
     start), so the handful of symbols already covered by ``ingest_binance`` are harmlessly
-    re-fetched. Only crypto panels ingest here — an NSE panel's series come from the Kite leg."""
+    re-fetched. This is the free Binance leg, so it ingests only ``venue: BINANCE`` panels (the
+    fetch + store path is Binance-specific); other-venue panels come from their own leg (Kite)."""
     total = 0
     for panel in load_discovery_config().panels:
-        if panel.market is not AssetClass.CRYPTO:
-            continue
+        if panel.venue is not Venue.BINANCE:
+            continue  # this loader's fetch/store path is Binance-specific (would mis-store others)
         tf = _TF_BY_SECONDS.get(panel.interval_seconds)
         if tf is None:  # a panel interval with no fixed ingest window — fail loud, never skip
             raise RuntimeError(
