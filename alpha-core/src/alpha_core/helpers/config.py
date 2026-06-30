@@ -240,6 +240,23 @@ def load_rigor_config() -> RigorConfig:
 
 
 # --- Discovery universe (discovery.yaml) — the cell -> cold-store series map (B1b.3d) ----
+def _check_templates(value: list[str] | None) -> list[str] | None:
+    """Shared cell/panel ``templates`` rule: omit (null) = all registered templates; an explicit
+    ``[]`` is ambiguous (means "none"?) and almost always a mistake — reject it so the intent is
+    never silently widened to "all"."""
+    if value is not None and not value:
+        raise ValueError("templates must be omitted (= all registered) or a non-empty list")
+    return value
+
+
+def _reject_pipe(value: str, *, label: str) -> str:
+    """Shared cell/panel rule: the value doubles as a proposal-ledger cell key, where ``|`` is the
+    field separator (``proposal_ledger.cell_key``): reject it at load, not at key-build time."""
+    if "|" in value:
+        raise ValueError(f"{label} must not contain the '|' cell-key separator")
+    return value
+
+
 class DiscoveryCellConfig(BaseModel):
     """One discovery cell: the ``(market, window)`` the loop searches mapped to the cold-store
     series it backtests on. The bars are **in-sample only** — the cold store holds no holdout
@@ -261,26 +278,64 @@ class DiscoveryCellConfig(BaseModel):
     @field_validator("window")
     @classmethod
     def _no_key_separator(cls, value: str) -> str:
-        # the window doubles as the proposal-ledger cell key, where "|" is the field separator.
-        if "|" in value:
-            raise ValueError("window must not contain the '|' cell-key separator")
+        return _reject_pipe(value, label="window")
+
+    @field_validator("templates")
+    @classmethod
+    def _templates_omitted_or_non_empty(cls, value: list[str] | None) -> list[str] | None:
+        return _check_templates(value)
+
+
+class DiscoveryPanelConfig(BaseModel):
+    """One cross-sectional discovery *panel* (M3.0): a group of symbols sharing a ``(market,
+    venue, interval)``, backtested **together** so a strategy can rank the cross-section (relative
+    strength — long the top, short the bottom). Where a ``DiscoveryCellConfig`` names one series, a
+    panel names the whole universe a cross-sectional template (the panel backtester) ranks each
+    rebalance. The bars are **in-sample only**: the cold store holds no holdout (the seal routes it
+    to the gate-only store), so a panel never names a holdout boundary either (TEST-3/R6)."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=64)  # the panel label (also the ledger cell key)
+    market: AssetClass  # the panel's asset class (matches every member series' bars)
+    venue: Venue  # the shared series venue
+    interval_seconds: int = Field(gt=0)  # the shared bar interval
+    symbols: list[str] = Field(min_length=2)  # the universe (a cross-section needs >= 2 names)
+    # the backtest capital at this panel's market scale (crypto $ vs equity ₹), like a cell; and
+    # which vetted cross-sectional templates to search here (omit / null = all registered).
+    starting_cash: Decimal = Field(default=Decimal("1000000"), gt=0)
+    templates: list[str] | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _no_key_separator(cls, value: str) -> str:
+        return _reject_pipe(value, label="panel name")
+
+    @field_validator("symbols")
+    @classmethod
+    def _symbols_clean_and_unique(cls, value: list[str]) -> list[str]:
+        for symbol in value:
+            if not symbol.strip():
+                raise ValueError("panel symbols must each be non-empty")
+            if symbol != symbol.strip():  # surrounding whitespace -> the same instrument twice
+                raise ValueError(f"panel symbol {symbol!r} must not have surrounding whitespace")
+        if len(set(value)) != len(value):
+            raise ValueError("panel symbols must be unique within a panel")
         return value
 
     @field_validator("templates")
     @classmethod
     def _templates_omitted_or_non_empty(cls, value: list[str] | None) -> list[str] | None:
-        # omit (null) = all registered templates; an explicit [] is ambiguous (means "none"?) and
-        # almost always a mistake — reject it so the intent is never silently widened to "all".
-        if value is not None and not value:
-            raise ValueError("templates must be omitted (= all registered) or a non-empty list")
-        return value
+        return _check_templates(value)
 
 
 class DiscoveryConfig(BaseModel):
-    """``discovery.yaml`` — the discovery universe: every research cell mapped to its series."""
+    """``discovery.yaml`` — the discovery universe: every research cell mapped to its series, plus
+    any cross-sectional ``panels`` (M3.0) that name a multi-symbol universe to rank together."""
 
     model_config = ConfigDict(extra="forbid")
     cells: list[DiscoveryCellConfig] = Field(min_length=1)  # an empty universe is a config error
+    # the cross-sectional panels (M3.0) — a multi-symbol universe ranked together (default: none).
+    panels: list[DiscoveryPanelConfig] = Field(default_factory=list)
     n_candidates: int = Field(default=8, gt=1)  # proposals per (cell, template) discovery cycle
 
     @model_validator(mode="after")
@@ -296,6 +351,18 @@ class DiscoveryConfig(BaseModel):
                     "each (market, window) must map to exactly one series"
                 )
             seen.add(key)
+        return self
+
+    @model_validator(mode="after")
+    def _unique_panels(self) -> Self:
+        """A panel ``name`` is its ledger cell key — reject duplicate panel names at load."""
+        seen: set[str] = set()
+        for panel in self.panels:
+            if panel.name in seen:
+                raise ValueError(
+                    f"duplicate discovery panel {panel.name!r}: panel names must be unique"
+                )
+            seen.add(panel.name)
         return self
 
 

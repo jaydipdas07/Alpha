@@ -5,6 +5,10 @@ Loads a **richer** research dataset from public endpoints (no keys):
 - A **wider Binance USDT-perp universe** (M3.0): 8 top symbols, each at {5m, 1h, 1d}, paginated from
   public futures API (no keys). 1-second bars come from the data.binance.vision archive
   (``scripts/ingest_binance_archive.py``) — a heavier batch, kept separate from this loader.
+- The **cross-sectional panels** (M3.0) declared in ``config/discovery.yaml`` — each panel's whole
+  member universe at the panel's interval (e.g. the 42-perp ``crypto-perps-1d`` daily panel), so a
+  cross-sectional strategy can rank the cross-section. Config-driven (single source of truth); the
+  overlap with the single-instrument symbols above is harmlessly re-fetched (idempotent).
 - Four **NIFTY-constituent daily** series (RELIANCE, TCS, INFY, HDFCBANK) over ~3 years via Yahoo
   (the Kite 1-minute Indian leg expands this at M3.0).
 
@@ -33,10 +37,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from alpha_core.core.enums import Venue
 from alpha_core.core.models import Bar
 from alpha_core.data.ingest.binance import klines_to_bars
 from alpha_core.data.ingest.yahoo import chart_to_bars
 from alpha_core.data.store import BarStore
+from alpha_core.helpers.config import load_discovery_config
 
 # The store root: ALPHA_COLD_ROOT, else the repo's gitignored data_cold/.
 STORE_ROOT = Path(
@@ -72,6 +78,9 @@ _CRYPTO_TFS = [
     ("1h", 3600, _1Y, "1h ~1y"),
     ("1d", 86400, _3Y, "1d ~3y"),
 ]
+# interval_seconds -> (binance_interval, window_start) so a cross-sectional panel ingests at the
+# same fixed, reproducible window as the matching single-instrument timeframe.
+_TF_BY_SECONDS = {seconds: (interval, start) for interval, seconds, start, _ in _CRYPTO_TFS}
 
 # (yahoo_symbol, store_symbol) NIFTY constituents — store symbols match instruments.yaml.
 # (The Kite 1-minute Indian leg — kiteconnect + the KITE_ACCESS_TOKEN_AT-staleness reauth — expands
@@ -143,6 +152,39 @@ def ingest_binance(store: BarStore) -> int:
     return total
 
 
+def ingest_panels(store: BarStore) -> int:
+    """Ingest the cross-sectional discovery *panels* from config/discovery.yaml: every member
+    symbol at the panel's interval, over the same fixed window as the matching single-instrument
+    timeframe, via the paginated public futures API (no keys). Idempotent (the store dedups by
+    start), so the handful of symbols already covered by ``ingest_binance`` are harmlessly
+    re-fetched. This is the free Binance leg, so it ingests only ``venue: BINANCE`` panels (the
+    fetch + store path is Binance-specific); other-venue panels come from their own leg (Kite)."""
+    total = 0
+    for panel in load_discovery_config().panels:
+        if panel.venue is not Venue.BINANCE:
+            continue  # this loader's fetch/store path is Binance-specific (would mis-store others)
+        tf = _TF_BY_SECONDS.get(panel.interval_seconds)
+        if tf is None:  # a panel interval with no fixed ingest window — fail loud, never skip
+            raise RuntimeError(
+                f"panel {panel.name!r}: interval {panel.interval_seconds}s has no ingest window "
+                f"(known: {sorted(_TF_BY_SECONDS)})"
+            )
+        interval, start = tf
+        for symbol in panel.symbols:
+            bars = _binance_klines(
+                symbol,
+                interval=interval,
+                interval_seconds=panel.interval_seconds,
+                start=start,
+                end=_END,
+            )
+            on_disk = store.write_bars(bars)
+            print(f"[panel:{panel.name}] {symbol} {interval}: {len(bars)} -> {on_disk} on disk")
+            total += len(bars)
+            time.sleep(0.2)  # polite to the public endpoint
+    return total
+
+
 def ingest_nse(store: BarStore) -> int:
     """Four NIFTY constituents, daily ~3y, via the Yahoo v8 chart endpoint."""
     total = 0
@@ -163,6 +205,7 @@ def main() -> None:
     store = BarStore(STORE_ROOT)
     print(f"=== cold-store ingest (richer dataset) -> {STORE_ROOT} ===")
     crypto = ingest_binance(store)
+    panels = ingest_panels(store)
     equity = ingest_nse(store)
 
     # the DuckDB analytical layer over the cold store — one row per series, with span.
@@ -173,7 +216,10 @@ def main() -> None:
     ).fetchall()
     for symbol, venue, _asset, interval_s, n, lo, hi in rows:
         print(f"[duckdb]  {venue}/{symbol} {interval_s}s: {n} bars  {lo} .. {hi}")
-    print(f"=== done — {crypto + equity} bars ingested, reproducible (idempotent re-write) ===")
+    print(
+        f"=== done — {crypto + panels + equity} bars ingested, "
+        "reproducible (idempotent re-write) ==="
+    )
 
 
 if __name__ == "__main__":

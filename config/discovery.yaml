@@ -323,3 +323,66 @@ cells:
     venue: NSE
     interval_seconds: 60
     starting_cash: "1000000"   # INR
+
+# --- cross-sectional panels (M3.0) -------------------------------------------------
+# A panel names a whole universe of symbols sharing a (market, venue, interval), to be
+# backtested TOGETHER so a strategy can rank the cross-section (relative strength —
+# long the top, short the bottom). This is the seam the single-instrument templates
+# above structurally cannot see, and it exploits the SAME free Binance data we already
+# ingest. The panel backtester + the cross-sectional templates consume these (the next
+# increment); ingest (scripts/ingest_cold_store.py) already pulls every member series.
+#
+# Universe = the 42 most-liquid Binance USDT perpetuals (by 24h quote-volume) that were
+# all listed on/before the daily ingest start (2023-06-01), so every member spans the
+# full backtest+holdout window — the cross-section is never thin at the start. Gold /
+# stablecoin pegs are excluded (not crypto-momentum names). Membership is by listing
+# age + liquidity, not by the volume rank itself.
+panels:
+  - name: "crypto-perps-1d"
+    market: CRYPTO
+    venue: BINANCE
+    interval_seconds: 86400
+    starting_cash: "1000000"   # USDT
+    symbols:
+      - "BTCUSDT"
+      - "ETHUSDT"
+      - "SOLUSDT"
+      - "ZECUSDT"
+      - "XRPUSDT"
+      - "DOGEUSDT"
+      - "BNBUSDT"
+      - "NEARUSDT"
+      - "1000PEPEUSDT"
+      - "AAVEUSDT"
+      - "XLMUSDT"
+      - "SUIUSDT"
+      - "ADAUSDT"
+      - "AVAXUSDT"
+      - "LINKUSDT"
+      - "BCHUSDT"
+      - "FILUSDT"
+      - "UNIUSDT"
+      - "TRXUSDT"
+      - "LTCUSDT"
+      - "DOTUSDT"
+      - "CHZUSDT"
+      - "INJUSDT"
+      - "FETUSDT"
+      - "1000SHIBUSDT"
+      - "XMRUSDT"
+      - "OPUSDT"
+      - "ARBUSDT"
+      - "APTUSDT"
+      - "IDUSDT"
+      - "ICPUSDT"
+      - "HBARUSDT"
+      - "ETCUSDT"
+      - "ATOMUSDT"
+      - "ALGOUSDT"
+      - "DASHUSDT"
+      - "DYDXUSDT"
+      - "ALICEUSDT"
+      - "STGUSDT"
+      - "CRVUSDT"
+      - "AXSUSDT"
+      - "LDOUSDT"

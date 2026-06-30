@@ -19,7 +19,12 @@ from alpha_core.core.models import Bar
 from alpha_core.data.holdout import HoldoutStore, seal_dataset, split_research_holdout
 from alpha_core.data.store import BarStore
 from alpha_core.execution.costs import InstrumentMeta
-from alpha_core.helpers.config import DiscoveryCellConfig, DiscoveryConfig, load_discovery_config
+from alpha_core.helpers.config import (
+    DiscoveryCellConfig,
+    DiscoveryConfig,
+    DiscoveryPanelConfig,
+    load_discovery_config,
+)
 from alpha_core.research.cold_store_bars import ColdStoreBarsFor, SeriesCoord
 from alpha_core.research.engine_backtester import EngineBacktester
 from alpha_core.research.strategist import StrategyProposal
@@ -208,6 +213,97 @@ def test_config_rejects_pipe_in_window() -> None:
                 "venue": "NSE",
                 "interval_seconds": 86400,
             }
+        )
+
+
+# --- the cross-sectional panel config validation (M3.0) ------------------------------------------
+
+
+# a minimal valid single-instrument cell, so a panel test can supply the required non-empty `cells`.
+_CELL_DICT: dict[str, object] = {
+    "market": "CRYPTO",
+    "window": "btcusdt-1d",
+    "symbol": "BTCUSDT",
+    "venue": "BINANCE",
+    "interval_seconds": 86400,
+}
+
+
+def _panel_dict(**overrides: object) -> dict[str, object]:
+    """A valid cross-sectional panel payload; ``overrides`` tweak one field per test."""
+    base: dict[str, object] = {
+        "name": "crypto-perps-1d",
+        "market": "CRYPTO",
+        "venue": "BINANCE",
+        "interval_seconds": 86400,
+        "symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+    }
+    base.update(overrides)
+    return base
+
+
+def test_seeded_config_has_well_formed_panels() -> None:
+    # the real config/discovery.yaml panel(s) load + every panel is a >=2-name unique cross-section.
+    cfg = load_discovery_config()
+    assert cfg.panels, "the seeded discovery universe must declare a cross-sectional panel"
+    for panel in cfg.panels:
+        assert len(panel.symbols) >= 2
+        assert len(set(panel.symbols)) == len(panel.symbols)
+
+
+def test_config_without_panels_defaults_empty() -> None:
+    # backward compat: a config predating panels (no `panels:` key) still loads, with panels == [].
+    cfg = DiscoveryConfig.model_validate(
+        {"cells": [_CELL_DICT]},  # a single valid cell, no panels key
+    )
+    assert cfg.panels == []
+
+
+def test_panel_requires_at_least_two_symbols() -> None:
+    # a cross-section needs >= 2 names; a 1-symbol "panel" is a config mistake.
+    with pytest.raises(ValidationError, match="at least 2"):
+        DiscoveryPanelConfig.model_validate(_panel_dict(symbols=["BTCUSDT"]))
+
+
+def test_panel_rejects_duplicate_symbols() -> None:
+    with pytest.raises(ValidationError, match="must be unique"):
+        DiscoveryPanelConfig.model_validate(_panel_dict(symbols=["BTCUSDT", "BTCUSDT"]))
+
+
+def test_panel_rejects_blank_symbol() -> None:
+    with pytest.raises(ValidationError, match="non-empty"):
+        DiscoveryPanelConfig.model_validate(_panel_dict(symbols=["BTCUSDT", "  "]))
+
+
+def test_panel_rejects_symbol_with_surrounding_whitespace() -> None:
+    # " BTCUSDT" is the same instrument as "BTCUSDT" — reject it so uniqueness stays semantic and
+    # the raw string is never sent to the venue API.
+    with pytest.raises(ValidationError, match="surrounding whitespace"):
+        DiscoveryPanelConfig.model_validate(_panel_dict(symbols=["BTCUSDT", " ETHUSDT"]))
+
+
+def test_panel_rejects_pipe_in_name() -> None:
+    # the name doubles as the proposal-ledger cell key, where "|" separates fields.
+    with pytest.raises(ValidationError, match="must not contain"):
+        DiscoveryPanelConfig.model_validate(_panel_dict(name="a|b"))
+
+
+def test_panel_rejects_overlong_name() -> None:
+    # the name doubles as the proposal-ledger cell key — bounded to the pod column limit (64 chars).
+    with pytest.raises(ValidationError, match="at most 64"):
+        DiscoveryPanelConfig.model_validate(_panel_dict(name="x" * 65))
+
+
+def test_panel_rejects_empty_templates_list() -> None:
+    # an explicit [] is ambiguous (the shared cell/panel rule); omit it to mean "all".
+    with pytest.raises(ValidationError, match="must be omitted"):
+        DiscoveryPanelConfig.model_validate(_panel_dict(templates=[]))
+
+
+def test_config_rejects_duplicate_panels() -> None:
+    with pytest.raises(ValidationError, match="duplicate discovery panel"):
+        DiscoveryConfig.model_validate(
+            {"cells": [_CELL_DICT], "panels": [_panel_dict(), _panel_dict()]}
         )
 
 
