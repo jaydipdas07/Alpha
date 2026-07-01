@@ -13,6 +13,7 @@ import pytest
 from alpha_core.core.enums import AssetClass, Venue
 from alpha_core.core.models import Bar
 from alpha_core.data.holdout import HoldoutStore, HoldoutWindow
+from alpha_core.helpers.config import load_rigor_config
 from alpha_core.research.calibration import edge_population
 from alpha_core.research.cold_store_bars import SeriesCoord
 from alpha_core.research.holdout_gate import HoldoutBarsFor, HoldoutGate
@@ -113,6 +114,31 @@ def test_gate_does_not_pass_a_non_promote_verdict() -> None:
     gate = HoldoutGate(backtester=_FakeBacktester([0.0] * 240), quant_analyst=_RevisingQA())  # type: ignore[arg-type]
     res = gate.evaluate(_proposal(), n_trials=12, trial_sharpe_variance=1.0)
     assert res.passed is False and res.verdict is Verdict.REVISE
+
+
+def test_gate_defaults_to_the_holdout_eval_operating_point() -> None:
+    # oos_fraction=None resolves to rigor.yaml holdout_eval (1.0: the whole holdout is OOS to a
+    # frozen candidate — the sqrt(2) power fix), NOT the quant-analyst's in-sample 50% slice; an
+    # explicit override still wins (tests/calibration studies pin their own slice).
+    gate = HoldoutGate(backtester=_FakeBacktester([0.0] * 240), quant_analyst=QuantAnalyst())
+    assert gate._oos_fraction == load_rigor_config().holdout_eval.oos_fraction == 1.0
+    pinned = HoldoutGate(
+        backtester=_FakeBacktester([0.0] * 240), quant_analyst=QuantAnalyst(), oos_fraction=0.5
+    )
+    assert pinned._oos_fraction == 0.5
+
+
+def test_gate_judges_the_whole_holdout_window() -> None:
+    # a series whose FIRST half carries the edge and second half is flat: the old 50% slice saw
+    # only the flat tail (Sharpe ~0 -> REJECT); the full-window gate judges every holdout bar.
+    front_loaded = edge_population(n_candidates=1, n_obs=120, seed=9, drift=0.6)[0] + [0.0] * 120
+    gate = HoldoutGate(backtester=_FakeBacktester(front_loaded), quant_analyst=QuantAnalyst())
+    res = gate.evaluate(_proposal(), n_trials=1, trial_sharpe_variance=0.0)
+    old = HoldoutGate(
+        backtester=_FakeBacktester(front_loaded), quant_analyst=QuantAnalyst(), oos_fraction=0.5
+    ).evaluate(_proposal(), n_trials=1, trial_sharpe_variance=0.0)
+    assert res.oos_sharpe > old.oos_sharpe  # the full window sees the edge the tail hides
+    assert old.verdict is Verdict.REJECT  # the half-slice threw the evidence away
 
 
 def test_holdout_bars_for_rejects_asset_class_mismatch(tmp_path) -> None:  # type: ignore[no-untyped-def]

@@ -201,6 +201,19 @@ class QuantAnalystConfig(BaseModel):
     oos_fraction: float = Field(gt=0, lt=1)  # the out-of-sample slice the verdict judges
 
 
+class HoldoutEvalConfig(BaseModel):
+    """One-shot holdout-gate evaluation (the M3.0-follow-on power fix).
+
+    The holdout window is 100% out-of-sample **by construction** — the candidate is frozen
+    (params + deflation inputs locked from the in-sample sweep) before the gate reads a
+    single holdout bar — so the gate judges the WHOLE window (``1.0``), not the
+    quant-analyst's in-sample/OOS split. ``le=1`` deliberately admits 1.0, unlike the
+    in-sample ``oos_fraction`` fields where a slice of 1 would leave no in-sample."""
+
+    model_config = ConfigDict(extra="forbid")
+    oos_fraction: float = Field(default=1.0, gt=0, le=1)  # slice of the holdout the gate judges
+
+
 class PaperEvalConfig(BaseModel):
     """Paper-run acceptance thresholds (M3.7) — does forward paper confirm the backtest?
 
@@ -231,6 +244,7 @@ class RigorConfig(BaseModel):
     cpcv_budget: CpcvBudgetConfig
     calibration: CalibrationConfig
     quant_analyst: QuantAnalystConfig
+    holdout_eval: HoldoutEvalConfig = Field(default_factory=HoldoutEvalConfig)  # optional section
     paper_eval: PaperEvalConfig = Field(default_factory=PaperEvalConfig)  # M3.7 (optional section)
 
 

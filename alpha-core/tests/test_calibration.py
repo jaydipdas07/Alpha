@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from alpha_core.helpers.config import CalibrationConfig, load_rigor_config
 from alpha_core.research.calibration import (
+    CalibrationReport,
     calibrate,
     edge_population,
     noise_population,
@@ -50,6 +51,57 @@ def test_gate_meets_the_tier2_error_rate_thresholds() -> None:
         r.passes(false_promote_max=c.false_promote_max, false_reject_max=c.false_reject_max)
         for r in reports
     )
+
+
+# --- the holdout gate's operating point: judge the FULL holdout window (rigor.yaml holdout_eval) --
+
+# Holdout-shaped inputs: the current daily crypto holdout is ~224 bars (~7.5 months) — far from the
+# ratified calibration's n_obs=2400 (~6.5y); these tests re-run the R14 harness AT that shape.
+_HOLDOUT_N_OBS = 224
+_SEEDS = range(20)
+
+
+def _holdout_shaped(oos_fraction: float) -> list[CalibrationReport]:
+    cfg = load_rigor_config()
+    return [
+        run_calibration(
+            n_candidates=cfg.calibration.n_candidates,
+            n_obs=_HOLDOUT_N_OBS,
+            edge_drift=cfg.calibration.edge_drift,
+            oos_fraction=oos_fraction,
+            dsr_threshold=cfg.dsr.threshold,
+            seed=s,
+        )
+        for s in _SEEDS
+    ]
+
+
+def test_holdout_shaped_full_fraction_keeps_false_promote_bounded() -> None:
+    # the DANGEROUS error at the holdout gate's operating point (oos_fraction 1.0, rigor.yaml
+    # holdout_eval): judging the whole 224-bar window must not let noise/overfit through. Measured:
+    # false-promote is 0 on every seed (the DSR deflation is sample-size-aware — sqrt(n-1) inside
+    # PSR — so a shorter window only makes significance HARDER for noise).
+    cfg = load_rigor_config()
+    reports = _holdout_shaped(load_rigor_config().holdout_eval.oos_fraction)
+    assert statistics.fmean(r.false_promote_rate for r in reports) == 0.0
+    assert all(r.false_promote_rate <= cfg.calibration.false_promote_max for r in reports)
+
+
+def test_holdout_shaped_full_fraction_dominates_the_half_slice() -> None:
+    # the power fix: the whole holdout is OOS by construction (the candidate is frozen before the
+    # read), so judging all of it over the old 50% slice is a sqrt(2) power gain at zero safety
+    # cost. Measured over 20 seeds at n_obs=224 / drift 0.15 (~ann. Sharpe 2.9) / 40 trials:
+    # false-reject 0.9825 (half) -> 0.8750 (full), false-promote 0.0 at BOTH. NB the residual
+    # false-reject is Finding-1 underpower — a ~7.5-month window cannot certify much weaker edges;
+    # the pinned roll-forward holdout GROWS with calendar time, which is the real cure.
+    half = _holdout_shaped(0.5)
+    full = _holdout_shaped(1.0)
+    mean_fr_half = statistics.fmean(r.false_reject_rate for r in half)
+    mean_fr_full = statistics.fmean(r.false_reject_rate for r in full)
+    assert mean_fr_full < mean_fr_half  # strictly more power...
+    assert statistics.fmean(r.false_promote_rate for r in full) == 0.0  # ...at zero safety cost
+    assert mean_fr_half == pytest.approx(0.9825)
+    assert mean_fr_full == pytest.approx(0.8750)
 
 
 def test_overfit_control_is_genuinely_overfit_not_noise() -> None:

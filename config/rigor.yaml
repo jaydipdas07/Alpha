@@ -80,6 +80,17 @@ quant_analyst:
 
 
 
+# One-shot holdout gate evaluation (the M3.0-follow-on power fix). The holdout window is
+# 100% out-of-sample BY CONSTRUCTION — the candidate is frozen (params + deflation inputs
+# locked from the in-sample sweep) before the gate reads a single holdout bar — so the gate
+# judges the WHOLE window: oos_fraction 1.0. The old behavior (falling back to
+# quant_analyst.oos_fraction = 0.5) silently discarded half the already-tiny holdout, a
+# sqrt(2) power loss at zero safety benefit. Calibration at holdout-shaped inputs (n_obs
+# 224) shows false-promote stays 0 while false-reject strictly improves
+# (test_calibration.py::test_holdout_shaped_*).
+holdout_eval:
+  oos_fraction: 1.0    # judge the full holdout window (it is all OOS to a frozen candidate)
+
 # M3.7 paper-run acceptance — does forward paper-trading confirm the backtest? A paper
 # run passes (-> Workflow B) only if the live paper edge persists AND keeps enough of the
 # backtest Sharpe (so slippage / fees / real fills haven't eaten it). evaluate_paper_run.
