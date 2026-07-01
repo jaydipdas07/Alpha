@@ -127,8 +127,10 @@ class QuantAnalyst:
             raise ValueError(f"n_trials must be >= 1 (the cell's trial count); got {n_trials}")
         if trial_sharpe_variance < 0:
             raise ValueError(f"trial_sharpe_variance must be >= 0; got {trial_sharpe_variance}")
-        if not 0.0 < of < 1.0:
-            raise ValueError(f"oos_fraction must be in (0, 1); got {of}")
+        # 1.0 is legitimate: the holdout gate judges its WHOLE window (all of it is OOS to a
+        # frozen candidate, rigor.yaml holdout_eval); an in-sample assessment passes < 1.
+        if not 0.0 < of <= 1.0:
+            raise ValueError(f"oos_fraction must be in (0, 1]; got {of}")
         if len(returns) < min_obs:
             raise ValueError(f"need >= {min_obs} observations to assess; got {len(returns)}")
 

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from alpha_core.core.enums import AssetClass
 from alpha_core.core.models import Bar
 from alpha_core.data.holdout import HoldoutStore
-from alpha_core.helpers.config import load_discovery_config
+from alpha_core.helpers.config import load_discovery_config, load_rigor_config
 from alpha_core.research.cold_store_bars import CellKey, SeriesCoord
 from alpha_core.research.discovery import Backtester
 from alpha_core.research.quant_analyst import QuantAnalyst, Verdict
@@ -138,7 +138,14 @@ class HoldoutGate:
         # ``backtester`` MUST be an EngineBacktester wired to a HoldoutBarsFor (the holdout read).
         self._backtester = backtester
         self._qa = quant_analyst
-        self._oos_fraction = oos_fraction
+        # None -> the holdout gate's OWN operating point (rigor.yaml holdout_eval, default 1.0):
+        # the whole holdout is out-of-sample BY CONSTRUCTION (the candidate is frozen before the
+        # read), so judging all of it is a sqrt(2) power gain over the quant-analyst's in-sample
+        # 50% slice at zero safety cost — false-promote stays bounded at holdout-shaped inputs
+        # (the R14 calibration harness re-run; see test_calibration.py::test_holdout_shaped_*).
+        self._oos_fraction = (
+            load_rigor_config().holdout_eval.oos_fraction if oos_fraction is None else oos_fraction
+        )
 
     def evaluate(
         self, proposal: StrategyProposal, *, n_trials: int, trial_sharpe_variance: float
@@ -149,10 +156,6 @@ class HoldoutGate:
         the never-seen holdout. ``n_trials`` is the cell's cumulative trial count (the holdout
         is one further test of the cell, so the DSR deflation still applies)."""
         returns = self._backtester.run(proposal)  # the single legitimate holdout read (TEST-3)
-        # oos_fraction=None -> the quant-analyst's CALIBRATED operating point (rigor.yaml). The
-        # DSR threshold (0.92) was calibrated at that oos_fraction, so judging the holdout at the
-        # same slice keeps the threshold valid (a different slice would invalidate the calibration);
-        # it is also conservative — it can only make PROMOTE harder, never falsely promote.
         assessment = self._qa.assess(
             returns,
             n_trials=n_trials,

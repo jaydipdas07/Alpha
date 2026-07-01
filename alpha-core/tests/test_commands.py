@@ -34,11 +34,11 @@ WORKER = "worker-1"
 
 COST_CONFIG = {
     "slippage": {
-        "crypto": {"type": "bps", "value": 8},
-        "default_spread": {"equity": 0.0005, "crypto": 0.0008, "index_option_ticks": 1},
+        "crypto_perp": {"type": "bps", "value": 8},
+        "default_spread": {"equity": 0.0005, "crypto_perp": 0.0008, "index_option_ticks": 1},
         "stress_multiplier": 2,
     },
-    "segments": {"crypto": {"trading_fee": {"pct": 0.001, "side": "both"}}},
+    "segments": {"crypto_perp": {"trading_fee": {"pct": 0.001, "side": "both"}}},
 }
 
 

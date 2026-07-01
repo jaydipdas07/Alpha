@@ -331,14 +331,14 @@ def _risk() -> RiskConfig:
 _COST_CONFIG: dict[str, object] = {
     "slippage": {
         "equity": {"type": "bps", "value": 5},
-        "crypto": {"type": "bps", "value": 8},
+        "crypto_perp": {"type": "bps", "value": 8},
         "index_option": {"type": "ticks", "value": 2},
-        "default_spread": {"equity": 0.0005, "crypto": 0.0008, "index_option_ticks": 1},
+        "default_spread": {"equity": 0.0005, "crypto_perp": 0.0008, "index_option_ticks": 1},
         "stress_multiplier": 2,
     },
     "segments": {
         "equity_intraday": {"brokerage": {"pct": 0.0003, "flat": 20, "mode": "min"}},
-        "crypto": {"trading_fee": {"pct": 0.001, "side": "both"}},
+        "crypto_perp": {"trading_fee": {"pct": 0.001, "side": "both"}},
     },
 }
 

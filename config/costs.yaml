@@ -2,11 +2,13 @@
 # Illustrative rates — VERIFY against current statute at go-live (config edit only).
 slippage:
   equity:       { type: bps,   value: 5 }      # large-cap 5 bps/side
-  crypto:       { type: bps,   value: 8 }      # majors 5-10 bps/side
+  crypto_perp:  { type: bps,   value: 3 }      # top-liquidity USDT/USD perps at small size
+  crypto_spot:  { type: bps,   value: 8 }      # spot majors 5-10 bps/side
   index_option: { type: ticks, value: 2 }      # ATM ~1-2 ticks; scale for far strikes
   default_spread:                               # used only when LTP-only (no quote)
     equity: 0.0005
-    crypto: 0.0008
+    crypto_perp: 0.0003
+    crypto_spot: 0.0008
     index_option_ticks: 1
   stress_multiplier: 2                          # mandatory 2x backtest stress test
 
@@ -25,9 +27,14 @@ segments:
     sebi:         { pct: 0.000001 }
     gst:          { pct: 0.18, on: [brokerage, exchange_txn, sebi] }
     stamp_duty:   { pct: 0.00003, side: buy, on: premium }
-  crypto:
-    trading_fee:  { pct: 0.001, side: both }             # taker; venue-specific
-    tds:          { pct: 0.01, side: sell }              # 1% TDS on transfer (spot)
+  # Perp vs spot are DIFFERENT cost regimes (the old single `crypto` segment charged the
+  # 10 bps SPOT taker fee + spot TDS on perp trades — ~2.5x real perp costs). Live crypto
+  # today is Delta/Binance perps -> the cost model maps AssetClass.CRYPTO to crypto_perp.
+  crypto_perp:
+    trading_fee:  { pct: 0.0005, side: both }            # perp taker ~5 bps (maker ~2 bps)
+  crypto_spot:
+    trading_fee:  { pct: 0.001, side: both }             # spot taker; venue-specific
+    tds:          { pct: 0.01, side: sell }              # 1% TDS on VDA transfer (spot only)
 
 # Perp funding (R13) — the periodic funding payment on a held perpetual position.
 # A constant assumed rate for now; real per-interval rates come from the funding-rate

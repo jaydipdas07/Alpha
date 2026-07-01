@@ -37,11 +37,11 @@ HOUR = timedelta(hours=1)
 
 COST_CONFIG: dict[str, object] = {
     "slippage": {
-        "crypto": {"type": "bps", "value": 8},
-        "default_spread": {"crypto": 0.0008},
+        "crypto_perp": {"type": "bps", "value": 8},
+        "default_spread": {"crypto_perp": 0.0008},
         "stress_multiplier": 2,
     },
-    "segments": {"crypto": {"trading_fee": {"pct": 0.001, "side": "both"}}},
+    "segments": {"crypto_perp": {"trading_fee": {"pct": 0.001, "side": "both"}}},
 }
 INSTRUMENTS = {SYM: InstrumentMeta(asset_class=AssetClass.CRYPTO)}
 
@@ -210,7 +210,7 @@ async def test_result_hash_captures_derived_ratio_stats() -> None:
     starting cash with the same fills — still changes the result hash (no collision)."""
     cheap, rec_c = await _run(7)
     pricey_cost = copy.deepcopy(COST_CONFIG)
-    pricey_cost["segments"]["crypto"]["trading_fee"]["pct"] = 0.05  # type: ignore[index]
+    pricey_cost["segments"]["crypto_perp"]["trading_fee"]["pct"] = 0.05  # type: ignore[index]
     pricey, rec_p = await _run(7, cost_config=pricey_cost)
     assert hash_result(cheap) != hash_result(pricey)  # cost change shows in the result
     assert rec_c.fingerprint != rec_p.fingerprint  # ... and in the record

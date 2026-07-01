@@ -16,16 +16,19 @@ from pydantic import ValidationError
 
 from alpha_core.core.enums import AssetClass, Venue
 from alpha_core.core.models import Bar
+from alpha_core.data.funding import FundingRate, FundingStore
 from alpha_core.data.holdout import HoldoutStore, HoldoutWindow
 from alpha_core.data.store import BarStore
 from alpha_core.research.cold_store_bars import SeriesCoord
 from alpha_core.research.discovery import run_discovery_cycle
+from alpha_core.research.funding_backtester import ColdStoreFundingFor
 from alpha_core.research.holdout_gate import HoldoutPanelBarsFor
 from alpha_core.research.panel_backtester import (
     PANEL_TEMPLATES,
     ColdStorePanelBarsFor,
     PanelBacktester,
-    _simulate,
+    align_closes,
+    simulate_panel,
     turnover_cost_fraction,
 )
 from alpha_core.research.promote import build_panel_backtesters
@@ -52,9 +55,10 @@ def _closes(d: dict[str, list[str]]) -> dict[str, list[Decimal]]:
     return {k: [Decimal(x) for x in v] for k, v in d.items()}
 
 
-def _bars(symbol: str, closes: list[str]) -> list[Bar]:
+def _bars(symbol: str, closes: list[str], offset: int = 0) -> list[Bar]:
     """A flat OHLCV series (open=high=low=close) at consecutive daily UTC starts — the cross-section
-    varies *across* bars (the trailing-return signal), not within one."""
+    varies *across* bars (the trailing-return signal), not within one. ``offset`` shifts the first
+    bar by whole days (a later listing)."""
     out: list[Bar] = []
     for i, c in enumerate(closes):
         price = Decimal(c)
@@ -63,7 +67,7 @@ def _bars(symbol: str, closes: list[str]) -> list[Bar]:
                 symbol=symbol,
                 venue=Venue.BINANCE,
                 asset_class=_CRYPTO,
-                start=START + i * DAY,
+                start=START + (offset + i) * DAY,
                 interval=DAY,
                 open=price,
                 high=price,
@@ -202,9 +206,10 @@ def test_no_lookahead_a_future_bar_leaves_earlier_returns_unchanged() -> None:
 
 
 class _SpyStrategy:
-    """Records the bar index at each rebalance (the length of a sliced series minus one)."""
+    """Records each rebalance: the current bar's close (identifies WHICH bar, since the fold hands
+    the trailing window ending at the rebalance bar) and the window width it was handed."""
 
-    def __init__(self, config: CrossSectionalConfig, calls: list[int]) -> None:
+    def __init__(self, config: CrossSectionalConfig, calls: list[tuple[Decimal, int]]) -> None:
         self._config = config
         self._calls = calls
 
@@ -213,18 +218,21 @@ class _SpyStrategy:
         return self._config
 
     def target_weights(self, closes: Mapping[str, Sequence[Decimal]]) -> dict[str, Decimal]:
-        self._calls.append(len(next(iter(closes.values()))) - 1)
+        series = next(iter(closes.values()))
+        self._calls.append((series[-1], len(series)))
         return {}
 
 
 def test_holding_period_controls_the_rebalance_cadence() -> None:
-    # _simulate re-ranks only every `holding_period` bars (between, it holds the prior book by
-    # construction — `held` is reassigned only inside the cadence branch).
-    closes = {sym: [Decimal(1)] * 12 for sym in ("A", "B", "C", "D")}
-    calls: list[int] = []
+    # simulate_panel re-ranks only every `holding_period` bars (between, it holds the prior book by
+    # construction — `held` is reassigned only inside the cadence branch), and each rebalance hands
+    # the strategy exactly the trailing lookback+1 window ending at the rebalance bar.
+    closes = {sym: [Decimal(i) for i in range(12)] for sym in ("A", "B", "C", "D")}
+    calls: list[tuple[Decimal, int]] = []
     cfg = CrossSectionalConfig(lookback=2, top_k=1, holding_period=3)
-    _simulate(_SpyStrategy(cfg, calls), closes, n=12, cost=Decimal(0))
-    assert calls == [2, 5, 8]  # warmup=2, then every 3 bars over range(2, 11)
+    simulate_panel(_SpyStrategy(cfg, calls), closes, closes, {}, n=12, cost=Decimal(0))
+    # warmup=2, then every 3 bars over range(2, 11): bars 2, 5, 8 (close == the bar index).
+    assert calls == [(Decimal(2), 3), (Decimal(5), 3), (Decimal(8), 3)]
 
 
 class _FixedBook:
@@ -243,7 +251,7 @@ def test_nonpositive_close_for_a_held_symbol_does_not_crash() -> None:
         "A": [Decimal(x) for x in ("1", "2", "0", "4", "5")],
         "B": [Decimal(1)] * 5,
     }
-    returns = _simulate(_FixedBook(), closes, n=5, cost=Decimal(0))
+    returns = simulate_panel(_FixedBook(), closes, closes, {}, n=5, cost=Decimal(0))
     assert len(returns) == 5 - 1 - 1
     assert all(isinstance(r, float) for r in returns)
 
@@ -273,9 +281,143 @@ def test_unknown_panel_template_raises() -> None:
 
 
 def test_turnover_cost_fraction_crypto_and_equity() -> None:
-    assert turnover_cost_fraction(_CRYPTO) == Decimal("0.0018")  # 8 bps slippage + 0.001 taker fee
+    # crypto panels are PERP universes: 3 bps perp slippage + 0.0005 perp taker (crypto_perp keys —
+    # NOT the spot fee + TDS regime the old single `crypto` segment overcharged, ~2.5x).
+    assert turnover_cost_fraction(_CRYPTO) == Decimal("0.0008")
     with pytest.raises(NotImplementedError):
         turnover_cost_fraction(AssetClass.EQUITY)
+
+
+# --- the unbalanced panel: union timeline + point-in-time membership -----------------------------
+
+
+def test_align_closes_unions_the_timeline_and_marks_missing_slots() -> None:
+    # a later listing does NOT truncate the panel (the old inner-join would drop bar 0 entirely);
+    # its missing slots are None — no forward-fill, membership is the fold's job.
+    panel = {"A": _bars("A", ["1", "2", "3"]), "E": _bars("E", ["5", "6"], offset=1)}
+    timeline, closes = align_closes(panel)
+    assert timeline == [START + i * DAY for i in range(3)]
+    assert closes["A"] == [Decimal(1), Decimal(2), Decimal(3)]
+    assert closes["E"] == [None, Decimal(5), Decimal(6)]
+
+
+def test_late_listed_member_joins_only_once_its_trailing_window_is_real() -> None:
+    # E lists at bar 2 of 6 and, once scoreable, is the runaway winner (x3 vs A's x2). Before its
+    # lookback+1 window is real the book must be IDENTICAL to the E-less panel (no pre-listing
+    # membership, no fill); after, momentum longs E — point-in-time membership end to end.
+    base = _panel(_DISTINCT)
+    with_e = {**_panel(_DISTINCT), "E": _bars("E", ["1", "3", "9", "27"], offset=2)}
+    params = {"lookback": 1, "top_k": 1, "holding_period": 1}
+    base_returns = list(_bt(base).run(_proposal("cross_sectional_momentum", params)))
+    e_returns = list(_bt(with_e).run(_proposal("cross_sectional_momentum", params)))
+    assert len(e_returns) == len(base_returns)  # the union timeline is the full 6 bars
+    assert e_returns[:2] == base_returns[:2]  # E not yet scoreable -> books identical
+    assert e_returns[2] != base_returns[2]  # E's window is real from bar 3 -> it takes the long leg
+    assert e_returns[2] == pytest.approx(2.0 - (-0.5))  # long E (x3), short B (x0.5)
+
+
+def test_member_that_stops_printing_earns_a_flat_zero() -> None:
+    # a held symbol whose close disappears (a gap / delisting) contributes 0 from the missing bar
+    # on — never a fabricated return off a filled price.
+    closes: dict[str, list[Decimal | None]] = {
+        "A": [Decimal(1), Decimal(2), Decimal(4), None, None],
+        "B": [Decimal(1)] * 5,
+    }
+    returns = simulate_panel(_FixedBook(), closes, closes, {}, n=5, cost=Decimal(0))
+    assert returns == pytest.approx([1.0, 0.0, 0.0])  # A doubles once, then its data stops
+
+
+# --- funding folded into the PRICE panel (a perp book pays/earns funding continuously) -----------
+
+
+def _funding_rates(symbol: str, rates: list[str]) -> list[FundingRate]:
+    """One funding payment per UTC day at midnight (so daily_funding keys match the bar starts)."""
+    return [
+        FundingRate(
+            symbol=symbol, venue=Venue.BINANCE, funding_time=START + i * DAY, rate=Decimal(r)
+        )
+        for i, r in enumerate(rates)
+    ]
+
+
+def _funding_bt(
+    panel: dict[str, list[Bar]], funding: dict[str, list[FundingRate]]
+) -> PanelBacktester:
+    return PanelBacktester(
+        panel_bars_for=lambda _m, _w: panel,
+        panel_funding_for=lambda _m, _w: funding,
+        min_bars=1,
+        cost_fraction=Decimal(0),
+    )
+
+
+def test_flat_price_panel_with_funding_returns_the_pure_book_carry() -> None:
+    # flat prices -> all trailing returns tie at 0 -> the symbol tiebreak longs A, shorts D. The
+    # price P&L is 0, so each bar's return is exactly the held book's funding transfer
+    # (-w·funding): the long (A, +0.001) PAYS, the short (D, -0.001) PAYS -> -0.002/bar — the same
+    # fold arithmetic the carry backtester pins (fold parity with #142).
+    n = 6
+    panel = _panel({s: ["100"] * n for s in ("A", "B", "C", "D")})
+    funding = {
+        "A": _funding_rates("A", ["0.001"] * n),
+        "B": _funding_rates("B", ["0"] * n),
+        "C": _funding_rates("C", ["0"] * n),
+        "D": _funding_rates("D", ["-0.001"] * n),
+    }
+    returns = list(_funding_bt(panel, funding).run(_proposal("cross_sectional_momentum", _PARAMS)))
+    assert returns and all(r == pytest.approx(-0.002) for r in returns)
+
+
+def test_positive_funding_bleeds_a_momentum_book() -> None:
+    # momentum longs the winner (A); with positive funding on A the funding-aware fold must earn
+    # LESS than the funding-blind one — the transfer a perp momentum book actually pays.
+    panel = _panel(_DISTINCT)
+    n = len(_DISTINCT["A"])
+    funding = {
+        "A": _funding_rates("A", ["0.001"] * n),  # the winner momentum longs -> pays funding
+        "B": _funding_rates("B", ["0"] * n),
+        "C": _funding_rates("C", ["0"] * n),
+        "D": _funding_rates("D", ["0"] * n),
+    }
+    blind = list(_bt(panel).run(_proposal("cross_sectional_momentum", _PARAMS)))
+    aware = list(_funding_bt(panel, funding).run(_proposal("cross_sectional_momentum", _PARAMS)))
+    assert all(a < b for a, b in zip(aware, blind, strict=True))
+
+
+def test_member_without_funding_history_transfers_nothing() -> None:
+    # a member absent from the funding source contributes 0 carry (nothing known to transfer) —
+    # the book still runs (the price leg is unaffected).
+    n = 6
+    panel = _panel({s: ["100"] * n for s in ("A", "B", "C", "D")})
+    funding = {"D": _funding_rates("D", ["-0.001"] * n)}  # only the short (D) has funding
+    returns = list(_funding_bt(panel, funding).run(_proposal("cross_sectional_momentum", _PARAMS)))
+    assert returns and all(r == pytest.approx(-0.001) for r in returns)  # only D's leg transfers
+
+
+def test_price_panel_with_funding_requires_a_daily_panel() -> None:
+    # the same fail-loud guard as the carry backtester (funding aggregates to UTC days).
+    hour = timedelta(hours=1)
+    bars = {
+        s: [
+            Bar(
+                symbol=s,
+                venue=Venue.BINANCE,
+                asset_class=_CRYPTO,
+                start=START + i * hour,
+                interval=hour,
+                open=Decimal(100),
+                high=Decimal(100),
+                low=Decimal(100),
+                close=Decimal(100),
+                volume=Decimal(1),
+            )
+            for i in range(30)
+        ]
+        for s in ("A", "B", "C", "D")
+    }
+    funding = {s: _funding_rates(s, ["0.0001"] * 30) for s in ("A", "B", "C", "D")}
+    with pytest.raises(NotImplementedError, match="daily panel"):
+        _funding_bt(bars, funding).run(_proposal("cross_sectional_momentum", _PARAMS))
 
 
 # --- the cold-store panel boundary ---------------------------------------------------------------
@@ -313,6 +455,20 @@ def test_build_panel_backtesters_wires_the_test3_boundary(tmp_path: Path) -> Non
     assert isinstance(in_sample, PanelBacktester) and isinstance(holdout_bt, PanelBacktester)
     assert isinstance(in_sample._panel_bars_for, ColdStorePanelBarsFor)
     assert isinstance(holdout_bt._panel_bars_for, HoldoutPanelBarsFor)
+    assert in_sample._panel_funding_for is None and holdout_bt._panel_funding_for is None
+
+
+def test_build_panel_backtesters_wires_funding_into_both_folds(tmp_path: Path) -> None:
+    # a perp panel's funding source reaches BOTH folds (each fold's price timeline gates which
+    # funding days it can touch, so one raw store serves both sides).
+    in_sample, holdout_bt = build_panel_backtesters(
+        research_store=BarStore(tmp_path / "research"),
+        holdout_store=HoldoutStore(tmp_path / "holdout"),
+        funding_store=FundingStore(tmp_path / "funding"),
+    )
+    assert isinstance(in_sample, PanelBacktester) and isinstance(holdout_bt, PanelBacktester)
+    assert isinstance(in_sample._panel_funding_for, ColdStoreFundingFor)
+    assert isinstance(holdout_bt._panel_funding_for, ColdStoreFundingFor)
 
 
 # --- the gate-only holdout panel boundary (TEST-3 — the single legitimate read) ------------------

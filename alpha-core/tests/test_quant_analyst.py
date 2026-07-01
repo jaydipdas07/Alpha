@@ -115,6 +115,18 @@ def test_assess_validates_its_deflation_inputs() -> None:
         )  # too short for the folds
 
 
+def test_assess_accepts_the_full_series_as_oos() -> None:
+    # oos_fraction=1.0 is the holdout gate's operating point (rigor.yaml holdout_eval): the whole
+    # window is OOS to a frozen candidate, so the judged slice is the ENTIRE series. 0 stays
+    # rejected (as does > 1, pinned above) — only the open-left bound was relaxed.
+    qa = QuantAnalyst()
+    edge = edge_population(n_candidates=1, n_obs=240, seed=7, drift=0.5)[0]
+    full = qa.assess(edge, n_trials=1, trial_sharpe_variance=0.0, oos_fraction=1.0)
+    assert full.oos_sharpe == pytest.approx(sharpe(edge))  # judged the whole series
+    with pytest.raises(ValueError, match="oos_fraction must be"):
+        qa.assess(edge, n_trials=1, trial_sharpe_variance=0.0, oos_fraction=0.0)
+
+
 def test_deflation_inputs_matches_the_calibration() -> None:
     pop = edge_population(n_candidates=10, n_obs=400, seed=1, drift=0.2)
     n, var = deflation_inputs(pop, oos_fraction=0.5)

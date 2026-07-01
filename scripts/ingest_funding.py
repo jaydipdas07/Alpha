@@ -38,9 +38,11 @@ STORE_ROOT = Path(
 )
 _HEADERS = {"User-Agent": "Mozilla/5.0 (alpha-research funding ingest)"}
 
-# Fixed past window (reproducible — a fixed end, never "now"), matching the daily price bars.
-_START = datetime(2023, 6, 1, tzinfo=UTC)
-_END = datetime(2026, 6, 21, tzinfo=UTC)
+# Fixed past window (reproducible — a fixed end, never "now"), matching the daily price bars:
+# from the oldest USDT-perp listings (2019-09), so the unbalanced panel's funding history spans
+# each member's whole life. ~7,500 rows/symbol at 3/day = 8 pages, well inside the cap.
+_START = datetime(2019, 9, 1, tzinfo=UTC)
+_END = datetime(2026, 6, 30, tzinfo=UTC)
 
 
 def _get(url: str) -> Any:
