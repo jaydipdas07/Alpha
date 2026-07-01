@@ -17,8 +17,9 @@ The sweep is inlined (rather than calling ``run_discovery_cycle``) only so the r
 in-sample population to hand the holdout gate the same deflation inputs; the propose -> backtest ->
 assess steps are identical to the discovery cycle.
 
-Roots from ``ALPHA_RESEARCH_ROOT`` / ``ALPHA_HOLDOUT_ROOT`` (like ``seal_cold_store.py``). Run AFTER
-seal::
+Roots from ``ALPHA_RESEARCH_ROOT`` / ``ALPHA_HOLDOUT_ROOT`` (like ``seal_cold_store.py``), plus
+``ALPHA_FUNDING_ROOT`` (optional but set it for perp panels — it folds the funding transfer into
+both the in-sample and holdout books). Run AFTER seal::
 
     uv run python scripts/panel_holdout_review.py --template cross_sectional_momentum
 """
@@ -31,6 +32,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from alpha_core.core.enums import AssetClass
+from alpha_core.data.funding import FundingStore
 from alpha_core.data.holdout import HoldoutStore
 from alpha_core.data.store import BarStore
 from alpha_core.research.holdout_gate import HoldoutGate
@@ -62,12 +64,16 @@ def main() -> None:
     market = AssetClass(args.market)
     research = BarStore(Path(os.environ["ALPHA_RESEARCH_ROOT"]))
     holdout = HoldoutStore(Path(os.environ["ALPHA_HOLDOUT_ROOT"]))
+    # perp panels pay/earn funding continuously — wire it into BOTH folds when the store exists
+    # (each fold's price timeline gates which funding days it touches; see build_panel_backtesters).
+    funding_root = os.environ.get("ALPHA_FUNDING_ROOT")
+    funding = FundingStore(Path(funding_root)) if funding_root else None
     family = PANEL_TEMPLATES[args.template].family
     qa = QuantAnalyst()
     # the TEST-3-critical wiring (in-sample <- research store; holdout <- gate-only store) lives in
     # one tested place so a future edit can't silently cross the two.
     in_sample, holdout_backtester = build_panel_backtesters(
-        research_store=research, holdout_store=holdout
+        research_store=research, holdout_store=holdout, funding_store=funding
     )
 
     # 1. in-sample sweep over the sealed research store (holdout untouched) — keep the population.

@@ -14,9 +14,9 @@ from alpha_core.helpers.config import load_yaml
 CONFIG = {
     "slippage": {
         "equity": {"type": "bps", "value": 5},
-        "crypto": {"type": "bps", "value": 8},
+        "crypto_perp": {"type": "bps", "value": 8},
         "index_option": {"type": "ticks", "value": 2},
-        "default_spread": {"equity": 0.0005, "crypto": 0.0008, "index_option_ticks": 1},
+        "default_spread": {"equity": 0.0005, "crypto_perp": 0.0008, "index_option_ticks": 1},
         "stress_multiplier": 2,
     },
     "segments": {
@@ -36,7 +36,7 @@ CONFIG = {
             "gst": {"pct": 0.18, "on": ["brokerage", "exchange_txn", "sebi"]},
             "stamp_duty": {"pct": 0.00003, "side": "buy"},
         },
-        "crypto": {
+        "crypto_perp": {
             "trading_fee": {"pct": 0.001, "side": "both"},
             "tds": {"pct": 0.01, "side": "sell"},
         },

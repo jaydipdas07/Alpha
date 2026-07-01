@@ -21,9 +21,9 @@ SYMBOL = "NSE:RELIANCE"
 COST_CONFIG = {
     "slippage": {
         "equity": {"type": "bps", "value": 5},
-        "crypto": {"type": "bps", "value": 8},
+        "crypto_perp": {"type": "bps", "value": 8},
         "index_option": {"type": "ticks", "value": 2},
-        "default_spread": {"equity": 0.0005, "crypto": 0.0008, "index_option_ticks": 1},
+        "default_spread": {"equity": 0.0005, "crypto_perp": 0.0008, "index_option_ticks": 1},
         "stress_multiplier": 2,
     },
     "segments": {
@@ -36,7 +36,7 @@ COST_CONFIG = {
             "stamp_duty": {"pct": 0.00003, "side": "buy"},
         },
         "index_option": {"brokerage": {"flat": 20, "mode": "flat"}},
-        "crypto": {"trading_fee": {"pct": 0.001, "side": "both"}},
+        "crypto_perp": {"trading_fee": {"pct": 0.001, "side": "both"}},
     },
 }
 INSTRUMENTS = {SYMBOL: InstrumentMeta(asset_class=AssetClass.EQUITY)}

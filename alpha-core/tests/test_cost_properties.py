@@ -18,15 +18,15 @@ from alpha_core.execution.costs import CostModel, InstrumentMeta
 _CFG: dict[str, object] = {
     "slippage": {
         "equity": {"type": "bps", "value": 5},
-        "crypto": {"type": "bps", "value": 8},
+        "crypto_perp": {"type": "bps", "value": 8},
         "index_option": {"type": "ticks", "value": 2},
-        "default_spread": {"equity": 0.0005, "crypto": 0.0008, "index_option_ticks": 1},
+        "default_spread": {"equity": 0.0005, "crypto_perp": 0.0008, "index_option_ticks": 1},
         "stress_multiplier": 2,
     },
     "segments": {
         "equity_intraday": {"brokerage": {"pct": 0.0003, "flat": 20, "mode": "min"}},
         "index_option": {"brokerage": {"flat": 20, "mode": "flat"}},
-        "crypto": {"trading_fee": {"pct": 0.001, "side": "both"}},
+        "crypto_perp": {"trading_fee": {"pct": 0.001, "side": "both"}},
     },
 }
 _MODEL = CostModel(_CFG)

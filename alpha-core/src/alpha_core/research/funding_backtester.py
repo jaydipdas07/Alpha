@@ -17,22 +17,35 @@ funding to the in-sample window (the *structural* funding seal lands with the ho
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from datetime import timedelta
+from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from typing import cast
 
 from alpha_core.core.enums import AssetClass
-from alpha_core.data.funding import FundingRate, FundingStore, daily_funding
+from alpha_core.data.funding import FundingRate, FundingStore
 from alpha_core.helpers.config import load_discovery_config, load_rigor_config
 from alpha_core.research.cold_store_bars import CellKey, SeriesCoord
-from alpha_core.research.panel_backtester import PanelBarsFor, align_closes, turnover_cost_fraction
+from alpha_core.research.panel_backtester import (
+    PanelBarsFor,
+    PanelFundingFor,
+    align_closes,
+    align_daily_funding,
+    simulate_panel,
+    turnover_cost_fraction,
+)
 from alpha_core.research.strategist import IntRange, StrategyProposal, StrategyTemplate
 from alpha_core.strategy.examples.cross_sectional import (
     CrossSectionalConfig,
     FundingCarry,
     PanelStrategy,
 )
+
+__all__ = [
+    "FUNDING_TEMPLATES",
+    "ColdStoreFundingFor",
+    "FundingPanelBacktester",
+    "PanelFundingFor",  # re-export: the alias moved to panel_backtester (import-cycle-free home)
+]
 
 # The funding-carry template registry (its own backtester, so kept apart from PANEL_TEMPLATES). The
 # carry signal is most informative at a short trailing window; ``top_k <= 8`` fits any real panel.
@@ -45,46 +58,6 @@ FUNDING_TEMPLATES: dict[str, StrategyTemplate] = {
         {"lookback": IntRange(3, 30), "top_k": IntRange(2, 8), "holding_period": IntRange(1, 10)},
     ),
 }
-
-# (market, panel_name) -> {symbol: funding history}. CONTRACT: in-sample-only, like PanelBarsFor.
-PanelFundingFor = Callable[[AssetClass, str], dict[str, list[FundingRate]]]
-
-
-def _simulate_carry(
-    strategy: PanelStrategy,
-    closes: Mapping[str, list[Decimal]],
-    funding: Mapping[str, list[Decimal]],
-    n: int,
-    cost: Decimal,
-) -> list[float]:
-    """The carry fold: re-rank by trailing funding every ``holding_period`` bars, hold the book
-    between, and earn each bar's price move PLUS the carry (``Σ -w·funding``), net of turnover."""
-    cfg = strategy.config
-    warmup = cfg.lookback
-    held: dict[str, Decimal] = {}
-    returns: list[float] = []
-    for i in range(warmup, n - 1):  # need bar i+1 for the forward return + the day-i+1 funding
-        cost_i = Decimal(0)
-        if (i - warmup) % cfg.holding_period == 0:
-            target = strategy.target_weights({s: funding[s][: i + 1] for s in funding})
-            turnover = sum(
-                (abs(target.get(s, Decimal(0)) - held.get(s, Decimal(0))) for s in target | held),
-                Decimal(0),
-            )
-            cost_i = turnover * cost
-            held = target
-        price_return = sum(
-            (
-                held[s] * (closes[s][i + 1] / closes[s][i] - Decimal(1))
-                for s in held
-                if closes[s][i] > 0
-            ),
-            Decimal(0),
-        )
-        # carry earned holding i->i+1: a short (w<0) receives positive funding, a long pays it.
-        carry = sum((-held[s] * funding[s][i + 1] for s in held), Decimal(0))
-        returns.append(float(price_return + carry - cost_i))
-    return returns
 
 
 class FundingPanelBacktester:
@@ -119,22 +92,13 @@ class FundingPanelBacktester:
         strategy = cast(PanelStrategy, template.build(proposal.params))
         bars = self._panel_bars_for(proposal.market, proposal.window)
         funding = self._panel_funding_for(proposal.market, proposal.window)
-        # daily_funding buckets to UTC days, so the carry backtest assumes a daily panel — fail loud
-        # on an intraday one (funding would land only on each day's 00:00 bar, undercounted).
-        sample = next((bar for series in bars.values() for bar in series), None)
-        if sample is not None and sample.interval != timedelta(days=1):
-            raise NotImplementedError(
-                f"funding carry assumes a daily panel (funding aggregates to UTC days); got "
-                f"interval {sample.interval} for {proposal.market.value}/{proposal.window}"
-            )
         timeline, closes = align_closes(bars)
-        # daily-aggregate each member's funding, aligned to the price timeline (0 if a day has
-        # none); only members with funding enter the cross-section.
-        funding_daily = {sym: daily_funding(rates) for sym, rates in funding.items()}
+        # the shared alignment (0 if a day has none; daily-panel guard inside); only members with
+        # funding enter the carry cross-section — the signal IS the funding.
         funding_aligned = {
-            sym: [funding_daily[sym].get(day, Decimal(0)) for day in timeline]
-            for sym in closes
-            if sym in funding_daily
+            sym: series
+            for sym, series in align_daily_funding(bars, funding, timeline).items()
+            if sym in closes
         }
         n_returns = max(len(timeline) - 1 - strategy.config.lookback, 0)
         if n_returns < self._min_bars:
@@ -147,7 +111,11 @@ class FundingPanelBacktester:
             if self._cost_fraction is not None
             else turnover_cost_fraction(proposal.market)
         )
-        return _simulate_carry(strategy, closes, funding_aligned, len(timeline), cost)
+        # the shared fold: the carry template ranks on the FUNDING cross-section (the signal), and
+        # the same aligned funding is the transfer the held book earns/pays.
+        return simulate_panel(
+            strategy, closes, funding_aligned, funding_aligned, len(timeline), cost
+        )
 
 
 class ColdStoreFundingFor:

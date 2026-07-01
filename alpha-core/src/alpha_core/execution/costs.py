@@ -18,14 +18,17 @@ from pydantic import BaseModel, ConfigDict
 from alpha_core.core.enums import AssetClass, Side
 
 # Maps an asset class to its slippage key and cost-stack segment key in costs.yaml.
+# CRYPTO -> crypto_perp: every live/backtested crypto instrument today is a perpetual
+# (Delta/Binance perps); the spot cost regime (crypto_spot: higher taker + 1% TDS) gets its
+# own asset-class mapping when a spot leg lands (the basis track).
 _SLIPPAGE_KEY = {
     AssetClass.EQUITY: "equity",
-    AssetClass.CRYPTO: "crypto",
+    AssetClass.CRYPTO: "crypto_perp",
     AssetClass.INDEX_OPTION: "index_option",
 }
 _SEGMENT_KEY = {
     AssetClass.EQUITY: "equity_intraday",
-    AssetClass.CRYPTO: "crypto",
+    AssetClass.CRYPTO: "crypto_perp",
     AssetClass.INDEX_OPTION: "index_option",
 }
 _BPS = Decimal(10000)
