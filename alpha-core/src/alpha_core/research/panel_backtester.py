@@ -16,10 +16,14 @@ size, not capital-scaled deployment), this measures the *signal*: a dollar-neutr
 survivor's live parity is the live portfolio path's job (``WeightAllocator``), deferred exactly as a
 single-instrument survivor's live parity is — discovery's job is to find a real signal first.
 
-**Look-ahead-clean (TEST-1).** ``target_weights`` at bar ``i`` is fed ``closes[: i + 1]`` only, and
-the return it earns is the *next* bar's; the timeline is bar-indexed (no wall-clock). **Holdout
-isolation (TEST-3)** is delegated to the injected ``panel_bars_for`` boundary (the no-ACL sealed
-cold store), exactly as ``EngineBacktester`` delegates to ``bars_for`` — this module adds no filter.
+**Look-ahead-clean (TEST-1).** ``target_weights`` at bar ``i`` is fed the trailing ``lookback + 1``
+window ending at ``i`` (all a trailing score consumes — never a future slot), and the return it
+earns is the *next* bar's; the timeline is bar-indexed (no wall-clock). The panel is **unbalanced**
+(point-in-time membership): the timeline is the union of every member's bar-starts, and a symbol is
+scoreable at a rebalance only once its whole trailing window is real data — no forward-fill, no
+survivorship truncation to the youngest listing. **Holdout isolation (TEST-3)** is delegated to the
+injected ``panel_bars_for`` boundary (the no-ACL sealed cold store), exactly as
+``EngineBacktester`` delegates to ``bars_for`` — this module adds no filter.
 """
 
 from __future__ import annotations
@@ -91,17 +95,22 @@ def turnover_cost_fraction(market: AssetClass) -> Decimal:
 
 def align_closes(
     panel: Mapping[str, list[Bar]],
-) -> tuple[list[datetime], dict[str, list[Decimal]]]:
-    """Inner-join the panel's member series on bar-start, returning the common timeline and each
-    member's closes aligned to it. Inner-join is the look-ahead-free choice (no forward-fill); for a
-    rectangular panel it keeps every bar. Members with no bars are dropped (an un-ingested member is
-    simply out of the cross-section)."""
+) -> tuple[list[datetime], dict[str, list[Decimal | None]]]:
+    """**Union**-join the panel's member series on bar-start: the timeline is every bar-start any
+    member printed, and each member's closes are aligned to it with ``None`` where it has no bar
+    (not yet listed / a gap / delisted). An *unbalanced* panel — point-in-time membership — so a
+    2019-anchored timeline keeps the full history of the early listings instead of truncating the
+    whole panel to the youngest member (the old inner-join wasted more than half the free span).
+    No forward-fill (look-ahead-free): a missing close stays ``None`` and the fold's membership
+    rule decides eligibility per bar. Members with no bars at all are dropped (an un-ingested
+    member is simply out of the cross-section)."""
     by_symbol = {sym: {b.start: b.close for b in bars} for sym, bars in panel.items() if bars}
     if not by_symbol:
         return [], {}
-    common = set.intersection(*(set(stamps) for stamps in by_symbol.values()))
-    timeline = sorted(common)
-    closes = {sym: [stamps[ts] for ts in timeline] for sym, stamps in by_symbol.items()}
+    timeline = sorted(set().union(*(stamps.keys() for stamps in by_symbol.values())))
+    closes: dict[str, list[Decimal | None]] = {
+        sym: [stamps.get(ts) for ts in timeline] for sym, stamps in by_symbol.items()
+    }
     return timeline, closes
 
 
@@ -124,11 +133,17 @@ def align_daily_funding(
     return {sym: [days.get(day, Decimal(0)) for day in timeline] for sym, days in per_day.items()}
 
 
+def _real_window(series: Sequence[Decimal | None], lo: int, hi: int) -> bool:
+    """True iff every slot of ``series[lo:hi]`` is a real value — the point-in-time membership
+    test (a symbol enters the cross-section only once it has printed the full trailing window)."""
+    return all(series[j] is not None for j in range(lo, hi))
+
+
 def simulate_panel(
     strategy: PanelStrategy,
-    closes: Mapping[str, list[Decimal]],
-    signal: Mapping[str, list[Decimal]],
-    funding: Mapping[str, list[Decimal]],
+    closes: Mapping[str, Sequence[Decimal | None]],
+    signal: Mapping[str, Sequence[Decimal | None]],
+    funding: Mapping[str, Sequence[Decimal]],
     n: int,
     cost: Decimal,
 ) -> list[float]:
@@ -140,7 +155,15 @@ def simulate_panel(
     template, the aligned funding for a carry template. ``funding`` is the timeline-aligned daily
     funding the held book pays/receives (a short, ``w < 0``, *receives* positive funding; a long
     pays it); pass ``{}`` for a funding-blind fold. ``float`` only at the boundary (the statistics
-    plane)."""
+    plane).
+
+    **Point-in-time membership (the unbalanced panel):** the aligned series may hold ``None``
+    where a member has no bar (not yet listed / a gap / delisted). A symbol is *scoreable* at a
+    rebalance only if both its closes and its signal are real over the whole trailing
+    ``lookback + 1`` window (it earns a rank only on real consecutive data — never on a fill); the
+    strategy is handed exactly that window, which is all a trailing score consumes. A held symbol
+    earns the ``i -> i+1`` return only when both closes are real (else it contributes a flat 0
+    that bar), and one whose data stops is dropped at the next rebalance (turnover charged)."""
     cfg = strategy.config
     warmup = cfg.lookback  # the first bar with a full trailing window
     held: dict[str, Decimal] = {}
@@ -148,20 +171,29 @@ def simulate_panel(
     for i in range(warmup, n - 1):  # need bar i+1 for the forward return + the day-i+1 funding
         cost_i = Decimal(0)
         if (i - warmup) % cfg.holding_period == 0:
-            target = strategy.target_weights({s: signal[s][: i + 1] for s in signal})
+            lo = i - warmup  # the trailing lookback+1 window [lo, i] a trailing score consumes
+            eligible = {
+                s: cast("Sequence[Decimal]", signal[s][lo : i + 1])
+                for s in signal
+                if _real_window(closes[s], lo, i + 1) and _real_window(signal[s], lo, i + 1)
+            }
+            target = strategy.target_weights(eligible)
             turnover = sum(
                 (abs(target.get(s, Decimal(0)) - held.get(s, Decimal(0))) for s in target | held),
                 Decimal(0),
             )
             cost_i = turnover * cost
             held = target
-        # a held symbol whose current close is non-positive (a data gap/artifact, not a real
-        # -100%) contributes a flat 0 — guards the division, mirroring the base<=0 score guard.
+        # a held symbol earns only across two REAL closes; a non-positive current close (a data
+        # artifact, not a real -100%) also contributes a flat 0 — guards the division, mirroring
+        # the base<=0 score guard.
         bar_return = sum(
             (
-                held[s] * (closes[s][i + 1] / closes[s][i] - Decimal(1))
+                held[s] * (c1 / c0 - Decimal(1))
                 for s in held
-                if closes[s][i] > 0
+                if (c0 := closes[s][i]) is not None
+                and c0 > 0
+                and (c1 := closes[s][i + 1]) is not None
             ),
             Decimal(0),
         )

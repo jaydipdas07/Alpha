@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -187,6 +187,37 @@ def _write_seal_manifest(root: Path, windows: dict[str, HoldoutWindow]) -> None:
     (root / "_windows.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
 
 
+def _prior_window_starts(holdout_root: Path) -> dict[str, datetime]:
+    """The previous seal's per-series window starts (from the ``_windows.json`` manifest), keyed
+    ``"venue|symbol|interval"`` — the **monotonic floor** a re-seal must respect. Empty if the
+    store was never sealed."""
+    path = holdout_root / "_windows.json"
+    if not path.exists():
+        return {}
+    manifest: dict[str, dict[str, str]] = json.loads(path.read_text())
+    return {key: datetime.fromisoformat(d["start"]) for key, d in manifest.items()}
+
+
+def _floored_window(
+    window: HoldoutWindow, key: str, interval_seconds: int, prior: Mapping[str, datetime]
+) -> HoldoutWindow:
+    """Clamp a computed window's start to the **monotonic floor** (TEST-3): the holdout boundary
+    may only ever move FORWARD in time. Extending a series' history backward stretches its span,
+    which would drag the fraction-of-span start backward into data the discovery loop has already
+    researched — silently converting researched bars into "holdout". The floor is the series' own
+    prior sealed start; a series never sealed before (e.g. a new spot leg) inherits the latest
+    prior start among same-interval series (its pre-boundary history was never holdout anywhere —
+    its sibling series' bars there were research — while its post-boundary tail must stay unseen).
+    ``max`` also handles the all-new-store case: with no prior manifest the computed window wins."""
+    floor = prior.get(key)
+    if floor is None:
+        suffix = f"|{interval_seconds}"
+        floor = max((s for k, s in prior.items() if k.endswith(suffix)), default=None)
+    if floor is None or floor <= window.start:
+        return window
+    return HoldoutWindow(start=floor, end=window.end, version=_version(floor, window.end))
+
+
 def seal_cold_store(
     source: BarStore, *, research: BarStore, holdout: BarStore, fraction: float
 ) -> dict[str, HoldoutWindow]:
@@ -203,10 +234,17 @@ def seal_cold_store(
     The research store ends up **holdout-free per series** — the structural TEST-3 guarantee
     ``ColdStoreBarsFor`` relies on (it reads the whole series and trusts this boundary). ``source``,
     ``research`` and ``holdout`` must be pairwise-disjoint roots so no Parquet glob crosses them; a
-    re-seal rebuilds both targets from scratch (the rolled-forward windows are not monotonic)."""
+    re-seal rebuilds both targets from scratch.
+
+    **The boundary is pinned monotonic (TEST-3):** each series' window start is floored at the
+    previous seal's start (read from the ``_windows.json`` manifest *before* the rebuild), so a
+    re-seal over backward-extended history can never drag the boundary back into already-researched
+    data — the holdout stays the same never-seen tail and only ever grows FORWARD as new data
+    arrives (the clamped windows are written back to the manifest, so the floor compounds)."""
     _assert_disjoint(source.root, research.root)
     _assert_disjoint(source.root, holdout.root)
     _assert_disjoint(research.root, holdout.root)
+    prior = _prior_window_starts(holdout.root)  # BEFORE the rebuild — the monotonic floor
     _clear_parquet(research)
     _clear_parquet(holdout)
     windows: dict[str, HoldoutWindow] = {}
@@ -215,9 +253,11 @@ def seal_cold_store(
         window = compute_holdout_window([b.start for b in bars], fraction=fraction)
         if window is None:  # pragma: no cover - a listed series always has >=1 bar
             continue
+        key = f"{venue.value}|{symbol}|{interval_seconds}"
+        window = _floored_window(window, key, interval_seconds, prior)
         research_bars, holdout_bars = split_research_holdout(bars, window)
         research.write_bars(research_bars)
         holdout.write_bars(holdout_bars)
-        windows[f"{venue.value}|{symbol}|{interval_seconds}"] = window
+        windows[key] = window
     _write_seal_manifest(holdout.root, windows)
     return windows

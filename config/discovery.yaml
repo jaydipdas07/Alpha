@@ -332,11 +332,14 @@ cells:
 # ingest. The panel backtester + the cross-sectional templates consume these (the next
 # increment); ingest (scripts/ingest_cold_store.py) already pulls every member series.
 #
-# Universe = the 42 most-liquid Binance USDT perpetuals (by 24h quote-volume) that were
-# all listed on/before the daily ingest start (2023-06-01), so every member spans the
-# full backtest+holdout window — the cross-section is never thin at the start. Gold /
-# stablecoin pegs are excluded (not crypto-momentum names). Membership is by listing
-# age + liquidity, not by the volume rank itself.
+# Universe = the 42 most-liquid Binance USDT perpetuals (by 24h quote-volume). Membership
+# is POINT-IN-TIME (the M3.0-follow-on unbalanced panel): the backtester's timeline is the
+# union of every member's bar-starts, and a symbol enters the cross-section only once it
+# has printed a full trailing lookback window — so daily history reaches the oldest
+# listings (2019-09, ingest_cold_store `_1D_START`) and a later listing simply joins
+# later; the cross-section is thinner early, never look-ahead-biased. Gold / stablecoin
+# pegs are excluded (not crypto-momentum names). Widening the universe is a config-only
+# edit (add symbols; ingest picks them up).
 panels:
   - name: "crypto-perps-1d"
     market: CRYPTO

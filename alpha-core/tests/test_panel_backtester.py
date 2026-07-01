@@ -27,6 +27,7 @@ from alpha_core.research.panel_backtester import (
     PANEL_TEMPLATES,
     ColdStorePanelBarsFor,
     PanelBacktester,
+    align_closes,
     simulate_panel,
     turnover_cost_fraction,
 )
@@ -54,9 +55,10 @@ def _closes(d: dict[str, list[str]]) -> dict[str, list[Decimal]]:
     return {k: [Decimal(x) for x in v] for k, v in d.items()}
 
 
-def _bars(symbol: str, closes: list[str]) -> list[Bar]:
+def _bars(symbol: str, closes: list[str], offset: int = 0) -> list[Bar]:
     """A flat OHLCV series (open=high=low=close) at consecutive daily UTC starts — the cross-section
-    varies *across* bars (the trailing-return signal), not within one."""
+    varies *across* bars (the trailing-return signal), not within one. ``offset`` shifts the first
+    bar by whole days (a later listing)."""
     out: list[Bar] = []
     for i, c in enumerate(closes):
         price = Decimal(c)
@@ -65,7 +67,7 @@ def _bars(symbol: str, closes: list[str]) -> list[Bar]:
                 symbol=symbol,
                 venue=Venue.BINANCE,
                 asset_class=_CRYPTO,
-                start=START + i * DAY,
+                start=START + (offset + i) * DAY,
                 interval=DAY,
                 open=price,
                 high=price,
@@ -204,9 +206,10 @@ def test_no_lookahead_a_future_bar_leaves_earlier_returns_unchanged() -> None:
 
 
 class _SpyStrategy:
-    """Records the bar index at each rebalance (the length of a sliced series minus one)."""
+    """Records each rebalance: the current bar's close (identifies WHICH bar, since the fold hands
+    the trailing window ending at the rebalance bar) and the window width it was handed."""
 
-    def __init__(self, config: CrossSectionalConfig, calls: list[int]) -> None:
+    def __init__(self, config: CrossSectionalConfig, calls: list[tuple[Decimal, int]]) -> None:
         self._config = config
         self._calls = calls
 
@@ -215,18 +218,21 @@ class _SpyStrategy:
         return self._config
 
     def target_weights(self, closes: Mapping[str, Sequence[Decimal]]) -> dict[str, Decimal]:
-        self._calls.append(len(next(iter(closes.values()))) - 1)
+        series = next(iter(closes.values()))
+        self._calls.append((series[-1], len(series)))
         return {}
 
 
 def test_holding_period_controls_the_rebalance_cadence() -> None:
     # simulate_panel re-ranks only every `holding_period` bars (between, it holds the prior book by
-    # construction — `held` is reassigned only inside the cadence branch).
-    closes = {sym: [Decimal(1)] * 12 for sym in ("A", "B", "C", "D")}
-    calls: list[int] = []
+    # construction — `held` is reassigned only inside the cadence branch), and each rebalance hands
+    # the strategy exactly the trailing lookback+1 window ending at the rebalance bar.
+    closes = {sym: [Decimal(i) for i in range(12)] for sym in ("A", "B", "C", "D")}
+    calls: list[tuple[Decimal, int]] = []
     cfg = CrossSectionalConfig(lookback=2, top_k=1, holding_period=3)
     simulate_panel(_SpyStrategy(cfg, calls), closes, closes, {}, n=12, cost=Decimal(0))
-    assert calls == [2, 5, 8]  # warmup=2, then every 3 bars over range(2, 11)
+    # warmup=2, then every 3 bars over range(2, 11): bars 2, 5, 8 (close == the bar index).
+    assert calls == [(Decimal(2), 3), (Decimal(5), 3), (Decimal(8), 3)]
 
 
 class _FixedBook:
@@ -280,6 +286,45 @@ def test_turnover_cost_fraction_crypto_and_equity() -> None:
     assert turnover_cost_fraction(_CRYPTO) == Decimal("0.0008")
     with pytest.raises(NotImplementedError):
         turnover_cost_fraction(AssetClass.EQUITY)
+
+
+# --- the unbalanced panel: union timeline + point-in-time membership -----------------------------
+
+
+def test_align_closes_unions_the_timeline_and_marks_missing_slots() -> None:
+    # a later listing does NOT truncate the panel (the old inner-join would drop bar 0 entirely);
+    # its missing slots are None — no forward-fill, membership is the fold's job.
+    panel = {"A": _bars("A", ["1", "2", "3"]), "E": _bars("E", ["5", "6"], offset=1)}
+    timeline, closes = align_closes(panel)
+    assert timeline == [START + i * DAY for i in range(3)]
+    assert closes["A"] == [Decimal(1), Decimal(2), Decimal(3)]
+    assert closes["E"] == [None, Decimal(5), Decimal(6)]
+
+
+def test_late_listed_member_joins_only_once_its_trailing_window_is_real() -> None:
+    # E lists at bar 2 of 6 and, once scoreable, is the runaway winner (x3 vs A's x2). Before its
+    # lookback+1 window is real the book must be IDENTICAL to the E-less panel (no pre-listing
+    # membership, no fill); after, momentum longs E — point-in-time membership end to end.
+    base = _panel(_DISTINCT)
+    with_e = {**_panel(_DISTINCT), "E": _bars("E", ["1", "3", "9", "27"], offset=2)}
+    params = {"lookback": 1, "top_k": 1, "holding_period": 1}
+    base_returns = list(_bt(base).run(_proposal("cross_sectional_momentum", params)))
+    e_returns = list(_bt(with_e).run(_proposal("cross_sectional_momentum", params)))
+    assert len(e_returns) == len(base_returns)  # the union timeline is the full 6 bars
+    assert e_returns[:2] == base_returns[:2]  # E not yet scoreable -> books identical
+    assert e_returns[2] != base_returns[2]  # E's window is real from bar 3 -> it takes the long leg
+    assert e_returns[2] == pytest.approx(2.0 - (-0.5))  # long E (x3), short B (x0.5)
+
+
+def test_member_that_stops_printing_earns_a_flat_zero() -> None:
+    # a held symbol whose close disappears (a gap / delisting) contributes 0 from the missing bar
+    # on — never a fabricated return off a filled price.
+    closes: dict[str, list[Decimal | None]] = {
+        "A": [Decimal(1), Decimal(2), Decimal(4), None, None],
+        "B": [Decimal(1)] * 5,
+    }
+    returns = simulate_panel(_FixedBook(), closes, closes, {}, n=5, cost=Decimal(0))
+    assert returns == pytest.approx([1.0, 0.0, 0.0])  # A doubles once, then its data stops
 
 
 # --- funding folded into the PRICE panel (a perp book pays/earns funding continuously) -----------

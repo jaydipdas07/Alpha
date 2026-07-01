@@ -136,6 +136,82 @@ def test_seal_rejects_non_disjoint_roots(tmp_path: Path) -> None:
         seal_cold_store(source, research=BarStore(shared), holdout=BarStore(shared), fraction=0.2)
 
 
+# --- the monotonic holdout floor (TEST-3): the boundary only ever moves FORWARD -------------------
+
+
+def test_reseal_over_backward_extended_history_pins_the_boundary(tmp_path: Path) -> None:
+    # The Finding-3 hazard: extending a series' history BACKWARD (2023 -> 2019 ingest) stretches
+    # the span, so the fraction-of-span start would move backward — into bars the discovery loop
+    # already researched. The floor pins it: the holdout stays the same never-seen tail.
+    sym, venue, ac, interval, interval_s = _EQUITY_1D
+    source = BarStore(tmp_path / "raw")
+    research = BarStore(tmp_path / "research")
+    holdout = BarStore(tmp_path / "holdout")
+    source.write_bars(
+        _series(sym, venue, ac, interval, n=200, start=datetime(2023, 6, 1, tzinfo=UTC))
+    )
+    first = seal_cold_store(source, research=research, holdout=holdout, fraction=0.25)
+    pinned = first[f"{venue.value}|{sym}|{interval_s}"].start
+
+    # extend the SAME series 400 bars further back (the raw store merges; span now much longer).
+    source.write_bars(
+        _series(sym, venue, ac, interval, n=400, start=datetime(2022, 4, 27, tzinfo=UTC))
+    )
+    second = seal_cold_store(source, research=research, holdout=holdout, fraction=0.25)
+    window = second[f"{venue.value}|{sym}|{interval_s}"]
+    assert window.start == pinned  # floored — NOT dragged back by the longer span
+    # nothing at/after the pinned boundary reached the research store (TEST-3 held).
+    research_bars = research.read_bars(symbol=sym, venue=venue, interval_seconds=interval_s)
+    assert research_bars and all(b.start < pinned for b in research_bars)
+    # and the manifest records the CLAMPED window (the floor compounds across seals).
+    manifest = json.loads((holdout.root / "_windows.json").read_text())
+    assert manifest[f"{venue.value}|{sym}|{interval_s}"]["start"] == pinned.isoformat()
+
+
+def test_reseal_still_rolls_the_boundary_forward(tmp_path: Path) -> None:
+    # the floor is one-directional: NEW data at the end still rolls the window forward (R5).
+    sym, venue, ac, interval, interval_s = _EQUITY_1D
+    source = BarStore(tmp_path / "raw")
+    research = BarStore(tmp_path / "research")
+    holdout = BarStore(tmp_path / "holdout")
+    start = datetime(2023, 6, 1, tzinfo=UTC)
+    source.write_bars(_series(sym, venue, ac, interval, n=200, start=start))
+    first = seal_cold_store(source, research=research, holdout=holdout, fraction=0.25)
+    source.write_bars(_series(sym, venue, ac, interval, n=280, start=start))  # 80 newer bars
+    second = seal_cold_store(source, research=research, holdout=holdout, fraction=0.25)
+    key = f"{venue.value}|{sym}|{interval_s}"
+    assert second[key].start > first[key].start
+
+
+def test_new_series_inherits_the_interval_floor(tmp_path: Path) -> None:
+    # a series never sealed before (e.g. the basis track's spot leg) inherits the latest prior
+    # start among same-interval series: its pre-boundary history was never holdout anywhere, but
+    # its post-boundary tail must stay unseen like its siblings'.
+    sym, venue, ac, interval, interval_s = _EQUITY_1D
+    source = BarStore(tmp_path / "raw")
+    research = BarStore(tmp_path / "research")
+    holdout = BarStore(tmp_path / "holdout")
+    start = datetime(2023, 6, 1, tzinfo=UTC)
+    source.write_bars(_series(sym, venue, ac, interval, n=200, start=start))
+    first = seal_cold_store(source, research=research, holdout=holdout, fraction=0.25)
+    sibling_start = first[f"{venue.value}|{sym}|{interval_s}"].start
+
+    # a NEW same-interval series with a LONGER history but the same recent end: its own 25% tail
+    # would start far earlier than the sibling boundary -> it must be floored AT that boundary.
+    source.write_bars(
+        _series("NSE:TCS", venue, ac, interval, n=565, start=datetime(2022, 6, 1, tzinfo=UTC))
+    )
+    second = seal_cold_store(source, research=research, holdout=holdout, fraction=0.25)
+    assert second[f"{venue.value}|NSE:TCS|{interval_s}"].start == sibling_start
+    # a different-interval series is NOT clamped by it (each interval pins its own boundary).
+    csym, cvenue, cac, cinterval, cinterval_s = _CRYPTO_5M
+    source.write_bars(
+        _series(csym, cvenue, cac, cinterval, n=100, start=datetime(2026, 5, 1, tzinfo=UTC))
+    )
+    third = seal_cold_store(source, research=research, holdout=holdout, fraction=0.25)
+    assert third[f"{cvenue.value}|{csym}|{cinterval_s}"].start > sibling_start
+
+
 def test_reseal_rebuilds_fresh(tmp_path: Path) -> None:
     source = BarStore(tmp_path / "raw")
     research = BarStore(tmp_path / "research")

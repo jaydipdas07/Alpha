@@ -51,8 +51,13 @@ STORE_ROOT = Path(
 _HEADERS = {"User-Agent": "Mozilla/5.0 (alpha-research cold-store ingest)"}
 
 # Fixed past windows (reproducible — a fixed end, never "now").
-_END = datetime(2026, 6, 21, tzinfo=UTC)  # recent boundary (covers the B1a.1b seed -> contiguous)
-_3Y = datetime(2023, 6, 1, tzinfo=UTC)  # ~3 years of daily history
+_END = datetime(2026, 6, 30, tzinfo=UTC)  # recent boundary (covers the B1a.1b seed -> contiguous)
+# Daily crypto reaches back to the oldest USDT-perp listings (BTC/ETH 2019-09): the M3.0-follow-on
+# unbalanced panel scores members point-in-time from each listing date, so the full free span is
+# usable — a symbol listed later simply enters the cross-section later (Binance returns data from
+# listing when startTime predates it). ~2,500 daily bars/symbol = 2 pages, well inside the cap.
+_1D_START = datetime(2019, 9, 1, tzinfo=UTC)
+_3Y = datetime(2023, 6, 1, tzinfo=UTC)  # ~3 years of daily history (the NSE/Yahoo equity leg)
 _1Y = datetime(2025, 6, 21, tzinfo=UTC)  # ~1 year of hourly history
 _INTRADAY_START = datetime(2026, 5, 1, tzinfo=UTC)  # ~7 weeks of 5-minute intraday
 _1MIN_START = datetime(2026, 5, 31, tzinfo=UTC)  # ~3 weeks of 1-minute (box-safe ~30k bars/cell)
@@ -76,7 +81,7 @@ _CRYPTO_TFS = [
     ("1m", 60, _1MIN_START, "1m ~3wk"),
     ("5m", 300, _INTRADAY_START, "5m ~7wk"),
     ("1h", 3600, _1Y, "1h ~1y"),
-    ("1d", 86400, _3Y, "1d ~3y"),
+    ("1d", 86400, _1D_START, "1d from listing (2019-09+)"),
 ]
 # interval_seconds -> (binance_interval, window_start) so a cross-sectional panel ingests at the
 # same fixed, reproducible window as the matching single-instrument timeframe.
