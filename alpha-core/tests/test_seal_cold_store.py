@@ -16,7 +16,7 @@ import pytest
 
 from alpha_core.core.enums import AssetClass, Venue
 from alpha_core.core.models import Bar
-from alpha_core.data.holdout import seal_cold_store
+from alpha_core.data.holdout import compute_holdout_window, seal_cold_store
 from alpha_core.data.store import BarStore
 from alpha_core.research.cold_store_bars import ColdStoreBarsFor, SeriesCoord
 
@@ -210,6 +210,62 @@ def test_new_series_inherits_the_interval_floor(tmp_path: Path) -> None:
     )
     third = seal_cold_store(source, research=research, holdout=holdout, fraction=0.25)
     assert third[f"{cvenue.value}|{csym}|{cinterval_s}"].start > sibling_start
+
+
+def test_new_short_history_member_adopts_the_boundary_outright(tmp_path: Path) -> None:
+    # a never-sealed member listed INSIDE the siblings' never-seen window: its own fraction-of-span
+    # start would be later than the pinned boundary, quietly handing bars from the panel's holdout
+    # window to the research store. It must adopt the boundary outright -> ALL holdout here.
+    sym, venue, ac, interval, interval_s = _EQUITY_1D
+    source = BarStore(tmp_path / "raw")
+    research = BarStore(tmp_path / "research")
+    holdout = BarStore(tmp_path / "holdout")
+    source.write_bars(
+        _series(sym, venue, ac, interval, n=200, start=datetime(2023, 6, 1, tzinfo=UTC))
+    )
+    first = seal_cold_store(source, research=research, holdout=holdout, fraction=0.25)
+    boundary = first[f"{venue.value}|{sym}|{interval_s}"].start
+
+    # NSE:NEWIPO lists AFTER the boundary — its whole life is inside the never-seen window.
+    listed = boundary + 5 * interval
+    source.write_bars(_series("NSE:NEWIPO", venue, ac, interval, n=20, start=listed))
+    second = seal_cold_store(source, research=research, holdout=holdout, fraction=0.25)
+    assert second[f"{venue.value}|NSE:NEWIPO|{interval_s}"].start == boundary
+    assert (
+        research.read_bars(symbol="NSE:NEWIPO", venue=venue, interval_seconds=interval_s) == []
+    )  # nothing from the never-seen window reached the research store
+    assert (
+        len(holdout.read_bars(symbol="NSE:NEWIPO", venue=venue, interval_seconds=interval_s)) == 20
+    )
+
+
+def test_new_series_on_another_venue_is_not_floored_by_this_one(tmp_path: Path) -> None:
+    # the inherited floor is VENUE-scoped: an unrelated market's later boundary must never set a
+    # new member's boundary (a cross-market clamp would silently move data across the TEST-3 line).
+    sym, venue, ac, interval, interval_s = _EQUITY_1D
+    source = BarStore(tmp_path / "raw")
+    research = BarStore(tmp_path / "research")
+    holdout = BarStore(tmp_path / "holdout")
+    source.write_bars(
+        _series(sym, venue, ac, interval, n=200, start=datetime(2023, 6, 1, tzinfo=UTC))
+    )
+    seal_cold_store(source, research=research, holdout=holdout, fraction=0.25)
+
+    # a never-sealed BINANCE daily series: same interval, different venue -> its OWN computed
+    # window (not the NSE floor).
+    crypto = _series(
+        "BTCUSDT",
+        Venue.BINANCE,
+        AssetClass.CRYPTO,
+        interval,
+        n=400,
+        start=datetime(2022, 6, 1, tzinfo=UTC),
+    )
+    source.write_bars(crypto)
+    windows = seal_cold_store(source, research=research, holdout=holdout, fraction=0.25)
+    own = compute_holdout_window([b.start for b in crypto], fraction=0.25)
+    assert own is not None
+    assert windows[f"BINANCE|BTCUSDT|{interval_s}"].start == own.start
 
 
 def test_reseal_rebuilds_fresh(tmp_path: Path) -> None:

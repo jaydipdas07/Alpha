@@ -199,23 +199,42 @@ def _prior_window_starts(holdout_root: Path) -> dict[str, datetime]:
 
 
 def _floored_window(
-    window: HoldoutWindow, key: str, interval_seconds: int, prior: Mapping[str, datetime]
+    window: HoldoutWindow,
+    key: str,
+    venue: Venue,
+    interval_seconds: int,
+    prior: Mapping[str, datetime],
 ) -> HoldoutWindow:
-    """Clamp a computed window's start to the **monotonic floor** (TEST-3): the holdout boundary
-    may only ever move FORWARD in time. Extending a series' history backward stretches its span,
-    which would drag the fraction-of-span start backward into data the discovery loop has already
-    researched — silently converting researched bars into "holdout". The floor is the series' own
-    prior sealed start; a series never sealed before (e.g. a new spot leg) inherits the latest
-    prior start among same-interval series (its pre-boundary history was never holdout anywhere —
-    its sibling series' bars there were research — while its post-boundary tail must stay unseen).
-    ``max`` also handles the all-new-store case: with no prior manifest the computed window wins."""
-    floor = prior.get(key)
-    if floor is None:
-        suffix = f"|{interval_seconds}"
-        floor = max((s for k, s in prior.items() if k.endswith(suffix)), default=None)
-    if floor is None or floor <= window.start:
+    """Pin a computed window's start to the **monotonic floor** (TEST-3): the holdout boundary may
+    only ever move FORWARD in time. Extending a series' history backward stretches its span, which
+    would drag the fraction-of-span start backward into data the discovery loop has already
+    researched — silently converting researched bars into "holdout".
+
+    - A previously-sealed series ratchets: ``start = max(computed, its own prior start)`` (the
+      forward roll, R5, still releases the rolled-past tail).
+    - A series never sealed before **adopts the latest prior start among same-venue,
+      same-interval siblings outright** — even when its own fraction-of-span start would be
+      *later*. Its pre-boundary history was never holdout anywhere (the siblings' bars there were
+      research), but everything at/after the pinned boundary must stay unseen: a recently-listed
+      member whose whole life sits inside the siblings' never-seen window is therefore ALL
+      holdout, not quietly handed to the research store. The floor is venue-scoped so an
+      unrelated market's boundary can never set (or leak into) this one; a brand-new venue seeds
+      its own boundaries — if its series are near-twins of an existing venue's (the basis spot
+      leg vs the perps), seed its floor explicitly at that venue's introduction.
+    - No applicable prior (a fresh store / a new venue): the computed window stands."""
+    own = prior.get(key)
+    if own is not None:
+        if own <= window.start:
+            return window
+        return HoldoutWindow(start=own, end=window.end, version=_version(own, window.end))
+    prefix, suffix = f"{venue.value}|", f"|{interval_seconds}"
+    inherited = max(
+        (s for k, s in prior.items() if k.startswith(prefix) and k.endswith(suffix)),
+        default=None,
+    )
+    if inherited is None or inherited == window.start:
         return window
-    return HoldoutWindow(start=floor, end=window.end, version=_version(floor, window.end))
+    return HoldoutWindow(start=inherited, end=window.end, version=_version(inherited, window.end))
 
 
 def seal_cold_store(
@@ -254,7 +273,7 @@ def seal_cold_store(
         if window is None:  # pragma: no cover - a listed series always has >=1 bar
             continue
         key = f"{venue.value}|{symbol}|{interval_seconds}"
-        window = _floored_window(window, key, interval_seconds, prior)
+        window = _floored_window(window, key, venue, interval_seconds, prior)
         research_bars, holdout_bars = split_research_holdout(bars, window)
         research.write_bars(research_bars)
         holdout.write_bars(holdout_bars)
