@@ -9,14 +9,18 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from alpha_core.core.enums import AssetClass, Venue
 from alpha_core.core.models import Bar
+from alpha_core.data.holdout import HoldoutStore, HoldoutWindow
 from alpha_core.data.store import BarStore
+from alpha_core.research.cold_store_bars import SeriesCoord
 from alpha_core.research.discovery import run_discovery_cycle
+from alpha_core.research.holdout_gate import HoldoutPanelBarsFor
 from alpha_core.research.panel_backtester import (
     PANEL_TEMPLATES,
     ColdStorePanelBarsFor,
@@ -24,6 +28,7 @@ from alpha_core.research.panel_backtester import (
     _simulate,
     turnover_cost_fraction,
 )
+from alpha_core.research.promote import build_panel_backtesters
 from alpha_core.research.proposal_ledger import ProposalLedger
 from alpha_core.research.quant_analyst import QuantAnalyst
 from alpha_core.research.strategist import (
@@ -288,6 +293,55 @@ def test_cold_store_panel_unmapped_raises(tmp_path: object) -> None:
     source = ColdStorePanelBarsFor(BarStore(tmp_path), {})  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="no discovery panel mapped"):
         source(_CRYPTO, "not-a-panel")
+
+
+def test_cold_store_panel_rejects_asset_class_mismatch(tmp_path: object) -> None:
+    store = BarStore(tmp_path)  # type: ignore[arg-type]
+    store.write_bars(_bars("BTCUSDT", ["1", "2", "3"]))  # BTCUSDT bars are CRYPTO
+    panels = {(AssetClass.EQUITY, "p"): [SeriesCoord("BTCUSDT", Venue.BINANCE, 86400)]}
+    with pytest.raises(ValueError, match="not EQUITY"):
+        ColdStorePanelBarsFor(store, panels)(AssetClass.EQUITY, "p")  # claims EQUITY -> fail fast
+
+
+def test_build_panel_backtesters_wires_the_test3_boundary(tmp_path: Path) -> None:
+    # the load-bearing TEST-3 wiring: in-sample reads the cold/research store, holdout the gate-only
+    # store. A future edit that swapped the two would flip these reader types and fail here.
+    in_sample, holdout_bt = build_panel_backtesters(
+        research_store=BarStore(tmp_path / "research"),
+        holdout_store=HoldoutStore(tmp_path / "holdout"),
+    )
+    assert isinstance(in_sample, PanelBacktester) and isinstance(holdout_bt, PanelBacktester)
+    assert isinstance(in_sample._panel_bars_for, ColdStorePanelBarsFor)
+    assert isinstance(holdout_bt._panel_bars_for, HoldoutPanelBarsFor)
+
+
+# --- the gate-only holdout panel boundary (TEST-3 — the single legitimate read) ------------------
+
+
+def _holdout(tmp_path: object, *series: list[Bar]) -> HoldoutStore:
+    store = HoldoutStore(tmp_path)  # type: ignore[arg-type]
+    bars = [bar for s in series for bar in s]
+    store.replace(bars, HoldoutWindow(start=START, end=START + 9 * DAY, version="v"))
+    return store
+
+
+def test_holdout_panel_reads_only_ingested_members(tmp_path: object) -> None:
+    store = _holdout(tmp_path, _bars("BTCUSDT", ["1", "2", "3"]), _bars("ETHUSDT", ["3", "2", "1"]))
+    members = HoldoutPanelBarsFor.from_config(store)(_CRYPTO, "crypto-perps-1d")
+    assert set(members) == {"BTCUSDT", "ETHUSDT"}  # the other 40 members read empty -> dropped
+
+
+def test_holdout_panel_unmapped_raises(tmp_path: object) -> None:
+    source = HoldoutPanelBarsFor(HoldoutStore(tmp_path), {})  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="no discovery panel mapped"):
+        source(_CRYPTO, "not-a-panel")
+
+
+def test_holdout_panel_rejects_asset_class_mismatch(tmp_path: object) -> None:
+    store = _holdout(tmp_path, _bars("BTCUSDT", ["1", "2", "3"]))  # BTCUSDT bars are CRYPTO
+    panels = {(AssetClass.EQUITY, "p"): [SeriesCoord("BTCUSDT", Venue.BINANCE, 86400)]}
+    with pytest.raises(ValueError, match="not EQUITY"):
+        HoldoutPanelBarsFor(store, panels)(AssetClass.EQUITY, "p")  # claims EQUITY -> fail fast
 
 
 # --- the strategist drives the injected panel registry, and the cycle runs end-to-end ------------

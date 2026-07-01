@@ -67,6 +67,53 @@ class HoldoutBarsFor:
         return bars
 
 
+class HoldoutPanelBarsFor:
+    """A panel ``PanelBarsFor`` backed by the gate-only :class:`HoldoutStore` — the ONE legitimate
+    holdout read for a *panel* (TEST-3). The panel analogue of :class:`HoldoutBarsFor`: resolves a
+    panel ``(market, name)`` to its member series and reads each member's **holdout** bars.
+    Structurally isolated — never handed to the research/agent surface (which gets the holdout-free
+    cold store). Un-ingested members read back empty and are dropped (the panel backtester's
+    ``>= 2*n_groups`` guard surfaces a panel that is too thin overall)."""
+
+    def __init__(self, holdout: HoldoutStore, panels: Mapping[CellKey, list[SeriesCoord]]) -> None:
+        self._holdout = holdout
+        self._panels: dict[CellKey, list[SeriesCoord]] = dict(panels)
+
+    @classmethod
+    def from_config(cls, holdout: HoldoutStore) -> HoldoutPanelBarsFor:
+        """Build the panel -> member-series map from ``config/discovery.yaml`` over the holdout."""
+        cfg = load_discovery_config()
+        panels = {
+            (panel.market, panel.name): [
+                SeriesCoord(symbol, panel.venue, panel.interval_seconds) for symbol in panel.symbols
+            ]
+            for panel in cfg.panels
+        }
+        return cls(holdout, panels)
+
+    def __call__(self, market: AssetClass, window: str) -> dict[str, list[Bar]]:
+        coords = self._panels.get((market, window))
+        if coords is None:
+            known = sorted(f"{m.value}/{w}" for m, w in self._panels)
+            raise ValueError(
+                f"no discovery panel mapped for {market.value}/{window!r}; known panels: {known}."
+            )
+        members: dict[str, list[Bar]] = {}
+        for coord in coords:
+            bars = self._holdout.read_holdout(
+                symbol=coord.symbol, venue=coord.venue, interval_seconds=coord.interval_seconds
+            )
+            if not bars:
+                continue
+            if bars[0].asset_class != market:
+                raise ValueError(
+                    f"holdout panel {market.value}/{window!r} member {coord.symbol} is "
+                    f"{bars[0].asset_class.value}, not {market.value} — fix discovery.yaml."
+                )
+            members[coord.symbol] = bars
+        return members
+
+
 @dataclass(frozen=True, slots=True)
 class HoldoutGateResult:
     """The one-shot holdout gate's verdict (feeds the human FORM; never an agent view)."""

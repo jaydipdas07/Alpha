@@ -214,6 +214,12 @@ class ColdStorePanelBarsFor:
             bars = self._store.read_bars(
                 symbol=coord.symbol, venue=coord.venue, interval_seconds=coord.interval_seconds
             )
-            if bars:
-                members[coord.symbol] = bars
+            if not bars:
+                continue
+            if bars[0].asset_class != market:  # a config mismap would cost the wrong market's rate
+                raise ValueError(
+                    f"discovery panel {market.value}/{window!r} member {coord.symbol} is "
+                    f"{bars[0].asset_class.value}, not {market.value} — fix config/discovery.yaml."
+                )
+            members[coord.symbol] = bars
         return members

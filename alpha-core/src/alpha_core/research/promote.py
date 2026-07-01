@@ -37,8 +37,9 @@ from alpha_core.research.approval import RiskOfficerReview, assemble_review
 from alpha_core.research.cold_store_bars import ColdStoreBarsFor
 from alpha_core.research.discovery import Backtester
 from alpha_core.research.engine_backtester import EngineBacktester
-from alpha_core.research.holdout_gate import HoldoutBarsFor, HoldoutGate
+from alpha_core.research.holdout_gate import HoldoutBarsFor, HoldoutGate, HoldoutPanelBarsFor
 from alpha_core.research.nightly import engine_backtester_for
+from alpha_core.research.panel_backtester import ColdStorePanelBarsFor, PanelBacktester
 from alpha_core.research.paper_eval import evaluate_paper_run
 from alpha_core.research.proposal_ledger import ProposalLedger
 from alpha_core.research.quant_analyst import QuantAnalyst, deflation_inputs
@@ -97,6 +98,24 @@ def build_survivor_backtesters(
         venue=cell.venue,
         starting_cash=cell.starting_cash,
     )
+    return in_sample, holdout
+
+
+def build_panel_backtesters(
+    *, research_store: BarStore, holdout_store: HoldoutStore
+) -> tuple[Backtester, Backtester]:
+    """Wire the production (in-sample, holdout) **panel** backtester pair — the cross-sectional
+    analogue of :func:`build_survivor_backtesters`.
+
+    The in-sample backtester reads the **sealed research** store (holdout-free, TEST-3) via
+    ``ColdStorePanelBarsFor``; the holdout backtester reads the **gate-only** ``HoldoutStore`` via
+    ``HoldoutPanelBarsFor`` — the single legitimate holdout read. Keeping this wiring in one tested
+    place guards the TEST-3 boundary (which store feeds which backtester) against a future edit. A
+    panel needs no per-cell risk/cost wiring — the cross-sectional backtester scores returns
+    directly (signal-quality), with its turnover cost sourced from ``costs.yaml``.
+    """
+    in_sample = PanelBacktester(panel_bars_for=ColdStorePanelBarsFor.from_config(research_store))
+    holdout = PanelBacktester(panel_bars_for=HoldoutPanelBarsFor.from_config(holdout_store))
     return in_sample, holdout
 
 
