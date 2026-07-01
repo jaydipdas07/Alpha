@@ -122,6 +122,138 @@ class CrossSectionalReversal(_CrossSectional):
     _SIGN = -1
 
 
+def _bar_returns(closes: Sequence[Decimal]) -> list[Decimal]:
+    """Consecutive bar-to-bar returns over ``closes`` (skipping non-positive bases, mirroring the
+    base<=0 score guard)."""
+    return [closes[j + 1] / closes[j] - Decimal(1) for j in range(len(closes) - 1) if closes[j] > 0]
+
+
+def _trailing_vol(closes: Sequence[Decimal], period: int) -> Decimal | None:
+    """Population stdev of the last ``period`` bar returns, or ``None`` if the series is too
+    short (needs ``period + 1`` closes) or a base price was non-positive."""
+    if period <= 0 or len(closes) < period + 1:
+        return None
+    returns = _bar_returns(closes[-(period + 1) :])
+    if len(returns) < 2:
+        return None
+    mean = sum(returns, Decimal(0)) / Decimal(len(returns))
+    variance = sum(((r - mean) ** 2 for r in returns), Decimal(0)) / Decimal(len(returns))
+    return variance.sqrt()
+
+
+def vol_scaled_book(
+    base: Mapping[str, Decimal], closes: Mapping[str, Sequence[Decimal]], lookback: int
+) -> dict[str, Decimal]:
+    """Re-weight a dollar-neutral book's legs inversely to each name's trailing vol (risk parity
+    within the leg), renormalizing so longs still sum ``+1`` and shorts ``-1`` — the same names,
+    the same dollar-neutrality, but the high-vol names no longer dominate the book's risk. If any
+    leg member's vol is unavailable or 0 (a degenerate flat series), that leg falls back to equal
+    weight (deterministic, never a division blow-up)."""
+    out: dict[str, Decimal] = {}
+    for sign in (Decimal(1), Decimal(-1)):
+        leg = [s for s, w in base.items() if w * sign > 0]
+        if not leg:
+            continue
+        vols = {s: _trailing_vol(closes[s], lookback) for s in leg}
+        if any(v is None or v <= 0 for v in vols.values()):
+            inverse = dict.fromkeys(leg, Decimal(1))  # fall back to equal weight within the leg
+        else:
+            inverse = {s: Decimal(1) / v for s, v in vols.items() if v is not None}
+        total = sum(inverse.values(), Decimal(0))
+        out.update({s: sign * inverse[s] / total for s in leg})
+    return out
+
+
+class _VolScaled(_CrossSectional):
+    """The base rank + dollar-neutral selection, with inverse-vol weights within each leg."""
+
+    def target_weights(self, closes: Mapping[str, Sequence[Decimal]]) -> dict[str, Decimal]:
+        return vol_scaled_book(super().target_weights(closes), closes, self._cfg.lookback)
+
+
+class VolScaledMomentum(_VolScaled):
+    """Cross-sectional momentum with inverse-trailing-vol leg weights (risk parity in the leg)."""
+
+    _SIGN = 1
+
+
+class VolScaledReversal(_VolScaled):
+    """Cross-sectional reversal with inverse-trailing-vol leg weights (risk parity in the leg)."""
+
+    _SIGN = -1
+
+
+class BetaNeutralConfig(CrossSectionalConfig):
+    """A cross-sectional config with the benchmark the book hedges its beta against. The hedge
+    symbol is config (per-strategy yaml / template default), never a magic string in the fold."""
+
+    hedge_symbol: str = "BTCUSDT"  # the panel member the book's beta is hedged with
+
+
+def trailing_beta(
+    closes: Sequence[Decimal], benchmark: Sequence[Decimal], period: int
+) -> Decimal | None:
+    """OLS beta of the last ``period`` bar returns of ``closes`` on ``benchmark``'s, or ``None``
+    if either series is too short. A flat benchmark (zero variance) yields beta 0 — there is no
+    benchmark risk to hedge."""
+    r_s = _trailing_returns_window(closes, period)
+    r_b = _trailing_returns_window(benchmark, period)
+    if r_s is None or r_b is None or len(r_s) != len(r_b):
+        return None
+    n = Decimal(len(r_b))
+    mean_s = sum(r_s, Decimal(0)) / n
+    mean_b = sum(r_b, Decimal(0)) / n
+    var_b = sum(((b - mean_b) ** 2 for b in r_b), Decimal(0)) / n
+    if var_b == 0:
+        return Decimal(0)
+    cov = sum(((s - mean_s) * (b - mean_b) for s, b in zip(r_s, r_b, strict=True)), Decimal(0)) / n
+    return cov / var_b
+
+
+def _trailing_returns_window(closes: Sequence[Decimal], period: int) -> list[Decimal] | None:
+    """The last ``period`` bar returns (needs ``period + 1`` closes, all bases positive)."""
+    if period <= 0 or len(closes) < period + 1:
+        return None
+    window = closes[-(period + 1) :]
+    returns = _bar_returns(window)
+    return returns if len(returns) == period else None
+
+
+class BetaNeutralMomentum(_CrossSectional):
+    """Cross-sectional momentum with the book's benchmark beta hedged out.
+
+    The base dollar-neutral book is net-zero in DOLLARS but usually not in BETA (the winners leg
+    often carries more market beta than the losers leg), so a "market-neutral" momentum book still
+    bleeds with BTC. This variant estimates each held name's trailing beta to the configured
+    ``hedge_symbol`` and adds a hedge position ``-(Σ w·β)`` in it, driving the book's ex-ante
+    benchmark beta to ~0. No hedge data (the benchmark not scoreable that bar, or any held name's
+    beta unavailable) -> no book — a beta-neutral book without its hedge is not this strategy."""
+
+    _SIGN = 1
+
+    def __init__(self, config: BetaNeutralConfig) -> None:
+        super().__init__(config)
+        self._hedge = config.hedge_symbol
+
+    def target_weights(self, closes: Mapping[str, Sequence[Decimal]]) -> dict[str, Decimal]:
+        if self._hedge not in closes:
+            return {}
+        base = super().target_weights(closes)
+        if not base:
+            return {}
+        benchmark = closes[self._hedge]
+        betas: dict[str, Decimal] = {}
+        for symbol in base:
+            beta = trailing_beta(closes[symbol], benchmark, self._cfg.lookback)
+            if beta is None:
+                return {}  # a held name without a beta estimate -> the hedge would be wrong
+            betas[symbol] = beta
+        hedge = -sum((base[s] * betas[s] for s in base), Decimal(0))
+        out = dict(base)
+        out[self._hedge] = out.get(self._hedge, Decimal(0)) + hedge
+        return out
+
+
 class FundingCarry:
     """Cross-sectional funding **carry** (M3.0): rank the panel by trailing-mean funding and go
     dollar-neutral — **short** the highest-funding perps (a short receives funding) and **long** the

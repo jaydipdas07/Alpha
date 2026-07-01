@@ -38,7 +38,7 @@ from alpha_core.research.approval import RiskOfficerReview, assemble_review
 from alpha_core.research.cold_store_bars import ColdStoreBarsFor
 from alpha_core.research.discovery import Backtester
 from alpha_core.research.engine_backtester import EngineBacktester
-from alpha_core.research.funding_backtester import ColdStoreFundingFor
+from alpha_core.research.funding_backtester import ColdStoreFundingFor, FundingPanelBacktester
 from alpha_core.research.holdout_gate import HoldoutBarsFor, HoldoutGate, HoldoutPanelBarsFor
 from alpha_core.research.nightly import engine_backtester_for
 from alpha_core.research.panel_backtester import ColdStorePanelBarsFor, PanelBacktester
@@ -132,6 +132,29 @@ def build_panel_backtesters(
         panel_funding_for=funding_for,
     )
     holdout = PanelBacktester(
+        panel_bars_for=HoldoutPanelBarsFor.from_config(holdout_store),
+        panel_funding_for=funding_for,
+    )
+    return in_sample, holdout
+
+
+def build_funding_panel_backtesters(
+    *,
+    research_store: BarStore,
+    holdout_store: HoldoutStore,
+    funding_store: FundingStore,
+) -> tuple[Backtester, Backtester]:
+    """Wire the production (in-sample, holdout) **funding-carry** panel backtester pair — the carry
+    analogue of :func:`build_panel_backtesters`, with the same TEST-3 wiring (in-sample reads the
+    sealed research store, holdout the gate-only store) and the funding store feeding BOTH the
+    carry signal and the transfer P&L (each fold's price timeline gates which funding days it can
+    touch). ``funding_store`` is required: for a carry template the funding IS the signal."""
+    funding_for = ColdStoreFundingFor.from_config(funding_store)
+    in_sample = FundingPanelBacktester(
+        panel_bars_for=ColdStorePanelBarsFor.from_config(research_store),
+        panel_funding_for=funding_for,
+    )
+    holdout = FundingPanelBacktester(
         panel_bars_for=HoldoutPanelBarsFor.from_config(holdout_store),
         panel_funding_for=funding_for,
     )

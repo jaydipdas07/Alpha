@@ -41,10 +41,14 @@ from alpha_core.helpers.config import load_discovery_config, load_rigor_config, 
 from alpha_core.research.cold_store_bars import CellKey, SeriesCoord
 from alpha_core.research.strategist import IntRange, StrategyProposal, StrategyTemplate
 from alpha_core.strategy.examples.cross_sectional import (
+    BetaNeutralConfig,
+    BetaNeutralMomentum,
     CrossSectionalConfig,
     CrossSectionalMomentum,
     CrossSectionalReversal,
     PanelStrategy,
+    VolScaledMomentum,
+    VolScaledReversal,
 )
 
 # The cross-sectional template registry (kept separate from the single-instrument ``TEMPLATES`` so
@@ -64,6 +68,30 @@ PANEL_TEMPLATES: dict[str, StrategyTemplate] = {
         CrossSectionalConfig,
         CrossSectionalReversal,
         {"lookback": IntRange(2, 30), "top_k": IntRange(2, 8), "holding_period": IntRange(1, 10)},
+    ),
+    # Richer BOOK CONSTRUCTIONS over the same rank signals (the M3.0-follow-on re-run): inverse-vol
+    # leg weights (risk parity in the leg) and a benchmark-beta hedge. Same param grids as their
+    # base templates — no new tunables, so the n_trials deflation stays honest.
+    "cross_sectional_momentum_volscaled": StrategyTemplate(
+        "cross_sectional_momentum_volscaled",
+        "cross_sectional_momentum_volscaled",
+        CrossSectionalConfig,
+        VolScaledMomentum,
+        {"lookback": IntRange(5, 60), "top_k": IntRange(2, 8), "holding_period": IntRange(1, 10)},
+    ),
+    "cross_sectional_reversal_volscaled": StrategyTemplate(
+        "cross_sectional_reversal_volscaled",
+        "cross_sectional_reversal_volscaled",
+        CrossSectionalConfig,
+        VolScaledReversal,
+        {"lookback": IntRange(2, 30), "top_k": IntRange(2, 8), "holding_period": IntRange(1, 10)},
+    ),
+    "cross_sectional_momentum_betaneutral": StrategyTemplate(
+        "cross_sectional_momentum_betaneutral",
+        "cross_sectional_momentum_betaneutral",
+        BetaNeutralConfig,
+        BetaNeutralMomentum,
+        {"lookback": IntRange(5, 60), "top_k": IntRange(2, 8), "holding_period": IntRange(1, 10)},
     ),
 }
 
