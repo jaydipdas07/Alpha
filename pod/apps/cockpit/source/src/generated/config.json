@@ -863,6 +863,63 @@
             "AXSUSDT",
             "LDOUSDT"
           ]
+        },
+        {
+          "name": "crypto-spot-1d",
+          "market": "CRYPTO",
+          "venue": "BINANCE_SPOT",
+          "interval_seconds": 86400,
+          "starting_cash": "1000000",
+          "symbols": [
+            "BTCUSDT",
+            "ETHUSDT",
+            "SOLUSDT",
+            "ZECUSDT",
+            "XRPUSDT",
+            "DOGEUSDT",
+            "BNBUSDT",
+            "NEARUSDT",
+            "AAVEUSDT",
+            "XLMUSDT",
+            "SUIUSDT",
+            "ADAUSDT",
+            "AVAXUSDT",
+            "LINKUSDT",
+            "BCHUSDT",
+            "FILUSDT",
+            "UNIUSDT",
+            "TRXUSDT",
+            "LTCUSDT",
+            "DOTUSDT",
+            "CHZUSDT",
+            "INJUSDT",
+            "FETUSDT",
+            "XMRUSDT",
+            "OPUSDT",
+            "ARBUSDT",
+            "APTUSDT",
+            "IDUSDT",
+            "ICPUSDT",
+            "HBARUSDT",
+            "ETCUSDT",
+            "ATOMUSDT",
+            "ALGOUSDT",
+            "DASHUSDT",
+            "DYDXUSDT",
+            "ALICEUSDT",
+            "STGUSDT",
+            "CRVUSDT",
+            "AXSUSDT",
+            "LDOUSDT"
+          ]
+        }
+      ],
+      "basis_panels": [
+        {
+          "name": "crypto-basis-1d",
+          "market": "CRYPTO",
+          "perp_panel": "crypto-perps-1d",
+          "spot_panel": "crypto-spot-1d"
         }
       ]
     },

@@ -187,10 +187,12 @@ def _write_seal_manifest(root: Path, windows: dict[str, HoldoutWindow]) -> None:
     (root / "_windows.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
 
 
-def _prior_window_starts(holdout_root: Path) -> dict[str, datetime]:
+def prior_window_starts(holdout_root: Path) -> dict[str, datetime]:
     """The previous seal's per-series window starts (from the ``_windows.json`` manifest), keyed
     ``"venue|symbol|interval"`` — the **monotonic floor** a re-seal must respect. Empty if the
-    store was never sealed."""
+    store was never sealed. Public: the seal script also reads it to derive a twin-venue
+    ``seed_floors`` entry (the basis spot leg inherits the perps' boundary at its introduction —
+    see :func:`seal_cold_store`)."""
     path = holdout_root / "_windows.json"
     if not path.exists():
         return {}
@@ -238,7 +240,12 @@ def _floored_window(
 
 
 def seal_cold_store(
-    source: BarStore, *, research: BarStore, holdout: BarStore, fraction: float
+    source: BarStore,
+    *,
+    research: BarStore,
+    holdout: BarStore,
+    fraction: float,
+    seed_floors: Mapping[tuple[Venue, int], datetime] | None = None,
 ) -> dict[str, HoldoutWindow]:
     """Seal a **multi-series** cold store: reserve each series' OWN rolled-forward holdout tail.
 
@@ -259,11 +266,24 @@ def seal_cold_store(
     previous seal's start (read from the ``_windows.json`` manifest *before* the rebuild), so a
     re-seal over backward-extended history can never drag the boundary back into already-researched
     data — the holdout stays the same never-seen tail and only ever grows FORWARD as new data
-    arrives (the clamped windows are written back to the manifest, so the floor compounds)."""
+    arrives (the clamped windows are written back to the manifest, so the floor compounds).
+
+    ``seed_floors`` — explicit floors for ``(venue, interval)`` pairs with no sealed history of
+    their own, for when a BRAND-NEW venue's series twin an existing venue's (the basis spot leg vs
+    the perps: same symbols, same days). Without a seed a new venue computes fresh
+    fraction-of-span boundaries, which on long history would sit far EARLIER than the twin's
+    already-published research boundary — misaligning the two legs' holdouts from birth. A seed
+    joins the sibling-inheritance scan for its ``(venue, interval)`` (a series' own prior still
+    ratchets first); it is never written to the manifest itself — the floored real windows are,
+    so the floor compounds from the first seeded seal."""
     _assert_disjoint(source.root, research.root)
     _assert_disjoint(source.root, holdout.root)
     _assert_disjoint(research.root, holdout.root)
-    prior = _prior_window_starts(holdout.root)  # BEFORE the rebuild — the monotonic floor
+    prior = prior_window_starts(holdout.root)  # BEFORE the rebuild — the monotonic floor
+    for (seed_venue, seed_interval), start in (seed_floors or {}).items():
+        # a synthetic sibling entry: participates in _floored_window's venue-scoped max scan for
+        # never-sealed series; the "<floor-seed>" pseudo-symbol can never collide with a real key.
+        prior.setdefault(f"{seed_venue.value}|<floor-seed>|{seed_interval}", start)
     _clear_parquet(research)
     _clear_parquet(holdout)
     windows: dict[str, HoldoutWindow] = {}

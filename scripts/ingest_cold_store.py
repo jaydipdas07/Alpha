@@ -112,28 +112,46 @@ def _s(dt: datetime) -> int:
     return int(dt.timestamp())
 
 
+# venue -> (klines endpoint, page cap): the futures fapi pages 1500 rows, the spot api/v3 pages
+# 1000. Same positional row shape (klines_to_bars parses both); the venue keys the stored series,
+# so the basis track's spot leg never collides with the perp series.
+_KLINES_ENDPOINT: dict[Venue, tuple[str, int]] = {
+    Venue.BINANCE: ("https://fapi.binance.com/fapi/v1/klines", 1500),
+    Venue.BINANCE_SPOT: ("https://api.binance.com/api/v3/klines", 1000),
+}
+
+
 def _binance_klines(
-    symbol: str, *, interval: str, interval_seconds: int, start: datetime, end: datetime
+    symbol: str,
+    *,
+    interval: str,
+    interval_seconds: int,
+    start: datetime,
+    end: datetime,
+    venue: Venue = Venue.BINANCE,
 ) -> list[Bar]:
-    """Paginate Binance futures klines over ``[start, end]`` (Binance's ``endTime`` is inclusive, so
-    a bar opening exactly at ``end`` is returned) — the API caps a request at 1500 bars, so step the
-    cursor past the last bar until the window is covered (or a short page ends it). The store dedups
-    by ``start``, so overlapping pages are harmless."""
+    """Paginate Binance klines over ``[start, end]`` (Binance's ``endTime`` is inclusive, so a bar
+    opening exactly at ``end`` is returned) — the API caps a request per venue
+    (``_KLINES_ENDPOINT``), so step the cursor past the last bar until the window is covered (or a
+    short page ends it). The store dedups by ``start``, so overlapping pages are harmless."""
+    endpoint, page_cap = _KLINES_ENDPOINT[venue]
     bars: list[Bar] = []
     cursor = start
     for _ in range(200):  # hard bound against a non-advancing cursor
         url = (
-            f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={interval}"
-            f"&startTime={_ms(cursor)}&endTime={_ms(end)}&limit=1500"
+            f"{endpoint}?symbol={symbol}&interval={interval}"
+            f"&startTime={_ms(cursor)}&endTime={_ms(end)}&limit={page_cap}"
         )
         klines = _get(url)
         if not klines:
             break
-        bars.extend(klines_to_bars(klines, symbol=symbol, interval_seconds=interval_seconds))
+        bars.extend(
+            klines_to_bars(klines, symbol=symbol, interval_seconds=interval_seconds, venue=venue)
+        )
         cursor = datetime.fromtimestamp(int(klines[-1][0]) / 1000, tz=UTC) + timedelta(
             seconds=interval_seconds
         )
-        if len(klines) < 1500 or cursor >= end:
+        if len(klines) < page_cap or cursor >= end:
             break
         time.sleep(0.2)  # polite to the public endpoint
     else:  # ran the full page cap without finishing -> window too wide; fail loud, never truncate
@@ -160,14 +178,15 @@ def ingest_binance(store: BarStore) -> int:
 def ingest_panels(store: BarStore) -> int:
     """Ingest the cross-sectional discovery *panels* from config/discovery.yaml: every member
     symbol at the panel's interval, over the same fixed window as the matching single-instrument
-    timeframe, via the paginated public futures API (no keys). Idempotent (the store dedups by
-    start), so the handful of symbols already covered by ``ingest_binance`` are harmlessly
-    re-fetched. This is the free Binance leg, so it ingests only ``venue: BINANCE`` panels (the
-    fetch + store path is Binance-specific); other-venue panels come from their own leg (Kite)."""
+    timeframe, via the paginated public Binance REST APIs (no keys). Idempotent (the store dedups
+    by start), so the handful of symbols already covered by ``ingest_binance`` are harmlessly
+    re-fetched. This is the free Binance leg — futures (``BINANCE``) *and* spot
+    (``BINANCE_SPOT``, the basis hedge leg) panels; other-venue panels come from their own leg
+    (Kite)."""
     total = 0
     for panel in load_discovery_config().panels:
-        if panel.venue is not Venue.BINANCE:
-            continue  # this loader's fetch/store path is Binance-specific (would mis-store others)
+        if panel.venue not in _KLINES_ENDPOINT:
+            continue  # this loader fetches Binance REST klines only (would mis-store others)
         tf = _TF_BY_SECONDS.get(panel.interval_seconds)
         if tf is None:  # a panel interval with no fixed ingest window — fail loud, never skip
             raise RuntimeError(
@@ -182,6 +201,7 @@ def ingest_panels(store: BarStore) -> int:
                 interval_seconds=panel.interval_seconds,
                 start=start,
                 end=_END,
+                venue=panel.venue,
             )
             on_disk = store.write_bars(bars)
             print(f"[panel:{panel.name}] {symbol} {interval}: {len(bars)} -> {on_disk} on disk")

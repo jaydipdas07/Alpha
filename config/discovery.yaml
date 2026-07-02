@@ -389,3 +389,67 @@ panels:
       - "CRVUSDT"
       - "AXSUSDT"
       - "LDOUSDT"
+  # The basis SPOT leg (M3.0 basis track): the perp universe's spot twins on Binance's spot
+  # market (venue BINANCE_SPOT — a different book + cost regime, keyed apart in the store).
+  # 1000PEPEUSDT / 1000SHIBUSDT are EXCLUDED: their spot tickers differ by a 1000x contract
+  # multiplier — excluded outright rather than silently mis-scaled. A member whose spot was
+  # DELISTED (e.g. XMR 2024-02, DASH) simply stops printing — the point-in-time membership
+  # drops it from the basis cross-section when its hedge leg dies; nothing to prune by hand.
+  - name: "crypto-spot-1d"
+    market: CRYPTO
+    venue: BINANCE_SPOT
+    interval_seconds: 86400
+    starting_cash: "1000000"   # USDT
+    symbols:
+      - "BTCUSDT"
+      - "ETHUSDT"
+      - "SOLUSDT"
+      - "ZECUSDT"
+      - "XRPUSDT"
+      - "DOGEUSDT"
+      - "BNBUSDT"
+      - "NEARUSDT"
+      - "AAVEUSDT"
+      - "XLMUSDT"
+      - "SUIUSDT"
+      - "ADAUSDT"
+      - "AVAXUSDT"
+      - "LINKUSDT"
+      - "BCHUSDT"
+      - "FILUSDT"
+      - "UNIUSDT"
+      - "TRXUSDT"
+      - "LTCUSDT"
+      - "DOTUSDT"
+      - "CHZUSDT"
+      - "INJUSDT"
+      - "FETUSDT"
+      - "XMRUSDT"
+      - "OPUSDT"
+      - "ARBUSDT"
+      - "APTUSDT"
+      - "IDUSDT"
+      - "ICPUSDT"
+      - "HBARUSDT"
+      - "ETCUSDT"
+      - "ATOMUSDT"
+      - "ALGOUSDT"
+      - "DASHUSDT"
+      - "DYDXUSDT"
+      - "ALICEUSDT"
+      - "STGUSDT"
+      - "CRVUSDT"
+      - "AXSUSDT"
+      - "LDOUSDT"
+
+# --- delta-neutral basis cells (M3.0 basis track) -----------------------------------
+# A basis cell joins a perp panel to its spot twin BY SYMBOL: short one unit of perp, long one
+# unit of spot per selected name — the price legs cancel, and the book harvests the funding a
+# short perp receives (crypto's structural carry), net of the basis wiggle and BOTH legs'
+# costs. `name` is the ledger cell key the basis templates sweep under (distinct from any
+# panel name — both live in the same (market, window) key space).
+basis_panels:
+  - name: "crypto-basis-1d"
+    market: CRYPTO
+    perp_panel: "crypto-perps-1d"
+    spot_panel: "crypto-spot-1d"

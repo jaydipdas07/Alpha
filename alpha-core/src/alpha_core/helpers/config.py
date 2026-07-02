@@ -342,14 +342,36 @@ class DiscoveryPanelConfig(BaseModel):
         return _check_templates(value)
 
 
+class DiscoveryBasisConfig(BaseModel):
+    """One delta-neutral *basis* cell (M3.0 basis track): a two-leg book — short each selected
+    perp, long the same symbol's spot — harvesting the funding a short perp receives with the
+    price risk hedged out per name. Where a ``DiscoveryPanelConfig`` names ONE universe, a basis
+    cell names TWO (the perp panel and its spot twin, joined by symbol); ``name`` is the ledger
+    cell key the basis templates sweep under, and must not collide with any panel name."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=64)  # the basis cell label (also the ledger key)
+    market: AssetClass  # the shared asset class of both legs' panels
+    perp_panel: str = Field(min_length=1)  # the funding-paying leg (a `panels` name)
+    spot_panel: str = Field(min_length=1)  # the hedge leg (a `panels` name, the spot twin)
+
+    @field_validator("name")
+    @classmethod
+    def _no_key_separator(cls, value: str) -> str:
+        return _reject_pipe(value, label="basis cell name")
+
+
 class DiscoveryConfig(BaseModel):
     """``discovery.yaml`` — the discovery universe: every research cell mapped to its series, plus
-    any cross-sectional ``panels`` (M3.0) that name a multi-symbol universe to rank together."""
+    any cross-sectional ``panels`` (M3.0) that name a multi-symbol universe to rank together, plus
+    any two-leg ``basis_panels`` (the M3.0 basis track) joining a perp panel to its spot twin."""
 
     model_config = ConfigDict(extra="forbid")
     cells: list[DiscoveryCellConfig] = Field(min_length=1)  # an empty universe is a config error
     # the cross-sectional panels (M3.0) — a multi-symbol universe ranked together (default: none).
     panels: list[DiscoveryPanelConfig] = Field(default_factory=list)
+    # the delta-neutral basis cells (M3.0 basis track) — perp panel x spot twin (default: none).
+    basis_panels: list[DiscoveryBasisConfig] = Field(default_factory=list)
     n_candidates: int = Field(default=8, gt=1)  # proposals per (cell, template) discovery cycle
 
     @model_validator(mode="after")
@@ -377,6 +399,52 @@ class DiscoveryConfig(BaseModel):
                     f"duplicate discovery panel {panel.name!r}: panel names must be unique"
                 )
             seen.add(panel.name)
+        return self
+
+    @model_validator(mode="after")
+    def _basis_panels_resolve(self) -> Self:
+        """A basis cell must (a) have a unique name that collides with NO panel name (both are
+        ledger cell keys in the same (market, window) space), and (b) reference two *existing*
+        panels of its own market — a dangling or cross-market leg is a config bug, not a runtime
+        condition."""
+        panels_by_name = {panel.name: panel for panel in self.panels}
+        seen: set[str] = set()
+        for basis in self.basis_panels:
+            if basis.name in seen:
+                raise ValueError(f"duplicate basis cell {basis.name!r}: basis names must be unique")
+            if basis.name in panels_by_name:
+                raise ValueError(
+                    f"basis cell {basis.name!r} collides with a panel name — both are ledger "
+                    "cell keys, so they must be distinct"
+                )
+            seen.add(basis.name)
+            for label, ref in (("perp_panel", basis.perp_panel), ("spot_panel", basis.spot_panel)):
+                leg = panels_by_name.get(ref)
+                if leg is None:
+                    raise ValueError(
+                        f"basis cell {basis.name!r}: {label} {ref!r} is not a configured panel"
+                    )
+                if leg.market is not basis.market:
+                    raise ValueError(
+                        f"basis cell {basis.name!r}: {label} {ref!r} is {leg.market.value}, "
+                        f"not {basis.market.value} — both legs must share the cell's market"
+                    )
+            if basis.perp_panel == basis.spot_panel:
+                raise ValueError(
+                    f"basis cell {basis.name!r}: perp_panel and spot_panel must be different "
+                    "panels (a leg cannot hedge itself)"
+                )
+            perp_leg = panels_by_name[basis.perp_panel]
+            spot_leg = panels_by_name[basis.spot_panel]
+            if perp_leg.interval_seconds != spot_leg.interval_seconds:
+                # mixed intervals would union daily+intraday stamps: every name then fails the
+                # per-leg real-window test at every rebalance and the fold silently returns all
+                # zeros — fail loud at load instead (the repo's config philosophy).
+                raise ValueError(
+                    f"basis cell {basis.name!r}: legs must share interval_seconds "
+                    f"({basis.perp_panel!r} is {perp_leg.interval_seconds}s, "
+                    f"{basis.spot_panel!r} is {spot_leg.interval_seconds}s)"
+                )
         return self
 
 

@@ -282,3 +282,41 @@ class FundingCarry:
             if (mean := _trailing_mean(series, self._cfg.lookback)) is not None
         }
         return dollar_neutral_book(scores, self._cfg.top_k)
+
+
+class BasisCarry:
+    """Delta-neutral basis carry (the M3.0 basis track): select the highest trailing-mean-funding
+    perps and hold each as ONE UNIT of basis — **short the perp, long the same symbol's spot**,
+    equal notional — so the funding a short perp receives is harvested with the price risk hedged
+    out *per name* (a weight here means "units of the two-leg book", never a directional position;
+    the basis backtester trades both legs).
+
+    Selection, not long/short ranking: only names whose trailing-mean funding is **positive** are
+    candidates (a negative-funding basis position *pays* funding — a real carry desk goes flat
+    rather than bleed), the top ``top_k`` by mean are held, equal-weighted over however many
+    qualify (fewer than ``top_k`` positive names -> a smaller book of just those; none -> ``{}``,
+    the flat book). Look-ahead-clean: the caller passes funding up to the current bar.
+    Deterministic: mean descending, symbol as the tiebreak.
+    """
+
+    def __init__(self, config: CrossSectionalConfig) -> None:
+        self._cfg = config
+
+    @property
+    def config(self) -> CrossSectionalConfig:
+        return self._cfg
+
+    def target_weights(self, funding: Mapping[str, Sequence[Decimal]]) -> dict[str, Decimal]:
+        """Equal weights over the top-``top_k`` positive trailing-mean-funding names (each
+        sequence is a symbol's per-bar funding up to the current bar), or ``{}`` when none
+        qualify — the flat book of a carry desk with nothing worth harvesting."""
+        scores = {
+            symbol: mean
+            for symbol, series in funding.items()
+            if (mean := _trailing_mean(series, self._cfg.lookback)) is not None and mean > 0
+        }
+        if not scores:
+            return {}
+        ranked = sorted(scores, key=lambda s: (-scores[s], s))[: self._cfg.top_k]
+        weight = Decimal(1) / Decimal(len(ranked))
+        return dict.fromkeys(ranked, weight)
