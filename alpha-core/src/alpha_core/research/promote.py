@@ -35,6 +35,7 @@ from alpha_core.data.store import BarStore
 from alpha_core.execution.costs import InstrumentMeta
 from alpha_core.helpers.config import DiscoveryCellConfig
 from alpha_core.research.approval import RiskOfficerReview, assemble_review
+from alpha_core.research.basis_backtester import BasisPanelBacktester
 from alpha_core.research.cold_store_bars import ColdStoreBarsFor
 from alpha_core.research.discovery import Backtester
 from alpha_core.research.engine_backtester import EngineBacktester
@@ -155,6 +156,31 @@ def build_funding_panel_backtesters(
         panel_funding_for=funding_for,
     )
     holdout = FundingPanelBacktester(
+        panel_bars_for=HoldoutPanelBarsFor.from_config(holdout_store),
+        panel_funding_for=funding_for,
+    )
+    return in_sample, holdout
+
+
+def build_basis_backtesters(
+    *,
+    research_store: BarStore,
+    holdout_store: HoldoutStore,
+    funding_store: FundingStore,
+) -> tuple[Backtester, Backtester]:
+    """Wire the production (in-sample, holdout) **basis** backtester pair — the two-leg analogue
+    of :func:`build_funding_panel_backtesters`, with the same TEST-3 wiring: BOTH legs of the
+    in-sample fold read the sealed research store via one ``ColdStorePanelBarsFor``, and BOTH
+    legs of the holdout fold the gate-only store via one ``HoldoutPanelBarsFor`` — one boundary
+    object per side, so the two legs can never straddle the seal. The perp leg's funding feeds
+    the signal AND the carry on each side, gated by that side's price timeline.
+    ``funding_store`` is required: funding IS the basis signal."""
+    funding_for = ColdStoreFundingFor.from_config(funding_store)
+    in_sample = BasisPanelBacktester(
+        panel_bars_for=ColdStorePanelBarsFor.from_config(research_store),
+        panel_funding_for=funding_for,
+    )
+    holdout = BasisPanelBacktester(
         panel_bars_for=HoldoutPanelBarsFor.from_config(holdout_store),
         panel_funding_for=funding_for,
     )

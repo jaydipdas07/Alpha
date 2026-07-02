@@ -62,13 +62,21 @@ class AssetClass(StrEnum):
 
 
 class Venue(StrEnum):
-    """Execution venues. PAPER is always first; crypto live target is DELTA."""
+    """Execution venues. PAPER is always first; crypto live target is DELTA.
+
+    ``BINANCE_SPOT`` is Binance's *spot* market as a distinct venue from its futures
+    (``BINANCE``): same symbols, different books and cost regimes (``crypto_spot`` vs
+    ``crypto_perp`` in costs.yaml), and the cold store keys series by venue — the basis
+    track's spot leg must never collide with the perp series. Research/data venue today
+    (no adapter in venues.yaml); an execution adapter joins it if a spot leg ever trades.
+    """
 
     PAPER = "PAPER"
     NSE = "NSE"
     BSE = "BSE"
     BYBIT = "BYBIT"
     BINANCE = "BINANCE"
+    BINANCE_SPOT = "BINANCE_SPOT"
     DELTA = "DELTA"
 
 

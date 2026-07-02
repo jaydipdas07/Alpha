@@ -136,10 +136,19 @@ def align_closes(
     if not by_symbol:
         return [], {}
     timeline = sorted(set().union(*(stamps.keys() for stamps in by_symbol.values())))
-    closes: dict[str, list[Decimal | None]] = {
-        sym: [stamps.get(ts) for ts in timeline] for sym, stamps in by_symbol.items()
-    }
-    return timeline, closes
+    return timeline, closes_on(panel, timeline)
+
+
+def closes_on(
+    panel: Mapping[str, list[Bar]], timeline: Sequence[datetime]
+) -> dict[str, list[Decimal | None]]:
+    """Each member's closes aligned to a **given** timeline (``None`` where it has no bar) — the
+    multi-leg alignment primitive: the basis backtester aligns BOTH of its legs' panels to one
+    shared union timeline so a two-leg book's bars line up by index. ``align_closes`` is the
+    single-panel convenience over it (it derives the timeline from the panel itself). Members
+    with no bars at all are dropped."""
+    by_symbol = {sym: {b.start: b.close for b in bars} for sym, bars in panel.items() if bars}
+    return {sym: [stamps.get(ts) for ts in timeline] for sym, stamps in by_symbol.items()}
 
 
 def align_daily_funding(
@@ -161,9 +170,10 @@ def align_daily_funding(
     return {sym: [days.get(day, Decimal(0)) for day in timeline] for sym, days in per_day.items()}
 
 
-def _real_window(series: Sequence[Decimal | None], lo: int, hi: int) -> bool:
+def real_window(series: Sequence[Decimal | None], lo: int, hi: int) -> bool:
     """True iff every slot of ``series[lo:hi]`` is a real value — the point-in-time membership
-    test (a symbol enters the cross-section only once it has printed the full trailing window)."""
+    test (a symbol enters the cross-section only once it has printed the full trailing window).
+    Public: the basis fold applies the same test to each leg of its two-leg book."""
     return all(series[j] is not None for j in range(lo, hi))
 
 
@@ -203,7 +213,7 @@ def simulate_panel(
             eligible = {
                 s: cast("Sequence[Decimal]", signal[s][lo : i + 1])
                 for s in signal
-                if _real_window(closes[s], lo, i + 1) and _real_window(signal[s], lo, i + 1)
+                if real_window(closes[s], lo, i + 1) and real_window(signal[s], lo, i + 1)
             }
             target = strategy.target_weights(eligible)
             turnover = sum(

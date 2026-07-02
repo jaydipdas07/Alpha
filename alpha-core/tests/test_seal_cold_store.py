@@ -285,3 +285,38 @@ def test_reseal_rebuilds_fresh(tmp_path: Path) -> None:
     assert json.loads((holdout.root / "_windows.json").read_text()).keys() == {
         "BINANCE|BTCUSDT|300"
     }
+
+
+def test_seed_floor_pins_a_new_venue_at_its_twins_boundary(tmp_path: Path) -> None:
+    # A brand-new venue (the basis SPOT leg) has no manifest history of its own; without a seed
+    # its fraction-of-span boundary would sit far earlier than the twin perp venue's published
+    # boundary. seed_floors pins it — and is venue-scoped: the perp series keeps its own window.
+    source = BarStore(tmp_path / "raw")
+    research = BarStore(tmp_path / "research")
+    holdout = BarStore(tmp_path / "holdout")
+    interval = timedelta(days=1)
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    perp = _series("BTCUSDT", Venue.BINANCE, AssetClass.CRYPTO, interval, n=100, start=start)
+    spot = _series("BTCUSDT", Venue.BINANCE_SPOT, AssetClass.CRYPTO, interval, n=100, start=start)
+    source.write_bars(perp + spot)
+
+    computed = compute_holdout_window([b.start for b in spot], fraction=0.2)
+    assert computed is not None
+    seed = computed.start + timedelta(days=10)  # the twin boundary sits LATER than fresh 20%
+    windows = seal_cold_store(
+        source,
+        research=research,
+        holdout=holdout,
+        fraction=0.2,
+        seed_floors={(Venue.BINANCE_SPOT, 86400): seed},
+    )
+    assert windows["BINANCE_SPOT|BTCUSDT|86400"].start == seed  # pinned at the twin boundary
+    assert windows["BINANCE|BTCUSDT|86400"].start == computed.start  # venue-scoped: unaffected
+    # the pinned window is what lands in the manifest, so the floor compounds on the next seal.
+    manifest = json.loads((holdout.root / "_windows.json").read_text())
+    assert manifest["BINANCE_SPOT|BTCUSDT|86400"]["start"] == seed.isoformat()
+    # and the research store holds no spot bar at/after the pinned boundary (TEST-3).
+    spot_research = research.read_bars(
+        symbol="BTCUSDT", venue=Venue.BINANCE_SPOT, interval_seconds=86400
+    )
+    assert spot_research and all(b.start < seed for b in spot_research)

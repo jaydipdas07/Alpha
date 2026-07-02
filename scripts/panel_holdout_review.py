@@ -19,8 +19,9 @@ monotonic, it can only roll FORWARD) before each new family's holdout read, and 
 TASKS.md — the same sealed window must not be quietly re-mined across sessions.
 
 Roots from ``ALPHA_RESEARCH_ROOT`` / ``ALPHA_HOLDOUT_ROOT`` (like ``seal_cold_store.py``), plus
-``ALPHA_FUNDING_ROOT`` — required for carry templates (funding IS the signal) and folded into every
-perp panel's price P&L when set. Run AFTER seal::
+``ALPHA_FUNDING_ROOT`` — required for carry AND basis templates (funding IS the signal) and folded
+into every perp panel's price P&L when set. Basis templates sweep the ``--basis-panel`` CELL (a
+two-leg perp x spot pair from ``discovery.yaml basis_panels``), not ``--panel``. Run AFTER seal::
 
     uv run python scripts/panel_holdout_review.py                 # all registered families
     uv run python scripts/panel_holdout_review.py --templates cross_sectional_momentum
@@ -42,11 +43,16 @@ from alpha_core.core.enums import AssetClass
 from alpha_core.data.funding import FundingStore
 from alpha_core.data.holdout import HoldoutStore
 from alpha_core.data.store import BarStore
+from alpha_core.research.basis_backtester import BASIS_TEMPLATES
 from alpha_core.research.discovery import Backtester
 from alpha_core.research.funding_backtester import FUNDING_TEMPLATES
 from alpha_core.research.holdout_gate import HoldoutGate
 from alpha_core.research.panel_backtester import PANEL_TEMPLATES
-from alpha_core.research.promote import build_funding_panel_backtesters, build_panel_backtesters
+from alpha_core.research.promote import (
+    build_basis_backtesters,
+    build_funding_panel_backtesters,
+    build_panel_backtesters,
+)
 from alpha_core.research.proposal_ledger import ProposalLedger
 from alpha_core.research.quant_analyst import QuantAnalyst, Verdict, deflation_inputs
 from alpha_core.research.strategist import (
@@ -56,7 +62,7 @@ from alpha_core.research.strategist import (
     StrategyProposal,
 )
 
-ALL_TEMPLATES = {**PANEL_TEMPLATES, **FUNDING_TEMPLATES}
+ALL_TEMPLATES = {**PANEL_TEMPLATES, **FUNDING_TEMPLATES, **BASIS_TEMPLATES}
 
 
 def _sweep_one_family(
@@ -129,6 +135,11 @@ def main() -> None:
         help=f"comma-list of templates, or 'all' (registered: {sorted(ALL_TEMPLATES)})",
     )
     ap.add_argument("--panel", default="crypto-perps-1d", help="the panel window/name")
+    ap.add_argument(
+        "--basis-panel",
+        default="crypto-basis-1d",
+        help="the basis CELL name basis templates sweep (discovery.yaml basis_panels)",
+    )
     ap.add_argument("--market", default="CRYPTO")
     ap.add_argument("--seed", type=int, default=10, help="RandomProposer seed (reproducibility)")
     ap.add_argument("--n", type=int, default=50, help="in-sample candidates per family")
@@ -143,10 +154,10 @@ def main() -> None:
     research = BarStore(Path(os.environ["ALPHA_RESEARCH_ROOT"]))
     holdout = HoldoutStore(Path(os.environ["ALPHA_HOLDOUT_ROOT"]))
     funding_root = os.environ.get("ALPHA_FUNDING_ROOT")
-    carry_requested = any(t in FUNDING_TEMPLATES for t in templates)
-    if carry_requested and not funding_root:
+    funding_needed = any(t in FUNDING_TEMPLATES or t in BASIS_TEMPLATES for t in templates)
+    if funding_needed and not funding_root:
         raise SystemExit(
-            "ALPHA_FUNDING_ROOT is required for carry templates (funding IS the signal)"
+            "ALPHA_FUNDING_ROOT is required for carry/basis templates (funding IS the signal)"
         )
     funding = FundingStore(Path(funding_root)) if funding_root else None
 
@@ -164,6 +175,13 @@ def main() -> None:
         if funding is not None
         else None
     )
+    basis_pair = (
+        build_basis_backtesters(
+            research_store=research, holdout_store=holdout, funding_store=funding
+        )
+        if funding is not None
+        else None
+    )
 
     total_survivors = total_passes = 0
     # ONE ledger across every family: each family's n_trials is its honest count for this run.
@@ -172,7 +190,12 @@ def main() -> None:
             ledger, proposer=RandomProposer(seed=args.seed), templates=ALL_TEMPLATES
         )
         for template in templates:
-            if template in FUNDING_TEMPLATES:
+            window = args.panel
+            if template in BASIS_TEMPLATES:
+                assert basis_pair is not None  # guarded above: basis requires the funding store
+                in_sample, holdout_backtester = basis_pair
+                window = args.basis_panel  # a basis cell, not a panel (two legs behind it)
+            elif template in FUNDING_TEMPLATES:
                 assert carry_pair is not None  # guarded above: carry requires the funding store
                 in_sample, holdout_backtester = carry_pair
             else:
@@ -181,7 +204,7 @@ def main() -> None:
             survivors, passes = _sweep_one_family(
                 template,
                 market=market,
-                panel=args.panel,
+                panel=window,
                 n=args.n,
                 strategist=strategist,
                 ledger=ledger,

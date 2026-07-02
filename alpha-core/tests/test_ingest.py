@@ -263,3 +263,14 @@ def test_kite_token_staleness_rejects_naive() -> None:
         access_token_is_stale(naive, now=aware)
     with pytest.raises(ValueError, match="tz-aware"):
         access_token_is_stale(aware, now=naive)
+
+
+def test_binance_kline_venue_keys_the_spot_leg() -> None:
+    # the basis track's spot leg: same row shape, different venue key — the two legs must never
+    # collide in the store. The default stays BINANCE (futures).
+    spot = kline_to_bar(_KLINE, symbol="BTCUSDT", interval_seconds=86400, venue=Venue.BINANCE_SPOT)
+    assert spot.venue is Venue.BINANCE_SPOT and spot.asset_class is AssetClass.CRYPTO
+    page = klines_to_bars(
+        [_KLINE], symbol="BTCUSDT", interval_seconds=86400, venue=Venue.BINANCE_SPOT
+    )
+    assert [b.venue for b in page] == [Venue.BINANCE_SPOT]

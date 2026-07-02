@@ -24,11 +24,15 @@ from alpha_core.core.enums import AssetClass, Venue
 from alpha_core.core.models import Bar
 
 
-def kline_to_bar(kline: Sequence[Any], *, symbol: str, interval_seconds: int) -> Bar:
-    """One Binance fapi kline row -> a core ``Bar`` (Decimal money, tz-UTC open)."""
+def kline_to_bar(
+    kline: Sequence[Any], *, symbol: str, interval_seconds: int, venue: Venue = Venue.BINANCE
+) -> Bar:
+    """One Binance kline row -> a core ``Bar`` (Decimal money, tz-UTC open). ``venue`` keys the
+    series in the store: futures klines (fapi) are ``BINANCE``, spot klines (api/v3 — the same
+    positional row shape) are ``BINANCE_SPOT`` — the basis track's two legs must never collide."""
     return Bar(
         symbol=symbol,
-        venue=Venue.BINANCE,
+        venue=venue,
         asset_class=AssetClass.CRYPTO,
         start=datetime.fromtimestamp(int(kline[0]) / 1000, tz=UTC),
         interval=timedelta(seconds=interval_seconds),
@@ -41,20 +45,25 @@ def kline_to_bar(kline: Sequence[Any], *, symbol: str, interval_seconds: int) ->
 
 
 def klines_to_bars(
-    klines: Sequence[Sequence[Any]], *, symbol: str, interval_seconds: int
+    klines: Sequence[Sequence[Any]],
+    *,
+    symbol: str,
+    interval_seconds: int,
+    venue: Venue = Venue.BINANCE,
 ) -> list[Bar]:
     """A page of Binance klines -> ``Bar``s. Every row is taken as a closed bar; the
     caller fetches only past windows, so there is no still-forming final candle to drop.
 
     Works on both REST kline pages and ``data.binance.vision`` archive CSV rows (same
-    column order) — a header row (non-numeric ``open_time``) is skipped."""
+    column order) — a header row (non-numeric ``open_time``) is skipped. ``venue`` keys
+    the series (futures ``BINANCE`` vs spot ``BINANCE_SPOT`` — see :func:`kline_to_bar`)."""
     out: list[Bar] = []
     for k in klines:
         try:
             int(k[0])  # numeric open-time -> a data row (skip a CSV header or blank line)
         except (ValueError, TypeError, IndexError):
             continue
-        out.append(kline_to_bar(k, symbol=symbol, interval_seconds=interval_seconds))
+        out.append(kline_to_bar(k, symbol=symbol, interval_seconds=interval_seconds, venue=venue))
     return out
 
 
