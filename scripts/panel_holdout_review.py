@@ -85,6 +85,9 @@ def _sweep_one_family(
         try:
             proposal = strategist.propose(template, market=market, window=panel)
         except CellSaturated:
+            # visible by design: a stop BEFORE n candidates means the bounded space is exhausted
+            # (or, for a huge space, the sampler gave up) — never silently indistinguishable.
+            print(f"  [{template}] cell saturated after {len(proposals)} proposals")
             break
         proposals.append(proposal)
         returns.append(list(in_sample.run(proposal)))
@@ -140,6 +143,13 @@ def main() -> None:
         default="crypto-basis-1d",
         help="the basis CELL name basis templates sweep (discovery.yaml basis_panels)",
     )
+    ap.add_argument(
+        "--cost-scenario",
+        default="taker",
+        choices=("taker", "maker"),
+        help="basis execution-cost scenario (taker=crossing, the deployable-today primary; "
+        "maker=post-only — a holdout read must match the intended deployment)",
+    )
     ap.add_argument("--market", default="CRYPTO")
     ap.add_argument("--seed", type=int, default=10, help="RandomProposer seed (reproducibility)")
     ap.add_argument("--n", type=int, default=50, help="in-sample candidates per family")
@@ -177,17 +187,28 @@ def main() -> None:
     )
     basis_pair = (
         build_basis_backtesters(
-            research_store=research, holdout_store=holdout, funding_store=funding
+            research_store=research,
+            holdout_store=holdout,
+            funding_store=funding,
+            cost_scenario=args.cost_scenario,
         )
         if funding is not None
         else None
     )
+    if any(t in BASIS_TEMPLATES for t in templates):
+        print(f"=== basis cost scenario: {args.cost_scenario} ===")
 
     total_survivors = total_passes = 0
     # ONE ledger across every family: each family's n_trials is its honest count for this run.
     with ProposalLedger() as ledger:
+        # max_attempts=500: the default 50 leaves ~12.5% of seeds silently missing 1-3 configs of
+        # a TINY pre-registered space (basis_carry_hold = 24; (23/24)^50 ~= 0.12) — exhaustiveness
+        # is the point of pre-registration, so make a miss astronomically unlikely ((23/24)^500).
         strategist = Strategist(
-            ledger, proposer=RandomProposer(seed=args.seed), templates=ALL_TEMPLATES
+            ledger,
+            proposer=RandomProposer(seed=args.seed),
+            templates=ALL_TEMPLATES,
+            max_attempts=500,
         )
         for template in templates:
             window = args.panel
