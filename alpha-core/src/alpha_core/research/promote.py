@@ -31,6 +31,7 @@ from typing import Any
 
 from alpha_core.data.funding import FundingStore
 from alpha_core.data.holdout import HoldoutStore
+from alpha_core.data.options_store import OptionsStore
 from alpha_core.data.store import BarStore
 from alpha_core.execution.costs import InstrumentMeta
 from alpha_core.helpers.config import DiscoveryCellConfig
@@ -42,6 +43,11 @@ from alpha_core.research.engine_backtester import EngineBacktester
 from alpha_core.research.funding_backtester import ColdStoreFundingFor, FundingPanelBacktester
 from alpha_core.research.holdout_gate import HoldoutBarsFor, HoldoutGate, HoldoutPanelBarsFor
 from alpha_core.research.nightly import engine_backtester_for
+from alpha_core.research.options_backtester import (
+    HoldoutOptionsFor,
+    OptionsChainBacktester,
+    ResearchOptionsFor,
+)
 from alpha_core.research.panel_backtester import ColdStorePanelBarsFor, PanelBacktester
 from alpha_core.research.paper_eval import evaluate_paper_run
 from alpha_core.research.proposal_ledger import ProposalLedger
@@ -190,6 +196,22 @@ def build_basis_backtesters(
         panel_funding_for=funding_for,
         cost_scenario=cost_scenario,
     )
+    return in_sample, holdout
+
+
+def build_options_backtesters(
+    *,
+    options_research: OptionsStore,
+    options_holdout: OptionsStore,
+) -> tuple[Backtester, Backtester]:
+    """Wire the production (in-sample, holdout) **options** backtester pair — the premium-structure
+    analogue of :func:`build_panel_backtesters`, with the same TEST-3 wiring: the in-sample fold
+    reads the SEALED options research store via ``ResearchOptionsFor`` and the holdout fold the
+    gate-only options holdout store via ``HoldoutOptionsFor`` — one boundary object per side (a
+    separate seal domain from the bar stores: ``scripts/seal_options_store.py``, its own
+    ``_windows.json``, its own never-read first holdout)."""
+    in_sample = OptionsChainBacktester(quotes_for=ResearchOptionsFor.from_config(options_research))
+    holdout = OptionsChainBacktester(quotes_for=HoldoutOptionsFor.from_config(options_holdout))
     return in_sample, holdout
 
 

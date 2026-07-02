@@ -134,7 +134,7 @@ class HoldoutStore:
         return self._store.read_bars(symbol=symbol, venue=venue, interval_seconds=interval_seconds)
 
 
-def _assert_disjoint(research_root: Path, holdout_root: Path) -> None:
+def assert_disjoint_roots(research_root: Path, holdout_root: Path) -> None:
     """Reject overlapping roots: if the holdout lived inside (or as) the cold store's root,
     the cold store's Parquet glob could read it — breaking TEST-3."""
     r = research_root.resolve()
@@ -159,7 +159,7 @@ def seal_dataset(
     correctly), while the holdout store is **rebuilt** to exactly the current window — so a
     bar that leaves the window is promoted into the cold store and removed from the holdout,
     never left stale in both."""
-    _assert_disjoint(research.root, holdout.root)
+    assert_disjoint_roots(research.root, holdout.root)
     window = compute_holdout_window([b.start for b in bars], fraction=fraction)
     if window is None:
         return None
@@ -177,7 +177,7 @@ def _clear_parquet(store: BarStore) -> None:
         parquet.unlink()
 
 
-def _write_seal_manifest(root: Path, windows: dict[str, HoldoutWindow]) -> None:
+def write_seal_manifest(root: Path, windows: dict[str, HoldoutWindow]) -> None:
     """Record each series' locked holdout window (its ``holdout_window_version`` + extent) so the
     eventual one-shot gate knows exactly which tail is reserved per series."""
     manifest = {
@@ -200,7 +200,7 @@ def prior_window_starts(holdout_root: Path) -> dict[str, datetime]:
     return {key: datetime.fromisoformat(d["start"]) for key, d in manifest.items()}
 
 
-def _floored_window(
+def floored_window(
     window: HoldoutWindow,
     key: str,
     venue: Venue,
@@ -276,12 +276,12 @@ def seal_cold_store(
     joins the sibling-inheritance scan for its ``(venue, interval)`` (a series' own prior still
     ratchets first); it is never written to the manifest itself — the floored real windows are,
     so the floor compounds from the first seeded seal."""
-    _assert_disjoint(source.root, research.root)
-    _assert_disjoint(source.root, holdout.root)
-    _assert_disjoint(research.root, holdout.root)
+    assert_disjoint_roots(source.root, research.root)
+    assert_disjoint_roots(source.root, holdout.root)
+    assert_disjoint_roots(research.root, holdout.root)
     prior = prior_window_starts(holdout.root)  # BEFORE the rebuild — the monotonic floor
     for (seed_venue, seed_interval), start in (seed_floors or {}).items():
-        # a synthetic sibling entry: participates in _floored_window's venue-scoped max scan for
+        # a synthetic sibling entry: participates in floored_window's venue-scoped max scan for
         # never-sealed series; the "<floor-seed>" pseudo-symbol can never collide with a real key.
         prior.setdefault(f"{seed_venue.value}|<floor-seed>|{seed_interval}", start)
     _clear_parquet(research)
@@ -293,10 +293,10 @@ def seal_cold_store(
         if window is None:  # pragma: no cover - a listed series always has >=1 bar
             continue
         key = f"{venue.value}|{symbol}|{interval_seconds}"
-        window = _floored_window(window, key, venue, interval_seconds, prior)
+        window = floored_window(window, key, venue, interval_seconds, prior)
         research_bars, holdout_bars = split_research_holdout(bars, window)
         research.write_bars(research_bars)
         holdout.write_bars(holdout_bars)
         windows[key] = window
-    _write_seal_manifest(holdout.root, windows)
+    write_seal_manifest(holdout.root, windows)
     return windows

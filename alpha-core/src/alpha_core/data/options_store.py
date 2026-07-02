@@ -30,7 +30,7 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import duckdb
 import pyarrow as pa
@@ -39,6 +39,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from alpha_core.core.enums import OptionRight, Venue
 from alpha_core.core.models import Money, NonNegMoney, PosMoney, UtcDatetime
+from alpha_core.data.holdout import (
+    HoldoutWindow,
+    assert_disjoint_roots,
+    compute_holdout_window,
+    floored_window,
+    prior_window_starts,
+    write_seal_manifest,
+)
 
 
 class OptionQuote(BaseModel):
@@ -151,6 +159,15 @@ class OptionsStore:
         """The store's on-disk root directory (read-only)."""
         return self._root
 
+    def series(self) -> list[tuple[str, Venue]]:
+        """The distinct ``(underlying, venue)`` series on disk (parsed from the year-file
+        names), sorted — the seal iterates these."""
+        found: set[tuple[str, Venue]] = set()
+        for path in self._root.glob("*.parquet"):
+            venue_s, underlying_s, _year = path.stem.split("__", 2)
+            found.add((unquote(underlying_s), Venue(venue_s)))
+        return sorted(found, key=lambda s: (s[1].value, s[0]))
+
     def _path(self, venue: Venue, underlying: str, year: int) -> Path:
         return self._root / f"{venue.value}__{_safe(underlying)}__{year}.parquet"
 
@@ -229,3 +246,49 @@ class OptionsStore:
                 "WHERE false"
             )
         return con
+
+
+def seal_options_store(
+    source: OptionsStore,
+    *,
+    research: OptionsStore,
+    holdout: OptionsStore,
+    fraction: float,
+) -> dict[str, HoldoutWindow]:
+    """Seal the raw options store: reserve each ``(venue, underlying)`` series' OWN rolled-forward
+    holdout tail (by ``trade_date``) — the options analogue of
+    :func:`~alpha_core.data.holdout.seal_cold_store`, under the SAME discipline:
+
+    - research quotes -> ``research`` (what discovery reads), the recent tail -> ``holdout``
+      (gate-only, a disjoint root); both targets rebuilt from scratch;
+    - **the boundary is pinned monotonic (TEST-3)**: each series' window start is floored at the
+      previous seal's start (``_windows.json``, read BEFORE the rebuild), so re-sealing over
+      backward-extended history can never hand researched quotes to the holdout; a never-sealed
+      series inherits its venue's same-interval sibling floor (options manifests key
+      ``"venue|underlying|86400"`` — EOD chains are daily-labelled);
+    - the manifest lives at the OPTIONS holdout root: a separate seal domain from the bar stores
+      (separate roots, separate manifests — no cross-talk with ``data_holdout``).
+
+    The first options seal has no prior manifest -> fresh fraction-of-span boundaries: a genuinely
+    NEVER-READ holdout. Returns the per-series windows.
+    """
+    assert_disjoint_roots(source.root, research.root)
+    assert_disjoint_roots(source.root, holdout.root)
+    assert_disjoint_roots(research.root, holdout.root)
+    prior = prior_window_starts(holdout.root)  # BEFORE the rebuild — the monotonic floor
+    for target in (research, holdout):
+        for parquet in target.root.glob("*.parquet"):
+            parquet.unlink()
+    windows: dict[str, HoldoutWindow] = {}
+    for underlying, venue in source.series():
+        quotes = source.read(underlying=underlying, venue=venue)
+        window = compute_holdout_window([q.trade_date for q in quotes], fraction=fraction)
+        if window is None:  # pragma: no cover - a listed series always has >=1 quote
+            continue
+        key = f"{venue.value}|{underlying}|86400"
+        window = floored_window(window, key, venue, 86400, prior)
+        research.write([q for q in quotes if not window.contains(q.trade_date)])
+        holdout.write([q for q in quotes if window.contains(q.trade_date)])
+        windows[key] = window
+    write_seal_manifest(holdout.root, windows)
+    return windows
