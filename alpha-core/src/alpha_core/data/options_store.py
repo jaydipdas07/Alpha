@@ -15,12 +15,16 @@ dates only, and research compares labels). A row with zero volume is still a val
 record: its settlement price is the exchange's official daily mark (deep strikes trade
 rarely but settle daily).
 
-⚠️ **Expiry-day ``settle`` is NOT the option's mark.** On a contract's expiry day NSE
-publishes the UNDERLYING's final-settlement level in the settlement column (verified
-live 2026-06-30: every expiring row's ``SttlmPric`` equals ``UndrlygPric``; no
-non-expiring row's does). The store persists what the exchange publishes; a fold must
-mark rows with ``trade_date == expiry`` at intrinsic value (or ``close``), never at
-``settle`` — else every expiry day corrupts P&L by the full index level.
+⚠️ **Expiry-day ``settle`` is NOT the option's mark — and its meaning CHANGED mid-decade.**
+Verified against the full stored decade: through **2020-01-30** NSE published ``settle = 0``
+for every expiring row (the final premium lives in ``close``); from **2020-02-06** it
+publishes the UNDERLYING's final-settlement level there (2026-06-30 live check: every
+expiring row's ``SttlmPric`` equals ``UndrlygPric``). It is NEVER the option's premium.
+The store persists what the exchange publishes; a fold must settle expiring rows at
+intrinsic from an era-proof level (``index_premium.settlement_level`` derives it: the
+shared positive settle when present, else the median expiry-parity estimate from
+``close``) — trusting ``settle`` blindly corrupts every old-era expiry by the wing width
+and every new-era expiry by the full index level.
 """
 
 from __future__ import annotations
@@ -66,8 +70,9 @@ class OptionQuote(BaseModel):
     low: NonNegMoney
     close: NonNegMoney
     # the official daily mark (present even with zero volume) — EXCEPT on expiry day, when
-    # NSE publishes the UNDERLYING's final-settlement level here (mark expiring rows at
-    # intrinsic/close, never settle; see the module docstring).
+    # NSE publishes 0 here (through 2020-01) or the UNDERLYING's final-settlement level
+    # (2020-02 onward); never the option's premium. Settle expiring rows via
+    # index_premium.settlement_level, not this column (see the module docstring).
     settle: NonNegMoney
     volume_contracts: int = Field(ge=0)  # contracts traded
     open_interest: int = Field(ge=0)

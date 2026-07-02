@@ -6,11 +6,14 @@ one source of cost truth since Phase 0), mark it daily at settles, and cash-sett
 **intrinsic value from the final-settlement level**. The per-bar return series feeds the
 **unchanged** rigor gate.
 
-⚠️ **The expiry-day settle trap, put to work:** on a contract's expiry day NSE publishes the
-UNDERLYING's final-settlement level in that row's ``settle`` column (see
-:mod:`~alpha_core.data.options_store`). The fold therefore NEVER marks an expiring row at
-``settle``-as-premium — it reads that value as the settlement level ``S`` and marks the leg at
-``max(±(S - K), 0)``, which is exactly how NSE cash-settles index options.
+⚠️ **The expiry-day settle trap, era-proof:** what NSE publishes in an expiring row's ``settle``
+column CHANGED over the decade — **zero** through 2020-01-30, the **underlying's
+final-settlement level** from 2020-02-06 (verified against the full store; see
+:mod:`~alpha_core.data.options_store`) — and is NEVER the option's premium. The fold trusts
+neither blindly: on a settlement day it derives the level once from the whole expiring chain
+(``settlement_level`` — the shared positive settle when present, else the median expiry-parity
+estimate from ``close``) and marks every leg at ``max(±(S - K), 0)``, exactly how NSE
+cash-settles index options.
 
 **Normalization:** each day's P&L (per unit of index) is divided by the episode's entry-time
 parity forward, so returns are fractions of one-index-unit notional — objective, no extra
@@ -44,6 +47,7 @@ from alpha_core.strategy.examples.index_premium import (
     IronCondorConfig,
     IronCondorEod,
     parity_forward,
+    settlement_level,
 )
 
 # The premium-structure template registry. ONE family, a deliberately TINY pre-registered grid
@@ -185,22 +189,23 @@ class OptionsChainBacktester:
             settled_today = False
 
             if position is not None:
+                expiry0 = position[0].expiry  # all four legs share the expiry
+                # THE TRAP, era-proof: what the expiry-day settlement column carries CHANGED
+                # (zero through 2020-01, the underlying's final level from 2020-02) and is
+                # NEVER the option's premium — derive the level once from the expiring chain
+                # (settlement_level), then cash-settle every leg at intrinsic.
+                level = (
+                    settlement_level([q for q in chain if q.expiry == expiry0])
+                    if day == expiry0
+                    else None
+                )
                 for leg in position:
                     key = _leg_key(leg)
                     row = index.get(key)
                     if day == leg.expiry:
-                        # THE TRAP, used correctly: the expiring row's `settle` IS the
-                        # underlying's final-settlement level -> cash-settle at intrinsic.
-                        if row is not None:
-                            mark = _intrinsic(leg, row.settle)
-                        else:
-                            # the expiring row itself is missing: settle at the sibling
-                            # chain's parity forward; if even that is absent, the last mark
-                            # stands (a flat final day — conservative, never a fabricated
-                            # settlement level).
-                            siblings = [q for q in chain if q.expiry == leg.expiry]
-                            level = parity_forward(siblings)
-                            mark = _intrinsic(leg, level) if level is not None else prev_marks[key]
+                        # underivable level -> the last mark stands (a flat final day —
+                        # conservative, never a fabricated settlement).
+                        mark = _intrinsic(leg, level) if level is not None else prev_marks[key]
                     else:
                         row_settle = row.settle if row is not None else None
                         mark = row_settle if row_settle is not None else prev_marks[key]

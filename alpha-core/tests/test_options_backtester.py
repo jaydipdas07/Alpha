@@ -33,6 +33,7 @@ from alpha_core.strategy.examples.index_premium import (
     IronCondorConfig,
     IronCondorEod,
     parity_forward,
+    settlement_level,
 )
 
 D = Decimal
@@ -52,6 +53,7 @@ def _q(
     right: OptionRight,
     settle: str,
     oi: int = 1000,
+    close: str | None = None,
 ) -> OptionQuote:
     return OptionQuote(
         underlying="NIFTY",
@@ -63,7 +65,7 @@ def _q(
         open=D(0),
         high=D(0),
         low=D(0),
-        close=D(settle),
+        close=D(close if close is not None else settle),
         settle=D(settle),
         volume_contracts=1,
         open_interest=oi,
@@ -211,15 +213,69 @@ def _episode_quotes() -> list[OptionQuote]:
 
 
 def test_fold_marks_daily_and_settles_at_intrinsic_not_settle() -> None:
-    # THE trap test: on expiry day `settle` is the index level (104). Correct settlement is
-    # intrinsic (all four legs OTM at 104 -> worth 0): pnl = +1.5 +1.8 -0.8 -0.9 = +1.6.
-    # Marking 104 as a premium would instead produce a wildly wrong ~-206 day.
+    # THE trap test (level convention, 2020-02+): on expiry day `settle` is the index level
+    # (104). Correct settlement is intrinsic (all four legs OTM at 104 -> worth 0):
+    # pnl = +1.5 +1.8 -0.8 -0.9 = +1.6. Marking 104 as a premium would print ~-2.06.
     returns = _bt(_episode_quotes()).run(_proposal())
     assert returns == [
         pytest.approx(0.0),  # entry day, zero-cost model: marks initialized, no move
         pytest.approx(0.004),  # (+0.5 +0.2 -0.2 -0.1) / forward 100
         pytest.approx(0.016),  # settlement: (+1.5 +1.8 -0.8 -0.9) / 100
     ]
+
+
+def test_fold_settles_identically_under_the_old_zero_convention() -> None:
+    # THE trap test (zero convention, through 2020-01): expiring rows publish settle=0 and the
+    # final premium in `close`. The level (104) must be DERIVED via expiry parity from close
+    # pairs; settling at raw settle=0 would hand every put its full strike (the -19%/yr bug).
+    day1 = [
+        _q(1, 7, "105", _CE, "1.5"),
+        _q(1, 7, "95", _PE, "1.8"),
+        _q(1, 7, "110", _CE, "0.8"),
+        _q(1, 7, "90", _PE, "0.9"),
+    ]
+    expiry_old_era = [
+        _q(7, 7, "105", _CE, "0", close="0"),  # OTM at 104: final premium 0
+        _q(7, 7, "95", _PE, "0", close="0"),
+        _q(7, 7, "110", _CE, "0", close="0"),
+        _q(7, 7, "90", _PE, "0", close="0"),
+        _q(7, 7, "100", _CE, "0", close="4"),  # parity pair: 100 + 4 - 0 = 104
+        _q(7, 7, "100", _PE, "0", close="0"),
+        _q(7, 7, "105", _PE, "0", close="1"),  # parity pair: 105 + 0 - 1 = 104
+    ]
+    returns = _bt(_entry_chain(0, 7) + day1 + expiry_old_era).run(_proposal())
+    assert returns == [
+        pytest.approx(0.0),
+        pytest.approx(0.004),
+        pytest.approx(0.016),  # identical settlement to the level-convention era
+    ]
+
+
+def test_settlement_level_both_conventions_and_median_robustness() -> None:
+    # level convention: one shared positive settle -> returned as-is.
+    level_rows = [_q(7, 7, k, r, "104") for k in ("90", "95", "105") for r in (_CE, _PE)]
+    assert settlement_level(level_rows) == D("104")
+    # zero convention: derive via expiry parity; a STALE deep-ITM close (95 call at 9.5 vs the
+    # true 9) skews one estimate to 104.45 — the median shrugs it off.
+    zero_rows = [
+        _q(7, 7, "100", _CE, "0", close="4"),
+        _q(7, 7, "100", _PE, "0", close="0.05"),  # est 103.95
+        _q(7, 7, "105", _CE, "0", close="0.05"),
+        _q(7, 7, "105", _PE, "0", close="1"),  # est 104.05
+        _q(7, 7, "110", _CE, "0", close="0.05"),
+        _q(7, 7, "110", _PE, "0", close="6"),  # est 104.05
+        _q(7, 7, "95", _CE, "0", close="9.5"),  # stale ITM close
+        _q(7, 7, "95", _PE, "0", close="0.05"),  # est 104.45
+    ]
+    assert settlement_level(zero_rows) == D("104.05")
+    # underivable: zero settles, no both-right pair with any positive close -> None.
+    assert settlement_level([_q(7, 7, "100", _CE, "0", close="0")]) is None
+    assert (
+        settlement_level(
+            [_q(7, 7, "100", _CE, "0", close="0"), _q(7, 7, "100", _PE, "0", close="0")]
+        )
+        is None
+    )
 
 
 def test_fold_settles_in_the_money_legs_at_intrinsic() -> None:
