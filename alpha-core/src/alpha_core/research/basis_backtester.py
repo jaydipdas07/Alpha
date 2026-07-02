@@ -242,6 +242,8 @@ class BasisPanelBacktester:
         # the rigor gate needs >= 2*n_groups return observations; fail fast on a too-short panel.
         self._min_bars = min_bars if min_bars is not None else 2 * load_rigor_config().cpcv.n_groups
         self._cost_fraction = cost_fraction
+        if cost_scenario not in ("taker", "maker"):  # fail at construction, not the first run()
+            raise ValueError(f"unknown basis cost scenario {cost_scenario!r}; known: taker, maker")
         self._cost_scenario = cost_scenario
 
     def run(self, proposal: StrategyProposal) -> Sequence[float]:

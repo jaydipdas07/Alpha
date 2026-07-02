@@ -507,3 +507,13 @@ def test_build_basis_backtesters_passes_the_cost_scenario_through(tmp_path: obje
     assert isinstance(in_sample, BasisPanelBacktester)
     assert isinstance(holdout_bt, BasisPanelBacktester)
     assert in_sample._cost_scenario == "maker" and holdout_bt._cost_scenario == "maker"
+
+
+def test_backtester_rejects_an_unknown_cost_scenario_at_construction() -> None:
+    with pytest.raises(ValueError, match="unknown basis cost scenario"):
+        BasisPanelBacktester(
+            panel_bars_for=lambda _m, _w: {},
+            panel_funding_for=lambda _m, _w: {},
+            basis_cells={},
+            cost_scenario="psychic",
+        )
