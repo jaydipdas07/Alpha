@@ -361,10 +361,33 @@ class DiscoveryBasisConfig(BaseModel):
         return _reject_pipe(value, label="basis cell name")
 
 
+class DiscoveryOptionsCellConfig(BaseModel):
+    """One EOD option-chain cell (M5.5b): an underlying's daily chains in the options store,
+    searched by the premium-structure templates. ``name`` is the ledger cell key; the contract
+    facts (lot/tick — from the exchange file) and the liquidity floor live here so the fold has
+    no magic numbers. Research-only: options DEPLOYMENT stays Phase-5 gated."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=64)  # the cell label (also the ledger key)
+    market: AssetClass  # INDEX_OPTION for the NIFTY/BANKNIFTY chains
+    venue: Venue
+    underlying: str = Field(min_length=1)  # the options-store underlying (e.g. "NIFTY")
+    lot_size: int = Field(gt=0)  # contract lot (per the exchange file; flat fees scale by it)
+    tick_size: Decimal = Field(gt=0)  # price tick (tick-denominated slippage needs it)
+    min_oi: int = Field(ge=0)  # per-leg open-interest liquidity floor for candidate strikes
+    starting_cash: Decimal = Field(default=Decimal("1000000"), gt=0)
+
+    @field_validator("name")
+    @classmethod
+    def _no_key_separator(cls, value: str) -> str:
+        return _reject_pipe(value, label="options cell name")
+
+
 class DiscoveryConfig(BaseModel):
     """``discovery.yaml`` — the discovery universe: every research cell mapped to its series, plus
     any cross-sectional ``panels`` (M3.0) that name a multi-symbol universe to rank together, plus
-    any two-leg ``basis_panels`` (the M3.0 basis track) joining a perp panel to its spot twin."""
+    any two-leg ``basis_panels`` (the M3.0 basis track) joining a perp panel to its spot twin,
+    plus any EOD option-chain ``options_cells`` (M5.5b)."""
 
     model_config = ConfigDict(extra="forbid")
     cells: list[DiscoveryCellConfig] = Field(min_length=1)  # an empty universe is a config error
@@ -372,6 +395,8 @@ class DiscoveryConfig(BaseModel):
     panels: list[DiscoveryPanelConfig] = Field(default_factory=list)
     # the delta-neutral basis cells (M3.0 basis track) — perp panel x spot twin (default: none).
     basis_panels: list[DiscoveryBasisConfig] = Field(default_factory=list)
+    # the EOD option-chain cells (M5.5b) — one underlying's daily chains each (default: none).
+    options_cells: list[DiscoveryOptionsCellConfig] = Field(default_factory=list)
     n_candidates: int = Field(default=8, gt=1)  # proposals per (cell, template) discovery cycle
 
     @model_validator(mode="after")
@@ -445,6 +470,26 @@ class DiscoveryConfig(BaseModel):
                     f"({basis.perp_panel!r} is {perp_leg.interval_seconds}s, "
                     f"{basis.spot_panel!r} is {spot_leg.interval_seconds}s)"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _unique_options_cells(self) -> Self:
+        """An options cell ``name`` is its ledger key — unique, and distinct from every panel /
+        basis name (all window labels live in one human namespace; a collision invites reading
+        the wrong store)."""
+        taken = {p.name for p in self.panels} | {b.name for b in self.basis_panels}
+        seen: set[str] = set()
+        for cell in self.options_cells:
+            if cell.name in seen:
+                raise ValueError(
+                    f"duplicate options cell {cell.name!r}: options cell names must be unique"
+                )
+            if cell.name in taken:
+                raise ValueError(
+                    f"options cell {cell.name!r} collides with a panel/basis name — window "
+                    "labels must be distinct"
+                )
+            seen.add(cell.name)
         return self
 
 

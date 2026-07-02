@@ -929,6 +929,28 @@
           "perp_panel": "crypto-perps-1d",
           "spot_panel": "crypto-spot-1d"
         }
+      ],
+      "options_cells": [
+        {
+          "name": "nifty-condor-eod",
+          "market": "INDEX_OPTION",
+          "venue": "NSE",
+          "underlying": "NIFTY",
+          "lot_size": 65,
+          "tick_size": "0.05",
+          "min_oi": 500,
+          "starting_cash": "1000000"
+        },
+        {
+          "name": "banknifty-condor-eod",
+          "market": "INDEX_OPTION",
+          "venue": "NSE",
+          "underlying": "BANKNIFTY",
+          "lot_size": 30,
+          "tick_size": "0.05",
+          "min_oi": 500,
+          "starting_cash": "1000000"
+        }
       ]
     },
     "portfolio": {

@@ -42,15 +42,18 @@ from pathlib import Path
 from alpha_core.core.enums import AssetClass
 from alpha_core.data.funding import FundingStore
 from alpha_core.data.holdout import HoldoutStore
+from alpha_core.data.options_store import OptionsStore
 from alpha_core.data.store import BarStore
 from alpha_core.research.basis_backtester import BASIS_TEMPLATES
 from alpha_core.research.discovery import Backtester
 from alpha_core.research.funding_backtester import FUNDING_TEMPLATES
 from alpha_core.research.holdout_gate import HoldoutGate
+from alpha_core.research.options_backtester import OPTIONS_TEMPLATES
 from alpha_core.research.panel_backtester import PANEL_TEMPLATES
 from alpha_core.research.promote import (
     build_basis_backtesters,
     build_funding_panel_backtesters,
+    build_options_backtesters,
     build_panel_backtesters,
 )
 from alpha_core.research.proposal_ledger import ProposalLedger
@@ -62,7 +65,7 @@ from alpha_core.research.strategist import (
     StrategyProposal,
 )
 
-ALL_TEMPLATES = {**PANEL_TEMPLATES, **FUNDING_TEMPLATES, **BASIS_TEMPLATES}
+ALL_TEMPLATES = {**PANEL_TEMPLATES, **FUNDING_TEMPLATES, **BASIS_TEMPLATES, **OPTIONS_TEMPLATES}
 
 
 def _sweep_one_family(
@@ -150,6 +153,12 @@ def main() -> None:
         help="basis execution-cost scenario (taker=crossing, the deployable-today primary; "
         "maker=post-only — a holdout read must match the intended deployment)",
     )
+    ap.add_argument(
+        "--options-cell",
+        default="nifty-condor-eod",
+        help="the options CELL name premium templates sweep (discovery.yaml options_cells; "
+        "options templates use INDEX_OPTION as their market regardless of --market)",
+    )
     ap.add_argument("--market", default="CRYPTO")
     ap.add_argument("--seed", type=int, default=10, help="RandomProposer seed (reproducibility)")
     ap.add_argument("--n", type=int, default=50, help="in-sample candidates per family")
@@ -197,6 +206,19 @@ def main() -> None:
     )
     if any(t in BASIS_TEMPLATES for t in templates):
         print(f"=== basis cost scenario: {args.cost_scenario} ===")
+    options_pair = None
+    if any(t in OPTIONS_TEMPLATES for t in templates):
+        o_research = os.environ.get("ALPHA_OPTIONS_RESEARCH_ROOT")
+        o_holdout = os.environ.get("ALPHA_OPTIONS_HOLDOUT_ROOT")
+        if not o_research or not o_holdout:
+            raise SystemExit(
+                "ALPHA_OPTIONS_RESEARCH_ROOT + ALPHA_OPTIONS_HOLDOUT_ROOT are required for "
+                "options templates (run scripts/seal_options_store.py first)"
+            )
+        options_pair = build_options_backtesters(
+            options_research=OptionsStore(Path(o_research)),
+            options_holdout=OptionsStore(Path(o_holdout)),
+        )
 
     total_survivors = total_passes = 0
     # ONE ledger across every family: each family's n_trials is its honest count for this run.
@@ -212,7 +234,13 @@ def main() -> None:
         )
         for template in templates:
             window = args.panel
-            if template in BASIS_TEMPLATES:
+            family_market = market
+            if template in OPTIONS_TEMPLATES:
+                assert options_pair is not None  # guarded above: options roots required
+                in_sample, holdout_backtester = options_pair
+                window = args.options_cell  # an options cell (one underlying's daily chains)
+                family_market = AssetClass.INDEX_OPTION  # options cells live in their own market
+            elif template in BASIS_TEMPLATES:
                 assert basis_pair is not None  # guarded above: basis requires the funding store
                 in_sample, holdout_backtester = basis_pair
                 window = args.basis_panel  # a basis cell, not a panel (two legs behind it)
@@ -224,7 +252,7 @@ def main() -> None:
             gate = HoldoutGate(backtester=holdout_backtester, quant_analyst=qa)
             survivors, passes = _sweep_one_family(
                 template,
-                market=market,
+                market=family_market,
                 panel=window,
                 n=args.n,
                 strategist=strategist,
