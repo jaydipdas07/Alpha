@@ -6,6 +6,9 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
+from pydantic import ValidationError
+
 from alpha_core.adapters.paper import PaperBroker
 from alpha_core.backtest.runner import BacktestResult, run_backtest
 from alpha_core.core.enums import AssetClass, OrderType, Side, Venue
@@ -160,3 +163,13 @@ async def test_funding_bleed_trips_the_loss_gate() -> None:
     result = await _run(rate="0.05", max_daily_loss="0.02", starting_cash="100000")
     assert result.halted  # the funding-bleed tripped the daily-loss kill (R13)
     assert result.stats.funding_paid <= Decimal("-2000")  # accrued past the loss cap
+
+
+def test_interval_hours_must_divide_a_day() -> None:
+    # boundaries are UTC-midnight-anchored: a non-divisor (7h) would drift across days and
+    # a >24h interval degenerates — both rejected at load, not discovered at a boundary.
+    for bad in (7, 5, 9, 48):
+        with pytest.raises(ValidationError):
+            FundingConfig(interval_hours=bad)
+    for ok in (1, 2, 3, 4, 6, 8, 12, 24):
+        assert FundingConfig(interval_hours=ok).interval_hours == ok

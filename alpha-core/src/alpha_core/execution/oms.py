@@ -262,9 +262,35 @@ class OMS:
     def accrue_funding(self, cash_flow: Decimal) -> None:
         """Book one funding payment (R13): into realized P&L (so it shows in reported
         P&L) AND into the day's realized total, so a funding-bleed feeds the daily-loss
-        kill gate via the next ``mark()`` -> ``risk.update_pnl``."""
+        kill gate via the next ``mark()`` -> ``risk.update_pnl``. Durable + audited: a
+        realized-P&L-affecting cash event must survive a restart (``restore_daily_state``
+        re-seats a funding-inclusive day total) and leave an audit row (CLAUDE.md —
+        every decision audited); ``now`` is the injected clock (bar-time in backtest)."""
         self._funding += cash_flow
         self._day_realized += cash_flow
+        now = self._clock.now()
+        trigger = self._risk.halt_trigger
+        with self._store.transaction() as s:
+            self._store.upsert_daily_pnl(
+                s,
+                trading_date=self._trading_date(now),
+                day_start_equity=self._risk.base_capital,
+                realized=self._day_realized,
+                unrealized=self.total_unrealized_pnl(),
+                halted=self._risk.is_halted,
+                halt_trigger=trigger.value if trigger else None,
+                updated_at=now,
+            )
+            self._store.append_audit(
+                s,
+                event_type="FUNDING_ACCRUED",
+                payload={
+                    "cash_flow": str(cash_flow),
+                    "cumulative_funding": str(self._funding),
+                    "day_realized": str(self._day_realized),
+                },
+                ts=now,
+            )
 
     def total_unrealized_pnl(self) -> Decimal:
         """Mark-to-market P&L on open positions from their last marks."""

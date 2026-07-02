@@ -34,6 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from alpha_core.core.enums import AssetClass
+from alpha_core.core.errors import BrokerError
 from alpha_core.core.interfaces import BrokerAdapter, DataFeed
 from alpha_core.data.bar_builder import BarBuilder
 from alpha_core.data.feed import AdapterFeed
@@ -303,13 +304,19 @@ class Worker:
         # position is open (a flat feed outage auto-recovers — see _check_feed_stale).
         while not self._control.stopped:
             await asyncio.sleep(self._env.reconcile_interval_seconds)
-            # Reconcile FIRST so the feed-stale check sees the broker-truth book — a
-            # position adopted from the broker this cycle is detected in-band now, not
-            # one cycle later (a clean position adopts; genuine drift halts here).
-            await self._reconcile()
-            await self._accrue_funding()  # after reconcile: accrue on the broker-truth book
-            self._check_feed_stale()
-            await self._maybe_flatten_on_halt()
+            try:
+                # Reconcile FIRST so the feed-stale check sees the broker-truth book — a
+                # position adopted from the broker this cycle is detected in-band now, not
+                # one cycle later (a clean position adopts; genuine drift halts here).
+                await self._reconcile()
+                await self._accrue_funding()  # after reconcile: on the broker-truth book
+                self._check_feed_stale()
+                await self._maybe_flatten_on_halt()
+            except BrokerError as exc:
+                # a transient venue error degrades ONE cycle — it must never silently
+                # kill this task (reconcile cadence, feed-stale, and halt-flatten all
+                # live here; the deadman only covers the market loop's heartbeat).
+                self._log.warning("periodic_cycle_error", error=repr(exc))
 
     def _funding_boundary(self, now: datetime) -> datetime:
         """The most recent funding boundary at ``now`` — UTC-midnight-anchored every
@@ -328,7 +335,9 @@ class Worker:
         (``adapter.funding_rate``); when the venue can't answer, the configured assumed rate
         is used and loudly labelled. On startup the boundary baselines to the current one —
         a restart never double-accrues an interval (it may skip at most one; the broker's
-        balance stays the reconcile truth either way)."""
+        balance stays the reconcile truth either way). Likewise a stall spanning several
+        boundaries accrues only the latest (the backtester catch-up-accrues each; live, a
+        multi-hour stall means a dead worker the deadman has long since flattened)."""
         if self._funding_cfg is None:
             return
         boundary = self._funding_boundary(self._now())

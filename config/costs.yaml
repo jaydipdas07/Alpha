@@ -42,9 +42,13 @@ segments:
     tds:          { pct: 0.01, side: sell }              # 1% TDS on VDA transfer (spot only)
 
 # Perp funding (R13) — the periodic funding payment on a held perpetual position.
-# A constant assumed rate for now; real per-interval rates come from the funding-rate
-# data feed later. Longs pay shorts when rate > 0; a funding-bleed feeds the loss gate.
+# The worker accrues at each boundary using the VENUE's settled rate (adapter
+# funding_rate); `rate` is only the loudly-logged fallback when the venue can't answer.
+# Longs pay shorts when rate > 0; a funding-bleed feeds the daily-loss gate.
+# ⚠️ interval_hours MUST match the venue's per-symbol funding interval (Delta + Binance
+# majors fund 8h; some Binance alts fund 4h/1h) — a mismatch mis-accrues silently. Must
+# divide 24 (boundaries are UTC-midnight-anchored; validated at load).
 funding:
   crypto:
     interval_hours: 8                                     # Binance USDⓈ-M perps fund every 8h
-    rate: "0.0001"                                        # 0.01% per interval (assumed)
+    rate: "0.0001"                                        # 0.01% per interval (FALLBACK only)

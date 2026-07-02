@@ -865,3 +865,41 @@ async def test_funding_skips_flat_books_and_unconfigured_venues(tmp_path) -> Non
     cast(FakeClock, none_worker._clock).advance(timedelta(hours=8))
     await none_worker._accrue_funding()
     assert none_oms.total_funding() == Decimal("0")
+
+
+async def test_funding_accrual_survives_a_restart_via_the_persisted_day_row(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # accrue_funding now upserts the day row (+ an audit entry): a restart that replays
+    # fills must ALSO re-seat the funding-inclusive day total for the daily-loss gate.
+    venue = _FundingVenue(_ticks(["100", "100", "100", "100"]), Decimal("0.0002"))
+    store = StateStore("sqlite:///:memory:")
+    store.create_schema()
+    risk = _risk()
+    clock = FakeClock(NOW)
+    oms = OMS(adapter=venue, risk=risk, store=store, venue=Venue.BINANCE, clock=clock)
+    worker = Worker(
+        env=_env(tmp_path),
+        adapter=venue,
+        oms=oms,
+        risk=risk,
+        reconciler=Reconciler(adapter=venue, risk=risk),
+        engine=StrategyEngine(_AlwaysBuy("0.01")),
+        bar_builder=BarBuilder(1),
+        heartbeat=HeartbeatFile(f"{tmp_path}/hb2"),
+        control=WorkerControl(),
+        feed=AdapterFeed(venue),
+        feed_stale_seconds=600,
+        drain_inline=True,
+        clock=clock,
+        funding=_FUNDING,
+    )
+    await worker.run()
+    await worker._accrue_funding()  # baseline
+    clock.advance(timedelta(hours=8))
+    await worker._accrue_funding()
+    assert oms.total_funding() == Decimal("-0.0006")
+    # a fresh OMS over the SAME store (the restart): the day row carries the funding.
+    oms2 = OMS(adapter=venue, risk=_risk(), store=store, venue=Venue.BINANCE, clock=clock)
+    oms2.rebuild_state()
+    oms2.restore_daily_state(worker._today())
+    fills_only = sum((p.realized_pnl for p in oms2.positions), Decimal(0))
+    assert oms2._day_realized == fills_only + Decimal("-0.0006")

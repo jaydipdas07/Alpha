@@ -116,6 +116,8 @@ def _ts(ms: object) -> datetime:
 # Funding-history entries are timestamped exactly at the interval boundary; this tolerance
 # absorbs venue clock jitter only (an implementation detail, not a business tunable).
 _FUNDING_TS_TOLERANCE_S = 300
+# One history page comfortably covers a 12h lookback at any venue interval (1h -> 12 rows).
+_FUNDING_HISTORY_PAGE = 32
 
 
 class CcxtExchange(Protocol):
@@ -296,21 +298,22 @@ class CcxtAdapter(BrokerAdapter):
         if not getattr(self._ex, "has", {}).get("fetchFundingRateHistory"):
             return None
         since = int((boundary - timedelta(hours=12)).timestamp() * 1000)  # spans any interval
+        # the PARSE sits inside the try too: a malformed venue row (garbage timestamp/rate,
+        # a non-dict entry) must also degrade to None — the contract is "never wedge".
         try:
             rows = await self._call(
-                lambda: self._ex.fetch_funding_rate_history(symbol, since, 32),
+                lambda: self._ex.fetch_funding_rate_history(symbol, since, _FUNDING_HISTORY_PAGE),
                 idempotent=True,
             )
-        except BrokerError as exc:
+            for row in rows:
+                ts = row.get("timestamp")
+                rate = row.get("fundingRate")
+                if ts is None or rate is None:
+                    continue
+                if abs((_ts(ts) - boundary).total_seconds()) <= _FUNDING_TS_TOLERANCE_S:
+                    return _dec(rate)
+        except (BrokerError, ArithmeticError, AttributeError, TypeError, ValueError) as exc:
             self._log.warning("funding_rate_fetch_failed", symbol=symbol, error=repr(exc))
-            return None
-        for row in rows:
-            ts = row.get("timestamp")
-            rate = row.get("fundingRate")
-            if ts is None or rate is None:
-                continue
-            if abs((_ts(ts) - boundary).total_seconds()) <= _FUNDING_TS_TOLERANCE_S:
-                return _dec(rate)
         return None
 
     async def aclose(self) -> None:
