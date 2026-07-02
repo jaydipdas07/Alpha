@@ -13,9 +13,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from alpha_core.helpers.config import load_yaml
+from alpha_core.research.tripwire import TripwireConfig
 
 
 class ResearchConfig(BaseModel):
@@ -24,6 +25,8 @@ class ResearchConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     heartbeat_timeout_seconds: int = 120
     lease_ttl_seconds: int = 1800
+    # the funding-regime tripwire monitor (scripts/funding_tripwire.py; research/tripwire.py)
+    funding_tripwire: TripwireConfig = Field(default_factory=TripwireConfig)
 
     @property
     def heartbeat_timeout(self) -> timedelta:

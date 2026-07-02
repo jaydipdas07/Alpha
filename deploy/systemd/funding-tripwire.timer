@@ -1,0 +1,11 @@
+# Fires funding-tripwire.service once a day, after the 00:00 UTC funding boundary has settled.
+# Persistent=true so a run missed while the box was down fires on the next boot.
+[Unit]
+Description=Alpha funding-regime tripwire schedule
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

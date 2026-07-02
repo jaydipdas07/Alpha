@@ -1,0 +1,24 @@
+# M3.0 basis follow-on — the funding-regime tripwire (scripts/funding_tripwire.py).
+#
+# A oneshot unit that reads the trailing window of LIVE public Binance funding for the crypto
+# panel universe and alerts (Telegram when TELEGRAM_* are in the environment, else the log)
+# when the cross-sectional spread re-crosses the basis family's entry bar — the signal that
+# the regime-conditional basis desk is worth re-opening. Monitoring only: no keys required,
+# no store reads, no orders. Fired by funding-tripwire.timer. Seconds of work; safe on the
+# t4g.small beside the live worker (unlike the retired discovery sweep).
+#
+# Adjust User / WorkingDirectory / the uv path to the box (defaults match docs/research-host.md).
+[Unit]
+Description=Alpha funding-regime tripwire (basis-desk re-entry alert)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/alpha
+# Telegram credentials (optional) come from the worker's env file, never the unit.
+EnvironmentFile=-/home/ubuntu/alpha/.env
+ExecStart=/home/ubuntu/.local/bin/uv run python scripts/funding_tripwire.py
+TimeoutStartSec=10m
+Nice=10
