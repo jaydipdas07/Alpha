@@ -51,6 +51,40 @@ class CondorLeg:
     quantity: int  # +1 buy (wing), -1 sell (short strike)
 
 
+def settlement_level(expiring: list[OptionQuote]) -> Decimal | None:
+    """The underlying's final-settlement level for ONE expiry, derived era-proof from that
+    day's expiring rows (NSE changed what the expiry-day settlement column carries — verified
+    against the full decade in the store):
+
+    - **level convention** (2020-02-06 onward): every expiring row's ``settle`` is the SAME
+      positive value — the final-settlement level. Return it.
+    - **zero convention** (through 2020-01-30): expiring rows publish ``settle = 0``; the final
+      premium lives in ``close``. Derive the level via expiry parity — at expiry
+      ``close ≈ intrinsic``, so for any strike quoting both rights ``S = K + C - P``; return
+      the MEDIAN across strike-pairs (robust to the stale closes zero-volume ITM strikes carry).
+
+    ``None`` when neither works (no positive shared settle, no usable pair) — the caller
+    settles flat rather than fabricate a level."""
+    settles = {q.settle for q in expiring}
+    if len(settles) == 1:
+        only = next(iter(settles))
+        if only > 0:
+            return only
+    by_strike: dict[Decimal, dict[OptionRight, Decimal]] = {}
+    for q in expiring:
+        by_strike.setdefault(q.strike, {})[q.right] = q.close
+    estimates = sorted(
+        strike + sides[OptionRight.CALL] - sides[OptionRight.PUT]
+        for strike, sides in by_strike.items()
+        if OptionRight.CALL in sides
+        and OptionRight.PUT in sides
+        and (sides[OptionRight.CALL] > 0 or sides[OptionRight.PUT] > 0)
+    )
+    if not estimates:
+        return None
+    return estimates[len(estimates) // 2]
+
+
 def parity_forward(chain: list[OptionQuote]) -> Decimal | None:
     """The parity-implied forward for ONE expiry's chain: the strike where |C - P| (settle)
     is smallest (put-call parity: C - P = S - K·df, so C ≈ P at K ≈ the forward). Uses only

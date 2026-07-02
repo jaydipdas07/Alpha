@@ -17,9 +17,10 @@ Both carry the same economics per contract-day: OHLC + the official **settlement
 mark + open interest. Dates are IST calendar days -> stored as UTC-midnight labels
 (the :mod:`~alpha_core.data.options_store` convention). Rows with zero volume are
 kept: their settlement price is the exchange's daily mark. ⚠️ On a contract's EXPIRY
-day the settlement column instead carries the UNDERLYING's final-settlement level
-(see :mod:`~alpha_core.data.options_store` — mark expiring rows at intrinsic/close,
-never ``settle``). Money is ``Decimal`` end-to-end (B5).
+day the settlement column is NEVER the option's premium — it is 0 through 2020-01 and
+the UNDERLYING's final-settlement level from 2020-02 (see
+:mod:`~alpha_core.data.options_store`; settle expiring rows via
+``index_premium.settlement_level``). Money is ``Decimal`` end-to-end (B5).
 """
 
 from __future__ import annotations
