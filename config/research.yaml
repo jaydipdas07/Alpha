@@ -2,3 +2,12 @@
 # A dead/stale research box must alert and have its work reclaimed, never hang a workflow.
 heartbeat_timeout_seconds: 120    # a research_status older than this is "stale" -> alert
 lease_ttl_seconds: 1800           # a backtest-request lease (30 min); on expiry -> reclaimable
+
+# The funding-regime tripwire (scripts/funding_tripwire.py): alerts when the trailing
+# cross-sectional funding spread re-crosses the basis family's entry bar — the signal that
+# the (regime-conditional, gate-verified-real) basis desk is worth re-opening. Monitoring
+# only; defaults mirror the basis family's pre-registered space.
+funding_tripwire:
+  lookback_days: 14           # trailing funding window (the family's lookback midpoint)
+  top_k: 8                    # the basis book breadth the spread is measured over
+  alert_annual_rate: "0.10"   # trigger at a 10%/yr top-k trailing spread (the mid entry rate)
