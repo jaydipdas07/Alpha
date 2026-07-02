@@ -140,6 +140,13 @@ def main() -> None:
         default="crypto-basis-1d",
         help="the basis CELL name basis templates sweep (discovery.yaml basis_panels)",
     )
+    ap.add_argument(
+        "--cost-scenario",
+        default="taker",
+        choices=("taker", "maker"),
+        help="basis execution-cost scenario (taker=crossing, the deployable-today primary; "
+        "maker=post-only — a holdout read must match the intended deployment)",
+    )
     ap.add_argument("--market", default="CRYPTO")
     ap.add_argument("--seed", type=int, default=10, help="RandomProposer seed (reproducibility)")
     ap.add_argument("--n", type=int, default=50, help="in-sample candidates per family")
@@ -177,11 +184,16 @@ def main() -> None:
     )
     basis_pair = (
         build_basis_backtesters(
-            research_store=research, holdout_store=holdout, funding_store=funding
+            research_store=research,
+            holdout_store=holdout,
+            funding_store=funding,
+            cost_scenario=args.cost_scenario,
         )
         if funding is not None
         else None
     )
+    if any(t in BASIS_TEMPLATES for t in templates):
+        print(f"=== basis cost scenario: {args.cost_scenario} ===")
 
     total_survivors = total_passes = 0
     # ONE ledger across every family: each family's n_trials is its honest count for this run.

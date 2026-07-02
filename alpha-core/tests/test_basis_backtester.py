@@ -5,6 +5,7 @@ exactly the price risk that drowned the unhedged carry family."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -26,14 +27,20 @@ from alpha_core.helpers.config import (
 from alpha_core.research.basis_backtester import (
     BASIS_TEMPLATES,
     BasisPanelBacktester,
+    basis_cost_fraction,
     spot_turnover_cost_fraction,
 )
 from alpha_core.research.cold_store_bars import CellKey
 from alpha_core.research.holdout_gate import HoldoutPanelBarsFor
 from alpha_core.research.panel_backtester import ColdStorePanelBarsFor
 from alpha_core.research.promote import build_basis_backtesters
-from alpha_core.research.strategist import StrategyProposal
-from alpha_core.strategy.examples.cross_sectional import BasisCarry, CrossSectionalConfig
+from alpha_core.research.strategist import DecimalRange, IntRange, StrategyProposal
+from alpha_core.strategy.examples.cross_sectional import (
+    BasisCarry,
+    BasisCarryHold,
+    BasisHoldConfig,
+    CrossSectionalConfig,
+)
 
 DAY = timedelta(days=1)
 START = datetime(2024, 1, 1, tzinfo=UTC)
@@ -80,9 +87,9 @@ def _funding(symbol: str, rates: list[str]) -> list[FundingRate]:
 
 
 def _proposal(
-    params: dict[str, int], template: str = "basis_carry", window: str = _CELL
+    params: Mapping[str, int | Decimal], template: str = "basis_carry", window: str = _CELL
 ) -> StrategyProposal:
-    return StrategyProposal(template, params, _CRYPTO, window, 1, "fp")
+    return StrategyProposal(template, dict(params), _CRYPTO, window, 1, "fp")
 
 
 def _bt(
@@ -374,3 +381,129 @@ def test_basis_config_rejects_mismatched_leg_intervals() -> None:
                 )
             ],
         )
+
+
+# --- the low-churn hysteresis variant (BasisCarryHold) --------------------------------------------
+# entry_rate_annual 0.365 -> per-day entry threshold exactly 0.001; exit_fraction 0.5 -> 0.0005.
+
+
+def _hold_cfg(**overrides: object) -> BasisHoldConfig:
+    params: dict[str, object] = {"lookback": 1, "entry_rate_annual": Decimal("0.365")}
+    params.update(overrides)
+    return BasisHoldConfig.model_validate(params)
+
+
+def test_hold_enters_only_at_or_above_the_entry_threshold() -> None:
+    strategy = BasisCarryHold(_hold_cfg(top_k=2))
+    funding = _seq({"A": ["0.0010"], "B": ["0.0009"]})  # A at the bar, B just under
+    assert strategy.rebalance(funding, held={}) == {"A": Decimal(1)}
+
+
+def test_hold_hysteresis_retains_a_held_name_the_same_value_cannot_enter() -> None:
+    # THE hysteresis crown jewel: 0.0007 sits between exit (0.0005) and entry (0.001) — a held
+    # name is RETAINED there, while an identical non-held name cannot enter. One value, two
+    # outcomes depending on holdings: exactly the churn-killer a single threshold lacks.
+    strategy = BasisCarryHold(_hold_cfg(top_k=2))
+    funding = _seq({"A": ["0.0007"]})
+    assert strategy.rebalance(funding, held={"A": Decimal(1)}) == {"A": Decimal(1)}
+    assert strategy.rebalance(funding, held={}) == {}
+
+
+def test_hold_exits_below_the_exit_threshold() -> None:
+    strategy = BasisCarryHold(_hold_cfg(top_k=2))
+    funding = _seq({"A": ["0.0004"]})  # below exit 0.0005
+    assert strategy.rebalance(funding, held={"A": Decimal(1)}) == {}
+
+
+def test_hold_kept_names_keep_their_slots_over_hotter_entrants() -> None:
+    # book full (top_k=2) with A+B in the retention band; C qualifies for entry at a far hotter
+    # rate but there is no slot — held names are never swapped out (that's re-ranking churn).
+    strategy = BasisCarryHold(_hold_cfg(top_k=2))
+    funding = _seq({"A": ["0.0006"], "B": ["0.0007"], "C": ["0.0020"]})
+    held = {"A": Decimal("0.5"), "B": Decimal("0.5")}
+    assert strategy.rebalance(funding, held=held) == {"A": Decimal("0.5"), "B": Decimal("0.5")}
+
+
+def test_hold_fills_free_slots_with_the_hottest_entrants_equal_weight() -> None:
+    strategy = BasisCarryHold(_hold_cfg(top_k=2))
+    funding = _seq({"A": ["0.0006"], "B": ["0.0015"], "C": ["0.0012"]})  # A kept, one slot free
+    book = strategy.rebalance(funding, held={"A": Decimal(1)})
+    assert book == {"A": Decimal("0.5"), "B": Decimal("0.5")}  # B (hotter) takes the slot, not C
+
+
+def test_hold_drops_a_held_name_missing_from_the_cross_section() -> None:
+    strategy = BasisCarryHold(_hold_cfg(top_k=2))
+    assert strategy.rebalance({}, held={"A": Decimal(1)}) == {}
+
+
+def test_hold_fold_pays_entry_once_then_rides_the_band_without_churn() -> None:
+    # funding: two rich days (>= entry 0.001) then a long dip into the hysteresis band (0.0007).
+    # The hold book enters ONCE (one cost event) and retains through the band — a no-hysteresis
+    # design would exit at the dip (cost + no carry). Flat prices isolate the carry.
+    rates = ["0.0012", "0.0012", "0.0007", "0.0007", "0.0007", "0.0007"]
+    n = len(rates)
+    perp = {"A": _bars("A", ["100"] * n, Venue.BINANCE)}
+    spot = {"A": _bars("A", ["100"] * n, Venue.BINANCE_SPOT)}
+    funding = {"A": _funding("A", rates)}
+    params: dict[str, int | Decimal] = {
+        "lookback": 1,
+        "top_k": 1,
+        "holding_period": 1,
+        "entry_rate_annual": Decimal("0.365"),
+    }
+    cost = Decimal("0.001")
+    returns = list(
+        _bt(perp, spot, funding, cost=cost).run(_proposal(params, template="basis_carry_hold"))
+    )
+    # i=1: signal f[1]=0.0012 >= entry -> enter (turnover 1 x cost) and earn f[2]=0.0007;
+    # i=2..4: signal in the band -> RETAINED, zero turnover, pure carry each bar.
+    assert returns == [
+        pytest.approx(0.0007 - 0.001),
+        pytest.approx(0.0007),
+        pytest.approx(0.0007),
+        pytest.approx(0.0007),
+    ]
+
+
+def test_hold_template_registered_with_the_tiny_preregistered_space() -> None:
+    template = BASIS_TEMPLATES["basis_carry_hold"]
+    strategy = template.build({"lookback": 10, "entry_rate_annual": Decimal("0.10")})
+    assert isinstance(strategy, BasisCarryHold)
+    cfg = strategy.config
+    assert (cfg.top_k, cfg.holding_period, cfg.exit_fraction) == (8, 7, Decimal("0.5"))
+    space = template.param_space
+    lookbacks = space["lookback"]
+    entries = space["entry_rate_annual"]
+    assert isinstance(lookbacks, IntRange) and isinstance(entries, DecimalRange)
+    n_configs = (lookbacks.high - lookbacks.low + 1) * (
+        int((entries.high - entries.low) / entries.step) + 1
+    )
+    assert n_configs == 24  # the deliberately tiny, pre-registered search space
+
+
+# --- execution-cost scenarios ---------------------------------------------------------------------
+
+
+def test_basis_cost_fraction_scenarios() -> None:
+    taker = basis_cost_fraction(_CRYPTO, "taker")
+    maker = basis_cost_fraction(_CRYPTO, "maker")
+    assert taker == Decimal("0.0026")  # (5+3) perp + (10+8) spot bps, crossing both legs
+    assert maker == Decimal("0.0012")  # 2 bps perp + 10 bps spot post-only, no crossing slippage
+    assert maker < taker
+    with pytest.raises(ValueError, match="unknown basis cost scenario"):
+        basis_cost_fraction(_CRYPTO, "psychic")
+    with pytest.raises(NotImplementedError, match="only crypto"):
+        basis_cost_fraction(AssetClass.EQUITY, "taker")
+
+
+def test_build_basis_backtesters_passes_the_cost_scenario_through(tmp_path: object) -> None:
+    base = Path(str(tmp_path))
+    in_sample, holdout_bt = build_basis_backtesters(
+        research_store=BarStore(base / "research"),
+        holdout_store=HoldoutStore(base / "holdout"),
+        funding_store=FundingStore(base / "funding"),
+        cost_scenario="maker",
+    )
+    assert isinstance(in_sample, BasisPanelBacktester)
+    assert isinstance(holdout_bt, BasisPanelBacktester)
+    assert in_sample._cost_scenario == "maker" and holdout_bt._cost_scenario == "maker"

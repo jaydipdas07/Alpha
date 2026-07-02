@@ -134,10 +134,18 @@
           "trading_fee": {
             "pct": 0.0005,
             "side": "both"
+          },
+          "maker_fee": {
+            "pct": 0.0002,
+            "side": "both"
           }
         },
         "crypto_spot": {
           "trading_fee": {
+            "pct": 0.001,
+            "side": "both"
+          },
+          "maker_fee": {
             "pct": 0.001,
             "side": "both"
           },

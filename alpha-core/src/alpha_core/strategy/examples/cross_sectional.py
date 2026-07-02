@@ -320,3 +320,72 @@ class BasisCarry:
         ranked = sorted(scores, key=lambda s: (-scores[s], s))[: self._cfg.top_k]
         weight = Decimal(1) / Decimal(len(ranked))
         return dict.fromkeys(ranked, weight)
+
+
+_DAYS_PER_YEAR = Decimal(365)  # crypto funds every calendar day — the annual<->daily rate bridge
+
+
+class BasisHoldConfig(CrossSectionalConfig):
+    """The low-churn basis book's parameters (the M3.0 basis follow-on): **hysteresis** thresholds
+    around the trailing-mean funding, on top of the shared lookback/top_k. ``holding_period`` is
+    the membership-CHECK cadence (weekly by default — between checks the book is untouched);
+    ``top_k`` caps breadth. Both default rather than search — the searched space stays tiny
+    (lookback x entry rate), the pre-registered discipline of a structural signal."""
+
+    top_k: int = Field(default=8, gt=0)  # book-breadth cap (fixed, not searched)
+    holding_period: int = Field(default=7, gt=0)  # weekly membership checks (fixed, not searched)
+    entry_rate_annual: Decimal = Field(gt=0)  # a name ENTERS at trailing funding >= this (ann.)
+    exit_fraction: Decimal = Field(default=Decimal("0.5"), gt=0, le=1)  # exit = entry x this
+
+
+class BasisCarryHold:
+    """Low-churn **hysteresis** basis carry — how a real carry desk runs the book (and the exact
+    fix for what killed ``BasisCarry``: post-2022 carry was ~breakeven net of re-ranking churn).
+
+    Membership, checked every ``holding_period`` bars, is stateful in the *held book* the fold
+    passes back in (the strategy object itself stays pure):
+
+    - a name **enters** only when its trailing-mean funding >= ``entry_rate_annual`` (per-day
+      equivalent);
+    - a **held** name is RETAINED while its trailing mean >= ``entry x exit_fraction`` — the
+      hysteresis band where a re-ranking book would churn;
+    - held names keep their slots (never swapped out for a marginally-hotter entrant); free
+      slots go to the highest-funding new qualifiers; equal weight over the final book; ``{}``
+      (flat) when nothing qualifies.
+
+    Look-ahead-clean: the caller passes funding up to the current bar. Deterministic: mean
+    descending, symbol tiebreak.
+    """
+
+    def __init__(self, config: BasisHoldConfig) -> None:
+        self._cfg = config
+
+    @property
+    def config(self) -> BasisHoldConfig:
+        return self._cfg
+
+    def rebalance(
+        self, funding: Mapping[str, Sequence[Decimal]], held: Mapping[str, Decimal]
+    ) -> dict[str, Decimal]:
+        """The next book given the funding cross-section AND the currently-held book (each
+        funding sequence is the symbol's per-bar funding up to the current bar)."""
+        entry = self._cfg.entry_rate_annual / _DAYS_PER_YEAR
+        exit_threshold = entry * self._cfg.exit_fraction
+        means = {
+            symbol: mean
+            for symbol, series in funding.items()
+            if (mean := _trailing_mean(series, self._cfg.lookback)) is not None
+        }
+        # held names retained through the hysteresis band; one absent from the cross-section
+        # (ineligible this bar — a leg gone) cannot be verified and is dropped.
+        kept = sorted(s for s in held if s in means and means[s] >= exit_threshold)
+        slots = self._cfg.top_k - len(kept)
+        entrants = sorted(
+            (s for s, mean in means.items() if s not in held and mean >= entry),
+            key=lambda s: (-means[s], s),
+        )[: max(slots, 0)]
+        book = kept + entrants
+        if not book:
+            return {}
+        weight = Decimal(1) / Decimal(len(book))
+        return dict.fromkeys(book, weight)

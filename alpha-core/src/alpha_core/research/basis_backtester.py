@@ -27,8 +27,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
-from typing import cast
+from typing import Protocol, cast, runtime_checkable
 
+from alpha_core.core.enums import AssetClass
 from alpha_core.helpers.config import load_discovery_config, load_rigor_config, load_yaml
 from alpha_core.research.cold_store_bars import CellKey
 from alpha_core.research.panel_backtester import (
@@ -39,15 +40,40 @@ from alpha_core.research.panel_backtester import (
     real_window,
     turnover_cost_fraction,
 )
-from alpha_core.research.strategist import IntRange, StrategyProposal, StrategyTemplate
+from alpha_core.research.strategist import (
+    DecimalRange,
+    IntRange,
+    StrategyProposal,
+    StrategyTemplate,
+)
 from alpha_core.strategy.examples.cross_sectional import (
     BasisCarry,
+    BasisCarryHold,
+    BasisHoldConfig,
     CrossSectionalConfig,
     PanelStrategy,
 )
 
-# The basis template registry (its own backtester — a two-leg fold). The grid mirrors the carry
-# family's (no new tunables): the signal is structural, so the space stays deliberately small.
+
+@runtime_checkable
+class HoldAwareStrategy(Protocol):
+    """A basis strategy whose next book depends on the CURRENTLY-HELD one (hysteresis): the fold
+    passes the held weights back in, so retention thresholds can differ from entry thresholds.
+    The strategy object itself stays pure — all state lives in the fold's ``held``."""
+
+    @property
+    def config(self) -> CrossSectionalConfig: ...
+
+    def rebalance(
+        self, signal: Mapping[str, Sequence[Decimal]], held: Mapping[str, Decimal]
+    ) -> dict[str, Decimal]: ...
+
+
+# The basis template registry (its own backtester — a two-leg fold). `basis_carry` mirrors the
+# carry family's grid (no new tunables); `basis_carry_hold` — the LOW-CHURN follow-on — searches a
+# deliberately TINY pre-registered space (lookback x entry rate = 24 configs; cadence/breadth/
+# hysteresis-fraction fixed in BasisHoldConfig): the signal is structural, so parameter mining is
+# not the point and the DSR deflation stays light.
 BASIS_TEMPLATES: dict[str, StrategyTemplate] = {
     "basis_carry": StrategyTemplate(
         "basis_carry",
@@ -55,6 +81,16 @@ BASIS_TEMPLATES: dict[str, StrategyTemplate] = {
         CrossSectionalConfig,
         BasisCarry,
         {"lookback": IntRange(3, 30), "top_k": IntRange(2, 8), "holding_period": IntRange(1, 10)},
+    ),
+    "basis_carry_hold": StrategyTemplate(
+        "basis_carry_hold",
+        "basis_carry_hold",
+        BasisHoldConfig,
+        BasisCarryHold,
+        {
+            "lookback": IntRange(7, 14),
+            "entry_rate_annual": DecimalRange(Decimal("0.05"), Decimal("0.15"), Decimal("0.05")),
+        },
     ),
 }
 
@@ -74,6 +110,31 @@ def spot_turnover_cost_fraction() -> Decimal:
     return slippage_bps / Decimal(10000) + fee
 
 
+def basis_cost_fraction(market: AssetClass, scenario: str = "taker") -> Decimal:
+    """The COMBINED both-leg per-unit-of-book-turnover cost under an execution ``scenario``
+    (one unit of basis turnover trades one unit of notional on EACH leg).
+
+    - ``"taker"`` — crossing the spread on both legs: (perp fee + slippage) + (spot fee +
+      slippage). The deployable-today assumption; the primary gate scenario.
+    - ``"maker"`` — post-only resting fills on both legs: the ``maker_fee`` rates only, no
+      crossing slippage. Adverse selection and unfilled-resting risk are unmodelled — the
+      mandatory 2x stress multiplier is the margin — so a maker-only survivor is a statement
+      about a maker-execution DEPLOYMENT, which the worker cannot yet do (Phase-4+ ability).
+    """
+    if market is not AssetClass.CRYPTO:
+        raise NotImplementedError(
+            f"basis cost for {market.value} is a follow-up; only crypto legs are modelled"
+        )
+    if scenario == "taker":
+        return turnover_cost_fraction(market) + spot_turnover_cost_fraction()
+    if scenario == "maker":
+        costs = load_yaml("costs.yaml")
+        perp = Decimal(str(costs["segments"]["crypto_perp"]["maker_fee"]["pct"]))
+        spot = Decimal(str(costs["segments"]["crypto_spot"]["maker_fee"]["pct"]))
+        return perp + spot
+    raise ValueError(f"unknown basis cost scenario {scenario!r}; known: taker, maker")
+
+
 def _real_pair(series: Sequence[Decimal | None], i: int) -> tuple[Decimal, Decimal] | None:
     """``(close[i], close[i+1])`` when both are real and the base is positive, else ``None`` (a
     data gap / a non-positive artifact — the leg contributes a flat 0 that bar, never a fill)."""
@@ -85,7 +146,7 @@ def _real_pair(series: Sequence[Decimal | None], i: int) -> tuple[Decimal, Decim
 
 
 def simulate_basis(
-    strategy: PanelStrategy,
+    strategy: PanelStrategy | HoldAwareStrategy,
     perp_closes: Mapping[str, Sequence[Decimal | None]],
     spot_closes: Mapping[str, Sequence[Decimal | None]],
     funding: Mapping[str, Sequence[Decimal]],
@@ -120,7 +181,11 @@ def simulate_basis(
                 and real_window(perp_closes[s], lo, i + 1)
                 and real_window(spot_closes[s], lo, i + 1)
             }
-            target = strategy.target_weights(eligible)
+            # a hold-aware (hysteresis) strategy sees the held book too; a plain one re-selects.
+            if isinstance(strategy, HoldAwareStrategy):
+                target = strategy.rebalance(eligible, held)
+            else:
+                target = strategy.target_weights(eligible)
             turnover = sum(
                 (abs(target.get(s, Decimal(0)) - held.get(s, Decimal(0))) for s in target | held),
                 Decimal(0),
@@ -157,8 +222,9 @@ class BasisPanelBacktester:
     to its two leg panels; BOTH legs are read through the same injected ``panel_bars_for``
     boundary (the TEST-3 wiring lives in ``promote.build_basis_backtesters``), and the perp leg's
     funding through ``panel_funding_for`` (the signal AND the carry). ``cost_fraction`` overrides
-    the combined both-leg per-unit-turnover cost — tests pin it; ``None`` derives perp + spot
-    from ``costs.yaml``."""
+    the combined both-leg per-unit-turnover cost — tests pin it; ``None`` derives it from
+    ``costs.yaml`` under ``cost_scenario`` ("taker" crossing, the deployable-today primary;
+    "maker" post-only — see :func:`basis_cost_fraction`)."""
 
     def __init__(
         self,
@@ -168,6 +234,7 @@ class BasisPanelBacktester:
         basis_cells: Mapping[CellKey, tuple[str, str]] | None = None,
         min_bars: int | None = None,
         cost_fraction: Decimal | None = None,
+        cost_scenario: str = "taker",
     ) -> None:
         self._panel_bars_for = panel_bars_for
         self._panel_funding_for = panel_funding_for
@@ -175,6 +242,7 @@ class BasisPanelBacktester:
         # the rigor gate needs >= 2*n_groups return observations; fail fast on a too-short panel.
         self._min_bars = min_bars if min_bars is not None else 2 * load_rigor_config().cpcv.n_groups
         self._cost_fraction = cost_fraction
+        self._cost_scenario = cost_scenario
 
     def run(self, proposal: StrategyProposal) -> Sequence[float]:
         """Build the basis strategy, align BOTH legs + the funding to one shared union timeline,
@@ -185,7 +253,7 @@ class BasisPanelBacktester:
             raise ValueError(
                 f"unknown basis template {proposal.template!r}; known: {sorted(BASIS_TEMPLATES)}"
             )
-        strategy = cast(PanelStrategy, template.build(proposal.params))
+        strategy = cast("PanelStrategy | HoldAwareStrategy", template.build(proposal.params))
         legs = self._basis.get((proposal.market, proposal.window))
         if legs is None:
             known = sorted(f"{m.value}/{w}" for m, w in self._basis)
@@ -219,7 +287,7 @@ class BasisPanelBacktester:
         cost = (
             self._cost_fraction
             if self._cost_fraction is not None
-            else turnover_cost_fraction(proposal.market) + spot_turnover_cost_fraction()
+            else basis_cost_fraction(proposal.market, self._cost_scenario)
         )
         return simulate_basis(
             strategy, perp_closes, spot_closes, funding_aligned, len(timeline), cost

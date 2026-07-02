@@ -167,6 +167,7 @@ def build_basis_backtesters(
     research_store: BarStore,
     holdout_store: HoldoutStore,
     funding_store: FundingStore,
+    cost_scenario: str = "taker",
 ) -> tuple[Backtester, Backtester]:
     """Wire the production (in-sample, holdout) **basis** backtester pair — the two-leg analogue
     of :func:`build_funding_panel_backtesters`, with the same TEST-3 wiring: BOTH legs of the
@@ -174,15 +175,20 @@ def build_basis_backtesters(
     legs of the holdout fold the gate-only store via one ``HoldoutPanelBarsFor`` — one boundary
     object per side, so the two legs can never straddle the seal. The perp leg's funding feeds
     the signal AND the carry on each side, gated by that side's price timeline.
-    ``funding_store`` is required: funding IS the basis signal."""
+    ``funding_store`` is required: funding IS the basis signal. ``cost_scenario`` selects the
+    execution-cost assumption for BOTH folds ("taker" crossing — the deployable-today primary —
+    or "maker" post-only; ``basis_cost_fraction``): a holdout read must run under the scenario
+    that matches the intended deployment."""
     funding_for = ColdStoreFundingFor.from_config(funding_store)
     in_sample = BasisPanelBacktester(
         panel_bars_for=ColdStorePanelBarsFor.from_config(research_store),
         panel_funding_for=funding_for,
+        cost_scenario=cost_scenario,
     )
     holdout = BasisPanelBacktester(
         panel_bars_for=HoldoutPanelBarsFor.from_config(holdout_store),
         panel_funding_for=funding_for,
+        cost_scenario=cost_scenario,
     )
     return in_sample, holdout
 
