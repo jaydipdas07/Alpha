@@ -42,6 +42,10 @@ data_cold/
 data_research/
 data_holdout/
 
+# M3.0 funding history (scripts/ingest_funding.py) + M5.5 option chains (scripts/ingest_nse_fo.py)
+data_funding/
+data_options/
+
 # B1b.4 nightly-discovery per-run JSON records (syncable to the pod discovery_runs table)
 discovery_runs/
 
