@@ -13,7 +13,14 @@ UTC **labels** — NSE trading/expiry dates are IST calendar days, stored unifor
 that calendar date at 00:00 UTC (a label, not an instant; both bhavcopy formats carry
 dates only, and research compares labels). A row with zero volume is still a valid
 record: its settlement price is the exchange's official daily mark (deep strikes trade
-rarely but settle daily), which is exactly what an EOD options fold marks against.
+rarely but settle daily).
+
+⚠️ **Expiry-day ``settle`` is NOT the option's mark.** On a contract's expiry day NSE
+publishes the UNDERLYING's final-settlement level in the settlement column (verified
+live 2026-06-30: every expiring row's ``SttlmPric`` equals ``UndrlygPric``; no
+non-expiring row's does). The store persists what the exchange publishes; a fold must
+mark rows with ``trade_date == expiry`` at intrinsic value (or ``close``), never at
+``settle`` — else every expiry day corrupts P&L by the full index level.
 """
 
 from __future__ import annotations
@@ -50,7 +57,10 @@ class OptionQuote(BaseModel):
     high: NonNegMoney
     low: NonNegMoney
     close: NonNegMoney
-    settle: NonNegMoney  # the official daily mark (present even with zero volume)
+    # the official daily mark (present even with zero volume) — EXCEPT on expiry day, when
+    # NSE publishes the UNDERLYING's final-settlement level here (mark expiring rows at
+    # intrinsic/close, never settle; see the module docstring).
+    settle: NonNegMoney
     volume_contracts: int = Field(ge=0)  # contracts traded
     open_interest: int = Field(ge=0)
     change_in_oi: int
@@ -198,7 +208,9 @@ class OptionsStore:
         return [_quote(r) for r in rows]
 
     def connect(self) -> duckdb.DuckDBPyConnection:
-        """A DuckDB connection with an ``option_quotes`` view over every parquet (empty-safe)."""
+        """A DuckDB connection with an ``option_quotes`` view over every parquet (empty-safe).
+        NB ``right`` is a SQL keyword: quote it in ad-hoc queries (``SELECT "right" …``);
+        ``SELECT *`` and the view itself need no quoting."""
         con = duckdb.connect()
         files = sorted(self._root.glob("*.parquet"))
         if files:

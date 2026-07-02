@@ -16,8 +16,10 @@ NSE has published the daily derivatives bhavcopy in two formats:
 Both carry the same economics per contract-day: OHLC + the official **settlement**
 mark + open interest. Dates are IST calendar days -> stored as UTC-midnight labels
 (the :mod:`~alpha_core.data.options_store` convention). Rows with zero volume are
-kept: their settlement price is the exchange's daily mark (what an EOD fold marks
-against). Money is ``Decimal`` end-to-end (B5).
+kept: their settlement price is the exchange's daily mark. ⚠️ On a contract's EXPIRY
+day the settlement column instead carries the UNDERLYING's final-settlement level
+(see :mod:`~alpha_core.data.options_store` — mark expiring rows at intrinsic/close,
+never ``settle``). Money is ``Decimal`` end-to-end (B5).
 """
 
 from __future__ import annotations
@@ -40,10 +42,23 @@ def _label(day: datetime) -> datetime:
     return datetime(day.year, day.month, day.day, tzinfo=UTC)
 
 
+# Explicit month map instead of strptime's %b: %b is LC_TIME-locale-sensitive, so an imported
+# library calling setlocale() would break "05-Jan-2023" parsing with a confusing error.
+_MONTH_BY_NAME = {
+    name: i + 1
+    for i, name in enumerate(
+        ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+    )
+}
+
+
 def _legacy_date(value: str) -> datetime:
-    """``05-Jan-2023`` / ``02-JAN-2023`` -> a UTC-midnight label (strptime's %b is
-    case-insensitive)."""
-    return _label(datetime.strptime(value.strip(), "%d-%b-%Y"))
+    """``05-Jan-2023`` / ``02-JAN-2023`` (any case) -> a UTC-midnight label, locale-proof."""
+    day_s, mon_s, year_s = value.strip().split("-")
+    month = _MONTH_BY_NAME.get(mon_s.upper())
+    if month is None:
+        raise ValueError(f"unknown month in legacy date {value!r}")
+    return _label(datetime(int(year_s), month, int(day_s), tzinfo=UTC))
 
 
 def _udiff_date(value: str) -> datetime:
@@ -56,8 +71,12 @@ def _dec(value: str) -> Decimal:
 
 
 def _int(value: str) -> int:
-    """An integer count that some feeds render with a decimal point (``"360"``/``"360.0"``)."""
-    return int(Decimal(value.strip() or "0"))
+    """An integer count that some feeds render with a decimal point (``"360"``/``"360.0"``).
+    A genuinely fractional count is malformed data — loud, never silently truncated."""
+    d = Decimal(value.strip() or "0")
+    if d != d.to_integral_value():
+        raise ValueError(f"expected an integer count, got {value!r}")
+    return int(d)
 
 
 def _right(value: str) -> OptionRight:
@@ -82,7 +101,12 @@ def legacy_rows_to_quotes(
     strike, unparseable number) raises — the archive is exchange-published and regular, so
     damage means a wrong download, never data to silently skip."""
     out: list[OptionQuote] = []
+    rows_seen = 0
+    type_column_seen = False
     for row in rows:
+        rows_seen += 1
+        if "INSTRUMENT" in row:
+            type_column_seen = True
         if row.get("INSTRUMENT", "").strip() not in instruments:
             continue
         symbol = row["SYMBOL"].strip()
@@ -109,6 +133,10 @@ def legacy_rows_to_quotes(
             )
         except (KeyError, ValueError, InvalidOperation) as exc:
             raise ValueError(f"malformed legacy bhavcopy row {dict(row)!r}") from exc
+    if rows_seen and not type_column_seen:
+        # a whole file without the type column is a wrong download / format drift — loud,
+        # never a silent 0-row trading day (per-row .get tolerates only mixed rows).
+        raise ValueError("legacy bhavcopy file has no INSTRUMENT column — wrong/drifted format")
     return out
 
 
@@ -121,7 +149,12 @@ def udiff_rows_to_quotes(
     """UDiFF-format ``csv.DictReader`` rows -> option quotes (same filtering contract as
     :func:`legacy_rows_to_quotes`); carries the ``UndrlygPric`` the legacy format lacks."""
     out: list[OptionQuote] = []
+    rows_seen = 0
+    type_column_seen = False
     for row in rows:
+        rows_seen += 1
+        if "FinInstrmTp" in row:
+            type_column_seen = True
         if row.get("FinInstrmTp", "").strip() not in instruments:
             continue
         symbol = row["TckrSymb"].strip()
@@ -150,4 +183,6 @@ def udiff_rows_to_quotes(
             )
         except (KeyError, ValueError, InvalidOperation) as exc:
             raise ValueError(f"malformed UDiFF bhavcopy row {dict(row)!r}") from exc
+    if rows_seen and not type_column_seen:
+        raise ValueError("UDiFF bhavcopy file has no FinInstrmTp column — wrong/drifted format")
     return out

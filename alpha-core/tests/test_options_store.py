@@ -173,3 +173,28 @@ def test_store_duckdb_view_counts_and_is_empty_safe(tmp_path: Path) -> None:
     store.write([_quote(2), _quote(3)])
     con = store.connect()
     assert con.execute("SELECT count(*) FROM option_quotes").fetchone() == (2,)
+
+
+def test_legacy_date_parses_any_case_locale_proof() -> None:
+    # explicit month map, not strptime %b: mixed/lower-case month names parse under any locale.
+    row = dict(_LEGACY_NIFTY, TIMESTAMP="31-dec-2021", EXPIRY_DT="06-jAn-2022")
+    (q,) = legacy_rows_to_quotes([row])
+    assert q.trade_date == datetime(2021, 12, 31, tzinfo=UTC)
+    assert q.expiry == datetime(2022, 1, 6, tzinfo=UTC)
+
+
+def test_fractional_count_is_malformed_not_truncated() -> None:
+    with pytest.raises(ValueError, match="malformed legacy bhavcopy row"):
+        legacy_rows_to_quotes([dict(_LEGACY_NIFTY, CONTRACTS="360.5")])
+
+
+def test_a_whole_file_missing_the_type_column_fails_loud() -> None:
+    # per-row .get tolerates a mixed file, but a FILE with no type column at all is a wrong
+    # download / format drift — never a silent 0-row trading day.
+    no_type_legacy = {k: v for k, v in _LEGACY_NIFTY.items() if k != "INSTRUMENT"}
+    with pytest.raises(ValueError, match="no INSTRUMENT column"):
+        legacy_rows_to_quotes([no_type_legacy])
+    no_type_udiff = {k: v for k, v in _UDIFF_NIFTY.items() if k != "FinInstrmTp"}
+    with pytest.raises(ValueError, match="no FinInstrmTp column"):
+        udiff_rows_to_quotes([no_type_udiff])
+    assert legacy_rows_to_quotes([]) == []  # an empty file stays an empty result, not an error
