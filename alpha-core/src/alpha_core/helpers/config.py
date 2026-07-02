@@ -429,6 +429,22 @@ class DiscoveryConfig(BaseModel):
                         f"basis cell {basis.name!r}: {label} {ref!r} is {leg.market.value}, "
                         f"not {basis.market.value} — both legs must share the cell's market"
                     )
+            if basis.perp_panel == basis.spot_panel:
+                raise ValueError(
+                    f"basis cell {basis.name!r}: perp_panel and spot_panel must be different "
+                    "panels (a leg cannot hedge itself)"
+                )
+            perp_leg = panels_by_name[basis.perp_panel]
+            spot_leg = panels_by_name[basis.spot_panel]
+            if perp_leg.interval_seconds != spot_leg.interval_seconds:
+                # mixed intervals would union daily+intraday stamps: every name then fails the
+                # per-leg real-window test at every rebalance and the fold silently returns all
+                # zeros — fail loud at load instead (the repo's config philosophy).
+                raise ValueError(
+                    f"basis cell {basis.name!r}: legs must share interval_seconds "
+                    f"({basis.perp_panel!r} is {perp_leg.interval_seconds}s, "
+                    f"{basis.spot_panel!r} is {spot_leg.interval_seconds}s)"
+                )
         return self
 
 

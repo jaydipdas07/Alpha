@@ -49,7 +49,9 @@ _FLOOR_TWINS: dict[tuple[Venue, int], tuple[Venue, int]] = {
 def _seed_floors(holdout_root: Path) -> dict[tuple[Venue, int], datetime]:
     """The twin-venue seeds derivable from the existing manifest: for each ``_FLOOR_TWINS`` target,
     the latest prior start among the twin venue's same-interval series (absent = no seed — a fresh
-    store has no boundary to inherit)."""
+    store has no boundary to inherit). NB the seed is the twin's *prior* boundary: a seal that
+    simultaneously rolls the twin's own boundary forward seeds one step behind it (the runbook's
+    fixed ingest windows make both land equal in practice; monotonicity holds either way)."""
     prior = prior_window_starts(holdout_root)
     seeds: dict[tuple[Venue, int], datetime] = {}
     for target, (twin_venue, twin_interval) in _FLOOR_TWINS.items():
@@ -68,8 +70,11 @@ def main() -> None:
     print(f"=== seal {RAW_ROOT} -> research {RESEARCH_ROOT} + holdout {HOLDOUT_ROOT} ===")
     research = BarStore(RESEARCH_ROOT)
     seeds = _seed_floors(HOLDOUT_ROOT)
-    for (venue, interval), start in sorted(seeds.items()):
-        print(f"  floor-seed {venue.value}|*|{interval}: {start.date()} (twin-venue boundary)")
+    for (seed_venue, seed_interval), start in sorted(seeds.items()):
+        print(
+            f"  floor-seed {seed_venue.value}|*|{seed_interval}: {start.date()} "
+            "(twin-venue boundary)"
+        )
     windows = seal_cold_store(
         BarStore(RAW_ROOT),
         research=research,

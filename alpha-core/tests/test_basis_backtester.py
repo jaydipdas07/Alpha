@@ -339,3 +339,38 @@ def test_basis_config_rejects_a_cross_market_leg() -> None:
                 )
             ],
         )
+
+
+def test_basis_config_rejects_a_leg_hedging_itself() -> None:
+    with pytest.raises(ValidationError, match="cannot hedge itself"):
+        DiscoveryConfig(
+            cells=[_cell()],
+            panels=[_panel("perps")],
+            basis_panels=[
+                DiscoveryBasisConfig(
+                    name="basis", market=_CRYPTO, perp_panel="perps", spot_panel="perps"
+                )
+            ],
+        )
+
+
+def test_basis_config_rejects_mismatched_leg_intervals() -> None:
+    # a perp-1d x spot-1h pair would union daily+hourly stamps and silently fold all zeros —
+    # the validator fails loud at load instead.
+    hourly_spot = DiscoveryPanelConfig(
+        name="spot",
+        market=_CRYPTO,
+        venue=Venue.BINANCE_SPOT,
+        interval_seconds=3600,
+        symbols=["A", "B"],
+    )
+    with pytest.raises(ValidationError, match="legs must share interval_seconds"):
+        DiscoveryConfig(
+            cells=[_cell()],
+            panels=[_panel("perps"), hourly_spot],
+            basis_panels=[
+                DiscoveryBasisConfig(
+                    name="basis", market=_CRYPTO, perp_panel="perps", spot_panel="spot"
+                )
+            ],
+        )
