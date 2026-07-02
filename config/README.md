@@ -12,7 +12,7 @@ Files land with the task that first needs them:
 | `costs.yaml` | fees, taxes (Indian stack + crypto TDS), slippage, perp funding | B1a.2 |
 | `rigor.yaml` | CPCV embargo, DSR thresholds, holdout cadence, population-calibration defs | Phase 1a |
 | `discovery.yaml` | the discovery universe — cells `(market, family, window)` + `n_candidates` | B1b.3 (#62) |
-| `research.yaml` | research-box heartbeat + backtest lease/timeout (R8) | B0.6 |
+| `research.yaml` | research-box heartbeat + backtest lease/timeout (R8) + the funding-regime tripwire | B0.6 |
 | `portfolio.yaml` | pure allocator — scored signals → target weights (D6) | Phase 1a |
 | `instruments.yaml` | tradable universe, lot/tick sizes | Phase 1+ |
 | `venues.yaml` | adapter registry (Delta / Binance / Kite / Dhan / Upstox) | Phase 1+ |

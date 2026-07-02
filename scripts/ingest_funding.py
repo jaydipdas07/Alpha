@@ -79,7 +79,7 @@ def fetch_funding(symbol: str, *, start: datetime, end: datetime) -> list[Fundin
     return rates
 
 
-def _panel_symbols() -> list[str]:
+def panel_symbols() -> list[str]:
     """The distinct member symbols of the crypto panels (the funding-carry universe)."""
     seen: dict[str, None] = {}
     for panel in load_discovery_config().panels:
@@ -91,7 +91,7 @@ def _panel_symbols() -> list[str]:
 
 def main() -> None:
     store = FundingStore(STORE_ROOT)
-    symbols = _panel_symbols()
+    symbols = panel_symbols()
     print(f"=== funding ingest ({len(symbols)} perps) -> {STORE_ROOT} ===")
     total = 0
     for symbol in symbols:

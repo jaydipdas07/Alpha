@@ -15,43 +15,37 @@ Wall-clock lives here at the edge (scripts own "now"; the engine never does). Ru
 
 from __future__ import annotations
 
-import os
 import sys
 import time
+import urllib.error
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from alpha_core.observability.logging import get_logger
-from alpha_core.observability.notify import (
-    LoggingNotifier,
-    Notifier,
-    Severity,
-    TelegramNotifier,
-)
+from alpha_core.observability.notify import Severity, notifier_from_env
 from alpha_core.research.lease import ResearchConfig
 from alpha_core.research.tripwire import assess_funding_regime, format_reading
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling script import (as #130 does)
-from ingest_funding import _panel_symbols, fetch_funding
-
-
-def _notifier() -> Notifier:
-    """Telegram when configured, else the structured log — best-effort either way."""
-    if os.environ.get(TelegramNotifier.TOKEN_ENV) and os.environ.get(TelegramNotifier.CHAT_ENV):
-        return TelegramNotifier()
-    return LoggingNotifier()
+from ingest_funding import fetch_funding, panel_symbols
 
 
 def main() -> None:
     log = get_logger("tripwire")
     config = ResearchConfig.from_config().funding_tripwire
-    symbols = _panel_symbols()
+    symbols = panel_symbols()
     now = datetime.now(tz=UTC)  # the edge owns wall-clock
     start = now - timedelta(days=config.lookback_days)
 
     rates_by_symbol = {}
     for symbol in symbols:
-        rates_by_symbol[symbol] = fetch_funding(symbol, start=start, end=now)
+        try:
+            rates_by_symbol[symbol] = fetch_funding(symbol, start=start, end=now)
+        except (urllib.error.URLError, RuntimeError) as exc:
+            # a delisted/invalid member (HTTP 400) or a blip must never abort the MONITOR —
+            # a dead tripwire defeats its purpose. The symbol simply drops out of the
+            # cross-section this run (the same tolerance ingest_funding.main applies).
+            log.warning("tripwire_symbol_skipped", symbol=symbol, error=repr(exc))
         time.sleep(0.2)  # polite to the public endpoint
 
     reading = assess_funding_regime(rates_by_symbol, config=config)
@@ -65,7 +59,7 @@ def main() -> None:
         symbols=reading.symbols_assessed,
     )
     if reading.triggered:
-        _notifier().send(text, severity=Severity.WARNING)
+        notifier_from_env().send(text, severity=Severity.WARNING)
 
 
 if __name__ == "__main__":

@@ -18,10 +18,14 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from alpha_core.data.funding import FundingRate
+from alpha_core.core.models import Money
+
+if TYPE_CHECKING:  # annotation-only: keeps lease.py's closure lean (no duckdb/pyarrow pull)
+    from alpha_core.data.funding import FundingRate
 
 _DAYS_PER_YEAR = Decimal(365)  # crypto funds every calendar day — the annual<->daily bridge
 
@@ -34,7 +38,7 @@ class TripwireConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     lookback_days: int = Field(default=14, gt=0)  # trailing funding window
     top_k: int = Field(default=8, gt=0)  # the basis book breadth the spread is measured over
-    alert_annual_rate: Decimal = Field(default=Decimal("0.10"), gt=0)  # trigger threshold
+    alert_annual_rate: Money = Field(default=Decimal("0.10"), gt=0)  # trigger threshold
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,9 +60,11 @@ def assess_funding_regime(
     ``lookback_days`` window (the caller fetches exactly that window).
 
     Per symbol the annualized trailing rate is ``sum(rates) / lookback_days * 365`` — summing
-    is robust to any venue interval (8h/4h/1h all collapse to a per-day total). The book-level
-    spread is the mean over the top-``top_k`` names; ``triggered`` when it meets the threshold
-    (the basis book would be harvesting at or above the family's entry bar again)."""
+    is robust to any venue interval (8h/4h/1h all collapse to a per-day total). Dividing by the
+    CONFIG window (not the actual data span) deliberately UNDER-states a partially-listed
+    symbol: an alert can only be delayed, never false-fired off one listing-spike day. The
+    book-level spread is the mean over the top-``top_k`` names; ``triggered`` when it meets
+    the threshold (the basis book would be harvesting at or above the family's entry bar)."""
     per_symbol: dict[str, Decimal] = {}
     days = Decimal(config.lookback_days)
     for symbol, rates in rates_by_symbol.items():
