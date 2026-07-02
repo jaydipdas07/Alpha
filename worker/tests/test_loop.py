@@ -24,6 +24,7 @@ from alpha_core.data.bar_builder import BarBuilder
 from alpha_core.data.feed import AdapterFeed
 from alpha_core.execution.commands import RunState, WorkerControl
 from alpha_core.execution.deadman import HeartbeatFile
+from alpha_core.execution.funding import FundingConfig
 from alpha_core.execution.oms import OMS
 from alpha_core.execution.reconcile import Reconciler
 from alpha_core.execution.state import StateStore
@@ -207,6 +208,7 @@ def _worker(
     venue: _FakeVenue | None = None,
     drain_inline: bool = True,
     pod_status: PodStatusWriter | None = None,
+    funding: FundingConfig | None = None,
 ) -> tuple[Worker, _FakeVenue, OMS, HeartbeatFile]:
     risk = risk or _risk()
     store = StateStore("sqlite:///:memory:")
@@ -230,6 +232,7 @@ def _worker(
         drain_inline=drain_inline,  # bounded fake feed -> drain fills inline
         pod_status=pod_status,
         clock=clock,
+        funding=funding,
     )
     return worker, venue, oms, heartbeat
 
@@ -785,3 +788,80 @@ async def test_kill_event_not_remirrored_for_a_baselined_halt(tmp_path) -> None:
     worker._synced_halt_generation = worker._risk.halt_generation  # the loop baselines to current
     await worker._maybe_sync_kill_event()
     assert rec.risk_events == []  # a known (baselined) halt is not re-mirrored
+
+
+# --- perp funding accrual at boundaries (R13 live wiring) -----------------------------------
+
+
+class _FundingVenue(_FakeVenue):
+    """A fake perp venue that answers ``funding_rate`` (the venue-truth path)."""
+
+    def __init__(self, ticks: list[Tick], rate: Decimal) -> None:
+        super().__init__(ticks)
+        self.rate = rate
+        self.asked: list[tuple[str, datetime]] = []
+
+    async def funding_rate(self, symbol: str, boundary: datetime) -> Decimal | None:
+        self.asked.append((symbol, boundary))
+        return self.rate
+
+
+_FUNDING = FundingConfig()  # interval 8h, fallback rate 0.0001 (the costs.yaml defaults)
+
+
+async def test_funding_boundary_is_utc_midnight_anchored(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    worker, _, _, _ = _worker(tmp_path, [], strategy=_AlwaysBuy(), funding=_FUNDING)
+    assert worker._funding_boundary(NOW) == NOW.replace(hour=8, minute=0, second=0)  # 12:01 -> 08
+    early = NOW.replace(hour=7, minute=59)
+    assert worker._funding_boundary(early) == NOW.replace(hour=0, minute=0, second=0)
+
+
+async def test_funding_accrues_once_per_boundary_with_the_venue_rate(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    venue = _FundingVenue(_ticks(["100", "100", "100", "100"]), Decimal("0.0002"))
+    worker, _, oms, _ = _worker(
+        tmp_path, [], strategy=_AlwaysBuy("0.01"), venue=venue, funding=_FUNDING
+    )
+    await worker.run()  # builds the 0.03 @ 100 long
+    await worker._accrue_funding()  # first call: baselines to the current boundary (no accrual)
+    assert oms.total_funding() == Decimal("0") and venue.asked == []
+    cast(FakeClock, worker._clock).advance(timedelta(hours=8))  # cross 16:00
+    await worker._accrue_funding()
+    # long pays positive funding: -qty * mark * rate = -0.03 * 100 * 0.0002
+    assert oms.total_funding() == Decimal("-0.0006")
+    assert venue.asked and venue.asked[0][1].hour == 16  # asked for the crossed boundary
+    await worker._accrue_funding()  # same boundary again: never double-accrued
+    assert oms.total_funding() == Decimal("-0.0006")
+
+
+async def test_funding_falls_back_to_configured_rate(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # the plain fake venue inherits the BrokerAdapter default funding_rate -> None
+    worker, _, oms, _ = _worker(
+        tmp_path,
+        _ticks(["100", "100", "100", "100"]),
+        strategy=_AlwaysBuy("0.01"),
+        funding=_FUNDING,
+    )
+    await worker.run()
+    await worker._accrue_funding()  # baseline
+    cast(FakeClock, worker._clock).advance(timedelta(hours=8))
+    await worker._accrue_funding()
+    # config fallback rate 0.0001: -0.03 * 100 * 0.0001
+    assert oms.total_funding() == Decimal("-0.0003")
+
+
+async def test_funding_skips_flat_books_and_unconfigured_venues(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # flat book: boundary crossings accrue nothing.
+    flat_worker, flat_venue, flat_oms, _ = _worker(
+        tmp_path, [], strategy=_AlwaysBuy(), venue=_FundingVenue([], Decimal("1")), funding=_FUNDING
+    )
+    await flat_worker._accrue_funding()
+    cast(FakeClock, flat_worker._clock).advance(timedelta(hours=8))
+    await flat_worker._accrue_funding()
+    assert flat_oms.total_funding() == Decimal("0")
+    assert cast(_FundingVenue, flat_venue).asked == []  # never even asked the venue
+    # unconfigured (spot/equity venue -> funding=None): a no-op regardless of boundaries.
+    none_worker, _, none_oms, _ = _worker(tmp_path, [], strategy=_AlwaysBuy(), funding=None)
+    await none_worker._accrue_funding()
+    cast(FakeClock, none_worker._clock).advance(timedelta(hours=8))
+    await none_worker._accrue_funding()
+    assert none_oms.total_funding() == Decimal("0")

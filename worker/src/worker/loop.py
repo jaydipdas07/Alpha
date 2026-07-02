@@ -33,15 +33,18 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+from alpha_core.core.enums import AssetClass
 from alpha_core.core.interfaces import BrokerAdapter, DataFeed
 from alpha_core.data.bar_builder import BarBuilder
 from alpha_core.data.feed import AdapterFeed
 from alpha_core.execution.commands import CommandWatcher, RunState, WorkerControl
 from alpha_core.execution.deadman import HeartbeatFile
+from alpha_core.execution.funding import FundingConfig, funding_cash_flow, load_funding_config
 from alpha_core.execution.oms import OMS
 from alpha_core.execution.reconcile import Reconciler, ReconcileStatus
 from alpha_core.execution.session import handle_kill, rearm_on_clean_reconcile
 from alpha_core.execution.state import StateStore
+from alpha_core.helpers.config import load_yaml
 from alpha_core.observability.logging import get_logger
 from alpha_core.observability.notify import LoggingNotifier, Notifier, Severity
 from alpha_core.risk.limits import load_risk_config
@@ -82,6 +85,7 @@ class Worker:
         pod_status: PodStatusWriter | None = None,
         pod_command_source: PodCommandSource | None = None,
         clock: Clock | None = None,
+        funding: FundingConfig | None = None,
     ) -> None:
         self._env = env
         self._adapter = adapter
@@ -108,6 +112,11 @@ class Worker:
         # without a restart). Both best-effort (TEST-8) — rotation never touches trading/safety.
         self._pod_command_source = pod_command_source
         self._clock = clock or SystemClock()
+        # Perp funding accrual (R13): None = venue has no funding (spot/equity). The rate per
+        # boundary comes from the VENUE (adapter.funding_rate); the config rate is only the
+        # loudly-logged fallback when the venue can't answer.
+        self._funding_cfg = funding
+        self._last_funding_boundary: datetime | None = None
         self._log = get_logger("worker")
         self._last_tick_at: datetime | None = None
         # Flatten once per distinct kill (by the risk manager's halt generation), so a
@@ -298,8 +307,58 @@ class Worker:
             # position adopted from the broker this cycle is detected in-band now, not
             # one cycle later (a clean position adopts; genuine drift halts here).
             await self._reconcile()
+            await self._accrue_funding()  # after reconcile: accrue on the broker-truth book
             self._check_feed_stale()
             await self._maybe_flatten_on_halt()
+
+    def _funding_boundary(self, now: datetime) -> datetime:
+        """The most recent funding boundary at ``now`` — UTC-midnight-anchored every
+        ``interval_hours`` (Binance/Delta perps fund at 00/08/16 UTC)."""
+        assert self._funding_cfg is not None  # only called when funding is configured
+        interval = self._funding_cfg.interval_hours
+        utc_now = now.astimezone(UTC)
+        return utc_now.replace(
+            hour=(utc_now.hour // interval) * interval, minute=0, second=0, microsecond=0
+        )
+
+    async def _accrue_funding(self) -> None:
+        """Accrue perp funding ONCE per crossed boundary on every held crypto position (R13):
+        into realized P&L and the day's total, so a funding-bleed feeds the daily-loss kill
+        via the next ``mark()``. The rate is the VENUE's settled rate for the boundary
+        (``adapter.funding_rate``); when the venue can't answer, the configured assumed rate
+        is used and loudly labelled. On startup the boundary baselines to the current one —
+        a restart never double-accrues an interval (it may skip at most one; the broker's
+        balance stays the reconcile truth either way)."""
+        if self._funding_cfg is None:
+            return
+        boundary = self._funding_boundary(self._now())
+        if self._last_funding_boundary is None:
+            self._last_funding_boundary = boundary  # baseline: accrue from the NEXT boundary
+            return
+        if boundary == self._last_funding_boundary:
+            return
+        self._last_funding_boundary = boundary
+        for position in self._oms.positions:
+            if position.quantity == 0 or position.asset_class is not AssetClass.CRYPTO:
+                continue
+            mark = position.last_price or position.average_price
+            if mark is None:  # pragma: no cover - qty!=0 guarantees average_price (model)
+                continue
+            rate = await self._adapter.funding_rate(position.symbol, boundary)
+            source = "venue"
+            if rate is None:
+                rate = self._funding_cfg.rate
+                source = "config_fallback"
+            cash_flow = funding_cash_flow(position, mark, rate)
+            self._oms.accrue_funding(cash_flow)
+            self._log.info(
+                "funding_accrued",
+                symbol=position.symbol,
+                boundary=boundary.isoformat(),
+                rate=str(rate),
+                source=source,
+                cash_flow=str(cash_flow),
+            )
 
     def _check_feed_stale(self) -> None:
         """A stale feed is only a *safety* event while a position is OPEN — then we
@@ -459,6 +518,14 @@ def build_worker(env: EnvConfig) -> Worker:
         command_watcher=command_watcher,  # pod->worker command bus (None unless configured)
         pod_status=pod_status,  # best-effort worker->pod heartbeat (None unless configured)
         clock=clock,
+        # Perp funding accrual (R13) — only derivatives venues fund; a spot/equity venue
+        # gets None (no accrual). Rates come from the venue at each boundary; the
+        # costs.yaml rate is the loudly-logged fallback.
+        funding=(
+            load_funding_config(load_yaml("costs.yaml"))
+            if venue_cfg.market_type == "swap"
+            else None
+        ),
     )
 
 

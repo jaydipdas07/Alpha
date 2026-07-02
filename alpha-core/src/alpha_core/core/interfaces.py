@@ -18,6 +18,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
@@ -92,6 +93,14 @@ class BrokerAdapter(ABC):
                 await self.cancel(order.client_order_id)
                 cancelled.append(order.client_order_id)
         return cancelled
+
+    async def funding_rate(self, symbol: str, boundary: datetime) -> Decimal | None:
+        """The SETTLED perp funding rate for the interval that closed at ``boundary``
+        (venue truth), or ``None`` when this venue/adapter cannot provide it — the
+        worker then accrues at the configured assumed rate instead, loudly (R13).
+        Default: no capability (equity/paper venues have no funding); perp adapters
+        override. Best-effort by contract: never raise for a missing capability."""
+        return None
 
     @abstractmethod
     async def get_positions(self) -> list[Position]:
