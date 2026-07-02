@@ -22,7 +22,7 @@ adopted, never duplicated.
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol
@@ -113,6 +113,13 @@ def _ts(ms: object) -> datetime:
     return datetime.fromtimestamp(int(float(str(ms))) / 1000, tz=UTC)
 
 
+# Funding-history entries are timestamped exactly at the interval boundary; this tolerance
+# absorbs venue clock jitter only (an implementation detail, not a business tunable).
+_FUNDING_TS_TOLERANCE_S = 300
+# One history page comfortably covers a 12h lookback at any venue interval (1h -> 12 rows).
+_FUNDING_HISTORY_PAGE = 32
+
+
 class CcxtExchange(Protocol):
     """The slice of an async ``ccxt`` exchange this adapter uses (structural)."""
 
@@ -125,6 +132,9 @@ class CcxtExchange(Protocol):
     ) -> dict[str, Any]: ...
     async def fetch_open_orders(self) -> list[dict[str, Any]]: ...
     async def fetch_positions(self) -> list[dict[str, Any]]: ...
+    async def fetch_funding_rate_history(
+        self, symbol: str, since: int, limit: int
+    ) -> list[dict[str, Any]]: ...
     async def fetch_ticker(self, symbol: str) -> dict[str, Any]: ...
     async def fetch_my_trades(self) -> list[dict[str, Any]]: ...
     async def fetch_closed_orders(self) -> list[dict[str, Any]]: ...
@@ -277,6 +287,34 @@ class CcxtAdapter(BrokerAdapter):
             return []
         raw = await self._call(self._ex.fetch_positions, idempotent=True)
         return [self._to_position(p) for p in raw if _dec(p.get("contracts") or 0) != 0]
+
+    async def funding_rate(self, symbol: str, boundary: datetime) -> Decimal | None:
+        """The venue's SETTLED funding rate for the interval that closed at ``boundary``
+        (R13 — the worker's accrual truth). Best-effort by contract: a venue without the
+        capability, an empty page, or any venue error returns ``None`` (the worker falls
+        back to the configured assumed rate, loudly) — funding telemetry must never wedge
+        or halt the loop. Matches the history entry timestamped AT the boundary
+        (±``_FUNDING_TS_TOLERANCE_S`` for venue clock jitter), never a neighbouring one."""
+        if not getattr(self._ex, "has", {}).get("fetchFundingRateHistory"):
+            return None
+        since = int((boundary - timedelta(hours=12)).timestamp() * 1000)  # spans any interval
+        # the PARSE sits inside the try too: a malformed venue row (garbage timestamp/rate,
+        # a non-dict entry) must also degrade to None — the contract is "never wedge".
+        try:
+            rows = await self._call(
+                lambda: self._ex.fetch_funding_rate_history(symbol, since, _FUNDING_HISTORY_PAGE),
+                idempotent=True,
+            )
+            for row in rows:
+                ts = row.get("timestamp")
+                rate = row.get("fundingRate")
+                if ts is None or rate is None:
+                    continue
+                if abs((_ts(ts) - boundary).total_seconds()) <= _FUNDING_TS_TOLERANCE_S:
+                    return _dec(rate)
+        except (BrokerError, ArithmeticError, AttributeError, TypeError, ValueError) as exc:
+            self._log.warning("funding_rate_fetch_failed", symbol=symbol, error=repr(exc))
+        return None
 
     async def aclose(self) -> None:
         """Close the ccxt session's HTTP/websocket connectors (ccxt requires an

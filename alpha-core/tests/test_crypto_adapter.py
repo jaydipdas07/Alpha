@@ -8,6 +8,7 @@ name-based normalization is exercised without importing the optional package.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -74,6 +75,9 @@ class FakeExchange:
         self.order_batches: list[Any] = []
         self.my_trade_batches: list[Any] = []  # exact fills (watch_my_trades, R16)
         self.options: dict[str, str] = {"defaultType": "swap"}  # derivatives → positions apply
+        # funding surface (R13): the adapter consults `has` before calling; empty = no capability
+        self.has: dict[str, bool] = {}
+        self.funding_history: list[dict[str, Any]] = []
 
     async def create_order(
         self, symbol: str, type: str, side: str, amount: float, price: float | None, params: Any
@@ -107,6 +111,11 @@ class FakeExchange:
 
     async def fetch_positions(self) -> list[dict[str, Any]]:
         return self._positions
+
+    async def fetch_funding_rate_history(
+        self, symbol: str, since: int, limit: int
+    ) -> list[dict[str, Any]]:
+        return list(self.funding_history)
 
     # REST-poll surface (used by the polling path for non-websocket venues, P18.1)
     async def fetch_ticker(self, symbol: str) -> dict[str, Any]:
@@ -710,3 +719,43 @@ async def test_order_events_ws_stream_surfaces_terminal_error() -> None:
     with pytest.raises(AuthError):
         async for _ in adapter.order_events():
             pass
+
+
+# --- funding_rate (R13 — the worker's accrual truth; best-effort by contract) --------------------
+
+
+async def test_funding_rate_matches_the_boundary_entry() -> None:
+    ex = FakeExchange()
+    ex.has = {"fetchFundingRateHistory": True}
+    boundary = datetime(2026, 6, 28, 16, 0, tzinfo=UTC)
+    ms = int(boundary.timestamp() * 1000)
+    ex.funding_history = [
+        {"timestamp": ms - 8 * 3600 * 1000, "fundingRate": 0.0005},  # the PREVIOUS boundary
+        {"timestamp": ms, "fundingRate": 0.0002},  # the one that closed AT the boundary
+    ]
+    adapter = CcxtAdapter(exchange=ex)
+    assert await adapter.funding_rate("BTC/USDT", boundary) == Decimal("0.0002")
+
+
+async def test_funding_rate_is_none_without_capability_match_or_on_error() -> None:
+    boundary = datetime(2026, 6, 28, 16, 0, tzinfo=UTC)
+    # no capability advertised -> None without even calling the venue.
+    assert await CcxtAdapter(exchange=FakeExchange()).funding_rate("BTC/USDT", boundary) is None
+    # capability but no entry at the boundary (stale page) -> None, never a neighbour's rate.
+    ex = FakeExchange()
+    ex.has = {"fetchFundingRateHistory": True}
+    ex.funding_history = [
+        {"timestamp": int(boundary.timestamp() * 1000) - 3600 * 1000, "fundingRate": 0.001}
+    ]
+    assert await CcxtAdapter(exchange=ex).funding_rate("BTC/USDT", boundary) is None
+
+    # a venue error is swallowed to None (best-effort: funding must never wedge the loop).
+    class _Boom(FakeExchange):
+        async def fetch_funding_rate_history(
+            self, symbol: str, since: int, limit: int
+        ) -> list[dict[str, Any]]:
+            raise RuntimeError("venue down")
+
+    boom = _Boom()
+    boom.has = {"fetchFundingRateHistory": True}
+    assert await CcxtAdapter(exchange=boom).funding_rate("BTC/USDT", boundary) is None
