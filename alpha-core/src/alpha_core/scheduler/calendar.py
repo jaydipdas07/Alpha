@@ -42,3 +42,24 @@ class TradingCalendar:
     def days_to_expiry(self, expiry: date, reference: date) -> int:
         """Calendar days from ``reference`` to ``expiry`` (negative if past)."""
         return (expiry - reference).days
+
+
+def load_trading_calendar(exchange: str) -> TradingCalendar:
+    """Build ``exchange``'s calendar from ``config/calendar.yaml`` (ADR 0010).
+
+    The yaml carries exchange-local calendar DATES (the file's ▲ note governs the
+    annual refresh). An exchange absent from the file gets an empty calendar —
+    weekday rules only — which FAILS SAFE for gating (a missed holiday just means
+    an idle, tickless session; it can never suppress a real one)."""
+    from alpha_core.helpers.config import load_yaml
+
+    spec = (load_yaml("calendar.yaml").get("exchanges") or {}).get(exchange) or {}
+    raw_holidays = spec.get("holidays") or []
+    holidays: set[date] = set()
+    for value in raw_holidays:
+        # yaml parses bare ISO dates to date; quoted ones arrive as str — take both.
+        holidays.add(value if isinstance(value, date) else date.fromisoformat(str(value)))
+    return TradingCalendar(
+        holidays=holidays,
+        trades_weekends=bool(spec.get("trades_weekends", False)),
+    )

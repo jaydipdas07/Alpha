@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 from alpha_core.core.enums import AssetClass
 from alpha_core.helpers.config import ConfigError, load_yaml
-from alpha_core.scheduler.calendar import TradingCalendar
+from alpha_core.scheduler.calendar import TradingCalendar, load_trading_calendar
 
 
 @runtime_checkable
@@ -140,4 +140,8 @@ def schedule_for(asset_classes: frozenset[AssetClass]) -> MarketSchedule:
         close_time=time.fromisoformat(session["close"]),
         no_new_entry=time.fromisoformat(seg["no_new_entry_time"]),
         square_off=time.fromisoformat(seg["square_off_time"]),
+        # The exchange holiday calendar (config/calendar.yaml): a listed holiday
+        # closes the whole session (is_open False all day). Both Indian segments
+        # trade the NSE calendar today.
+        calendar=load_trading_calendar("NSE"),
     )

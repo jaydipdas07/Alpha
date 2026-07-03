@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime, time, timedelta
 import pytest
 
 from alpha_core.core.enums import AssetClass
-from alpha_core.scheduler.calendar import TradingCalendar
+from alpha_core.scheduler.calendar import TradingCalendar, load_trading_calendar
 from alpha_core.scheduler.clock import FakeClock, MarketSchedule, SystemClock, schedule_for
 
 IST = "Asia/Kolkata"
@@ -150,3 +150,28 @@ def test_schedule_for_index_option_uses_session() -> None:
     s = schedule_for(frozenset({AssetClass.INDEX_OPTION}))
     assert s.is_24x7 is False
     assert s.is_at_or_after_square_off(_ist(2026, 6, 15, 15, 20)) is True
+
+
+# --- config/calendar.yaml -> TradingCalendar (SCHED-1, item-6 core) ---------------
+
+
+def test_load_trading_calendar_reads_the_shipped_nse_file() -> None:
+    cal = load_trading_calendar("NSE")
+    assert not cal.is_trading_day(date(2025, 12, 25))  # listed holiday (Christmas, Thu)
+    assert not cal.is_trading_day(date(2026, 1, 26))  # Republic Day (Mon)
+    assert cal.is_trading_day(date(2026, 7, 3))  # a plain Friday
+    assert not cal.is_trading_day(date(2026, 7, 4))  # Saturday (weekend rule)
+
+
+def test_load_trading_calendar_unknown_exchange_fails_safe() -> None:
+    # No entry -> weekday rules only: a missed holiday can idle a day, never
+    # suppress a real session.
+    cal = load_trading_calendar("NO_SUCH_EXCHANGE")
+    assert cal.is_trading_day(date(2025, 12, 25))
+    assert not cal.is_trading_day(date(2025, 12, 27))  # Saturday
+
+
+def test_schedule_for_equity_now_carries_the_holiday_calendar() -> None:
+    schedule = schedule_for(frozenset({AssetClass.EQUITY}))
+    assert not schedule.is_open(_ist(2025, 12, 25, 10, 30))  # listed holiday (Christmas)
+    assert schedule.is_open(_ist(2025, 12, 24, 10, 30))  # the Wednesday before
