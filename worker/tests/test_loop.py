@@ -34,7 +34,7 @@ from alpha_core.scheduler.clock import FakeClock
 from alpha_core.strategy.engine import StrategyEngine
 from worker.config import EnvConfig
 from worker.loop import Worker
-from worker.pod_sync import PodStatusWriter
+from worker.pod_sync import PodStatusWriter, PodTradeSync
 
 T0 = datetime(2026, 6, 28, 12, 0, 0, tzinfo=UTC)
 NOW = T0 + timedelta(minutes=1)  # the worker's wall-clock instant (after the scripted ticks)
@@ -208,6 +208,7 @@ def _worker(
     venue: _FakeVenue | None = None,
     drain_inline: bool = True,
     pod_status: PodStatusWriter | None = None,
+    pod_trade_sync: PodTradeSync | None = None,
     funding: FundingConfig | None = None,
 ) -> tuple[Worker, _FakeVenue, OMS, HeartbeatFile]:
     risk = risk or _risk()
@@ -231,6 +232,7 @@ def _worker(
         feed_stale_seconds=600,
         drain_inline=drain_inline,  # bounded fake feed -> drain fills inline
         pod_status=pod_status,
+        pod_trade_sync=pod_trade_sync,
         clock=clock,
         funding=funding,
     )
@@ -622,13 +624,17 @@ async def test_build_worker_wires_pod_sync_when_a_pod_is_present(tmp_path, monke
             "heartbeat_path": f"{tmp_path}/hb",
             "command_poll_seconds": 1.0,
             "reconcile_interval_seconds": 30,
-            "pod_sync": {"pod_id": "p-1"},
+            "pod_sync": {
+                "pod_id": "p-1",
+                "deployment_id": "0198c0de-0000-4000-8000-000000000001",
+            },
         }
     )
     worker = build_worker(env)
     try:
         assert worker._command_watcher is not None
         assert worker._pod_status is not None
+        assert worker._pod_trade_sync is not None  # deployment_id set -> trade sync wired
     finally:
         await worker._adapter.aclose()
 
@@ -672,6 +678,7 @@ async def test_token_refresh_swaps_clients_on_change(
                 "pod_id": "p-1",
                 "token_envfile": str(envfile),
                 "token_refresh_seconds": 0.01,
+                "deployment_id": "0198c0de-0000-4000-8000-000000000001",
             },
         }
     )
@@ -694,6 +701,8 @@ async def test_token_refresh_swaps_clients_on_change(
         assert worker._pod_status._pod is fresh[0]  # status writer now uses the fresh client
         assert worker._pod_command_source is not None
         assert worker._pod_command_source._pod is fresh[0]  # command source swapped too
+        assert worker._pod_trade_sync is not None
+        assert worker._pod_trade_sync._pod is fresh[0]  # trade sync swapped too
     finally:
         await worker._adapter.aclose()
 
@@ -741,6 +750,7 @@ async def test_token_refresh_no_swap_when_unchanged(
                 "pod_id": "p-1",
                 "token_envfile": str(envfile),
                 "token_refresh_seconds": 0.01,
+                "deployment_id": "0198c0de-0000-4000-8000-000000000001",
             },
         }
     )
@@ -903,3 +913,35 @@ async def test_funding_accrual_survives_a_restart_via_the_persisted_day_row(tmp_
     oms2.restore_daily_state(worker._today())
     fills_only = sum((p.realized_pnl for p in oms2.positions), Decimal(0))
     assert oms2._day_realized == fills_only + Decimal("-0.0006")
+
+
+async def test_maybe_sync_trades_pushes_the_booked_state(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # End-to-end through the loop: trade -> fills booked (derived P&L, R11) -> the trade
+    # sync receives the full book: orders, STORE-read fills, positions, Decimal money.
+    class _Recorder:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def sync(self, **kwargs: object) -> None:
+            self.calls.append(kwargs)
+
+    rec = _Recorder()
+    worker, _venue, _oms, _hb = _worker(
+        tmp_path,
+        _ticks(["100", "100", "100", "100"]),
+        strategy=_AlwaysBuy("0.01"),
+        pod_trade_sync=cast(PodTradeSync, rec),
+    )
+    await worker.run()  # 3 closed bars -> 3 buys booked
+    await worker._maybe_sync_trades()
+    (call,) = rec.calls
+    assert len(cast(list[object], call["fills"])) == 3  # read back from the durable store
+    assert len(cast(list[object], call["orders"])) == 3
+    assert cast(list[Position], call["positions"])[0].quantity == Decimal("0.03")
+    assert call["realized"] == Decimal("0")
+    assert isinstance(call["realized"], Decimal)  # money is Decimal, never float (B5)
+
+
+async def test_maybe_sync_trades_is_a_noop_without_a_sync(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    worker, _venue, _oms, _hb = _worker(tmp_path, _ticks(["100"]), strategy=_AlwaysBuy())
+    await worker._maybe_sync_trades()  # no trade sync configured: returns without touching the OMS

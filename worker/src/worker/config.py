@@ -11,10 +11,11 @@ Two config files (CLAUDE.md: tunables in ``config/``, no magic numbers):
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from alpha_core.core.enums import Venue
 from alpha_core.helpers.config import load_yaml
@@ -77,6 +78,18 @@ class PodSyncConfig(BaseModel):
     # legacy behaviour (startup token only).
     token_envfile: str = ".env"  # re-read here for rotation (relative to the worker's cwd)
     token_refresh_seconds: float = Field(default=60.0, ge=0)  # 0 = no re-read (startup token only)
+    # The pod deployments.id this worker's book belongs to — the FK every trade-coupled
+    # table (orders/fills/positions/pnl_snapshots) requires. None = trade sync off
+    # (heartbeat + commands still run); set per deployment once its pod row exists.
+    deployment_id: str | None = None
+    pnl_snapshot_seconds: float = Field(default=300.0, gt=0)  # one pnl_snapshots row per interval
+
+    @field_validator("deployment_id")
+    @classmethod
+    def _deployment_id_is_a_uuid(cls, v: str | None) -> str | None:
+        if v is not None:
+            uuid.UUID(v)  # fail fast at config load, not at the first sync
+        return v
 
 
 class EnvConfig(BaseModel):

@@ -31,3 +31,10 @@ pod_sync:
   # Token rotation: re-read LEMMA_TOKEN from .env this often + swap the pod client (no restart),
   # so the ~60-min token stays fresh. A Mac launchd relay (deploy/relay/) keeps .env current.
   token_refresh_seconds: 60
+  # Trade-coupled sync (orders/fills/positions/pnl_snapshots -> the cockpit): set to the pod
+  # deployments.id this worker's book belongs to (the FK those tables require). Absent =>
+  # trade sync off (heartbeat + commands unaffected). One pnl_snapshots row per cadence.
+  # RUNBOOK: a NEW deployment_id needs a FRESH state_db — client_order_id is globally unique
+  # pod-side, so an old book synced under a new deployment collides instead of re-homing.
+  # deployment_id: "<pod deployments.id>"
+  pnl_snapshot_seconds: 300

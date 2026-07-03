@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from pydantic import ValidationError
 
@@ -94,3 +96,28 @@ def test_active_venue_resolves_testnet_venue() -> None:
     vc = active_venue(env, venues)
     assert vc.testnet is True
     assert vc.venue in (Venue.BINANCE, Venue.DELTA)  # whichever the shipped paper venue is
+
+
+def test_pod_sync_deployment_id_must_be_a_uuid() -> None:
+    # The id is interpolated into the trade sync's baseline SELECTs — a malformed value
+    # must die at config load, never reach a query.
+    base = {
+        "env": "paper",
+        "mode": "paper",
+        "allow_live": False,
+        "worker_id": "w",
+        "venue": "delta-testnet",
+        "strategy": "idle",
+        "symbols": ["BTC/USD:USD"],
+        "bar_interval_seconds": 60,
+        "state_db": "sqlite:///:memory:",
+        "heartbeat_path": "/tmp/hb",
+        "command_poll_seconds": 1.0,
+        "reconcile_interval_seconds": 30,
+    }
+    good = {**base, "pod_sync": {"pod_id": "p", "deployment_id": str(uuid.uuid4())}}
+    assert EnvConfig.model_validate(good).pod_sync is not None
+    with pytest.raises(ValidationError):
+        EnvConfig.model_validate(
+            {**base, "pod_sync": {"pod_id": "p", "deployment_id": "1; DROP TABLE orders"}}
+        )
