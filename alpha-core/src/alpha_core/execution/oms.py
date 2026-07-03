@@ -252,6 +252,13 @@ class OMS:
         (ADR 0009). Includes resting (working) orders and any not-yet-pruned terminal ones."""
         return list(self._orders.values())
 
+    def all_fills(self) -> list[Fill]:
+        """The immutable fill history from the durable store (append-only; the derived-P&L
+        truth, R11) — for read-only consumers (pod telemetry). BLOCKING (a DB read): call
+        off the event loop (``asyncio.to_thread``), like every store write here."""
+        with self._store.transaction() as s:
+            return self._store.load_fills(s)
+
     def total_realized_pnl(self) -> Decimal:
         return sum((p.realized_pnl for p in self._positions.values()), Decimal(0)) + self._funding
 

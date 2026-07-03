@@ -16,12 +16,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 from lemma_sdk import Pod
 
-from alpha_core.core.models import Position
+from alpha_core.core.models import Fill, Order, Position
 from alpha_core.execution.commands import Command, CommandKind, CommandStatus
 from alpha_core.observability.logging import get_logger
 from worker.config import EnvConfig
@@ -159,6 +161,285 @@ class PodStatusWriter:
             if isinstance(item, dict) and item.get("worker_id") == self._worker_id:
                 return str(item["id"])
         return None
+
+
+def _opt(value: object) -> str | None:
+    """String-encode an optional Decimal for a pod TEXT money column (B5) — never a float."""
+    return None if value is None else str(value)
+
+
+class PodTradeSync:
+    """Per-event worker → pod sync of the trade-coupled tables (M3.4 deferred increment):
+    ``orders`` (upsert by unique ``client_order_id``), ``fills`` (append-only, idempotent by
+    unique ``dedup_key``), ``positions`` (upsert by unique ``position_key``) and cadenced
+    ``pnl_snapshots`` (insert by unique ``snapshot_key``) — so mission control charts the
+    deployment without ever being on the money path.
+
+    STRICTLY BEST-EFFORT (TEST-8): ``sync`` swallows every pod error (logs + returns) and is
+    called from the telemetry loop, never the trading path — a pod outage costs telemetry
+    freshness only, and every unsynced row simply retries next tick (nothing is marked synced
+    until the pod write succeeded). Restart-safe: the first sync BASELINES from the pod (row
+    ids by their unique keys + already-present fill ``dedup_key``s), so a rebooted worker
+    updates existing rows instead of duplicating them. All money is string-Decimal (B5).
+    """
+
+    def __init__(self, pod: Pod, *, deployment_id: str, snapshot_seconds: float) -> None:
+        # The id is interpolated into the baseline SELECTs — validate it is a real UUID
+        # (config-supplied, but never trust an interpolated value's shape).
+        self._deployment_id = str(uuid.UUID(deployment_id))
+        self._snapshot_seconds = snapshot_seconds
+        self._pod = pod
+        self._baselined = False
+        self._order_ids: dict[str, str] = {}  # client_order_id -> pod orders.id
+        self._order_fps: dict[str, tuple[str, str, str | None, str | None]] = {}
+        self._position_ids: dict[str, str] = {}  # position_key -> pod positions.id
+        self._position_fps: dict[str, tuple[str, str | None, str, str | None]] = {}
+        self._pod_dedup_keys: set[str] = set()  # fill dedup_keys confirmed pod-side
+        self._last_snapshot_key: str | None = None
+
+    def set_pod(self, pod: Pod) -> None:
+        """Swap in a freshly-tokened pod client (rotation; see ``PodStatusWriter.set_pod``)."""
+        self._pod = pod
+
+    async def sync(
+        self,
+        *,
+        now: datetime,
+        orders: list[Order],
+        fills: list[Fill],
+        positions: list[Position],
+        realized: Decimal,
+        unrealized: Decimal,
+        funding: Decimal,
+    ) -> None:
+        """One best-effort sync pass over the worker's current book + fill history (the
+        caller reads fills from the durable store — the derived-P&L truth, R11). Never
+        raises; a failed surface just retries next tick."""
+        try:
+            await asyncio.to_thread(
+                self._sync_blocking, now, orders, fills, positions, realized, unrealized, funding
+            )
+        except Exception as exc:  # TEST-8: telemetry must never touch the worker's path
+            _log.warning("trade_sync_failed", error=str(exc))
+
+    def _sync_blocking(
+        self,
+        now: datetime,
+        orders: list[Order],
+        fills: list[Fill],
+        positions: list[Position],
+        realized: Decimal,
+        unrealized: Decimal,
+        funding: Decimal,
+    ) -> None:
+        if not self._baselined:
+            self._baseline()  # raises on pod failure -> whole pass retries next tick
+        # Orders FIRST: fills FK the pod orders row, so its id must exist before any fill.
+        self._sync_orders(orders)
+        self._sync_fills(fills)
+        self._sync_positions(positions)
+        fees = sum((f.fees for f in fills if f.fees is not None), Decimal(0))
+        self._maybe_snapshot(
+            now, fills=fills, realized=realized, unrealized=unrealized, funding=funding, fees=fees
+        )
+
+    def _baseline(self) -> None:
+        """Load this deployment's existing pod rows ONCE (restart recovery): row ids by
+        their unique keys, and the fill ``dedup_key``s already present, so re-syncing a
+        rebuilt local book updates in place instead of duplicating. The deployment id is
+        UUID-validated at construction, so the interpolation below cannot inject."""
+        dep = self._deployment_id
+        for item in self._query(
+            f"SELECT id, client_order_id FROM orders WHERE deployment_id = '{dep}'"
+        ):
+            self._order_ids[str(item["client_order_id"])] = str(item["id"])
+        for item in self._query(
+            f"SELECT id, position_key FROM positions WHERE deployment_id = '{dep}'"
+        ):
+            self._position_ids[str(item["position_key"])] = str(item["id"])
+        for item in self._query(
+            "SELECT f.dedup_key AS dedup_key FROM fills f JOIN orders o ON f.order_id = o.id "
+            f"WHERE o.deployment_id = '{dep}'"
+        ):
+            self._pod_dedup_keys.add(str(item["dedup_key"]))
+        try:
+            # Seed the snapshot cursor so a restart inside an interval skips it instead of
+            # colliding on the unique key. Best-effort ONLY (its own try): if the pod's SQL
+            # dialect rejects ORDER BY/LIMIT the cost is one logged collision, not a
+            # baseline that can never complete.
+            latest = self._query(
+                "SELECT snapshot_key FROM pnl_snapshots "
+                f"WHERE deployment_id = '{dep}' ORDER BY ts DESC LIMIT 1"
+            )
+            if latest:
+                self._last_snapshot_key = str(latest[0]["snapshot_key"])
+        except Exception as exc:
+            _log.warning("snapshot_cursor_seed_failed", error=str(exc))
+        self._baselined = True
+        _log.info(
+            "trade_sync_baselined",
+            orders=len(self._order_ids),
+            positions=len(self._position_ids),
+            fills=len(self._pod_dedup_keys),
+        )
+
+    def _query(self, sql: str) -> list[dict[str, Any]]:
+        resp = self._pod.query(sql)
+        return [it for it in resp.to_dict().get("items", []) if isinstance(it, dict)]
+
+    def _sync_orders(self, orders: list[Order]) -> None:
+        for order in orders:
+            fp = (
+                order.state.value,
+                str(order.filled_quantity),
+                _opt(order.average_fill_price),
+                order.venue_order_id,
+            )
+            if self._order_fps.get(order.client_order_id) == fp:
+                continue  # unchanged since the last successful sync
+            data: dict[str, Any] = {
+                "deployment_id": self._deployment_id,
+                "client_order_id": order.client_order_id,
+                "venue_order_id": order.venue_order_id,
+                "symbol": order.symbol,
+                "venue": order.venue.value,
+                "asset_class": order.asset_class.value,
+                "side": order.side.value,
+                "order_type": order.order_type.value,
+                "state": order.state.value,
+                "quantity": str(order.quantity),
+                "limit_price": _opt(order.limit_price),
+                "stop_price": _opt(order.stop_price),
+                "filled_quantity": str(order.filled_quantity),
+                "average_fill_price": _opt(order.average_fill_price),
+            }
+            try:
+                row_id = self._order_ids.get(order.client_order_id)
+                if row_id is None:
+                    rec = self._pod.records.create("orders", data)
+                    if isinstance(rec, dict) and "id" in rec:
+                        self._order_ids[order.client_order_id] = str(rec["id"])
+                else:
+                    self._pod.records.update("orders", row_id, data)
+                self._order_fps[order.client_order_id] = fp  # only after the pod write stuck
+            except Exception as exc:  # per-row: one bad order must not block the rest
+                _log.warning(
+                    "order_sync_failed", client_order_id=order.client_order_id, error=str(exc)
+                )
+
+    def _sync_fills(self, fills: list[Fill]) -> None:
+        for fill in fills:
+            pod_order_id = self._order_ids.get(fill.client_order_id)
+            if pod_order_id is None:
+                # Its order didn't sync (pod hiccup, or a book pruned before first sync) —
+                # retry next tick once the order row exists; never fabricate the FK.
+                _log.warning("fill_sync_no_order", client_order_id=fill.client_order_id)
+                continue
+            # venue_fill_id when the venue gave one; else the local fill_id (client-generated,
+            # persisted, restart-stable) — either way the key survives a worker rebuild.
+            dedup_key = f"{pod_order_id}|{fill.venue_fill_id or fill.fill_id}"
+            if dedup_key in self._pod_dedup_keys:
+                continue
+            data: dict[str, Any] = {
+                "order_id": pod_order_id,
+                "dedup_key": dedup_key,
+                "venue_order_id": fill.venue_order_id,
+                "venue_fill_id": fill.venue_fill_id,
+                "symbol": fill.symbol,
+                "venue": fill.venue.value,
+                "side": fill.side.value,
+                "quantity": str(fill.quantity),
+                "price": str(fill.price),
+                "fees": _opt(fill.fees),
+                "ts": fill.ts.isoformat(),
+            }
+            try:
+                self._pod.records.create("fills", data)
+                self._pod_dedup_keys.add(dedup_key)  # only after the pod accepted it
+            except Exception as exc:
+                _log.warning("fill_sync_failed", dedup_key=dedup_key, error=str(exc))
+
+    def _sync_positions(self, positions: list[Position]) -> None:
+        for position in positions:
+            key = f"{self._deployment_id}|{position.venue.value}|{position.symbol}"
+            unrealized: Decimal | None = None
+            if (
+                position.quantity != 0
+                and position.average_price is not None
+                and position.last_price is not None
+            ):
+                unrealized = (position.last_price - position.average_price) * position.quantity
+            fp = (
+                str(position.quantity),
+                _opt(position.average_price),
+                str(position.realized_pnl),
+                _opt(unrealized),
+            )
+            if self._position_fps.get(key) == fp:
+                continue
+            data: dict[str, Any] = {
+                "deployment_id": self._deployment_id,
+                "position_key": key,
+                "symbol": position.symbol,
+                "venue": position.venue.value,
+                "quantity": str(position.quantity),  # signed; "0" = flat (a state, kept updated)
+                "avg_entry_price": _opt(position.average_price),
+                "realized_pnl": str(position.realized_pnl),
+                "unrealized_pnl": _opt(unrealized),
+            }
+            try:
+                row_id = self._position_ids.get(key)
+                if row_id is None:
+                    rec = self._pod.records.create("positions", data)
+                    if isinstance(rec, dict) and "id" in rec:
+                        self._position_ids[key] = str(rec["id"])
+                else:
+                    self._pod.records.update("positions", row_id, data)
+                self._position_fps[key] = fp
+            except Exception as exc:
+                _log.warning("position_sync_failed", position_key=key, error=str(exc))
+
+    def _maybe_snapshot(
+        self,
+        now: datetime,
+        *,
+        fills: list[Fill],
+        realized: Decimal,
+        unrealized: Decimal,
+        funding: Decimal,
+        fees: Decimal,
+    ) -> None:
+        """One ``pnl_snapshots`` row per ``snapshot_seconds`` interval (key = the epoch-floored
+        ts; the baseline seeds the cursor so a restart inside an interval skips, and the unique
+        ``snapshot_key`` is the pod-side backstop either way). Skipped while the book has never
+        traded (no fills, zero P&L) — an idle soak must not fill the table with flat points."""
+        if not fills and realized == 0 and unrealized == 0:
+            return
+        epoch = now.astimezone(UTC).timestamp()
+        floored = datetime.fromtimestamp(
+            (epoch // self._snapshot_seconds) * self._snapshot_seconds, tz=UTC
+        )
+        key = f"{self._deployment_id}|{floored.isoformat()}"
+        if key == self._last_snapshot_key:
+            return
+        data: dict[str, Any] = {
+            "deployment_id": self._deployment_id,
+            "snapshot_key": key,
+            "ts": floored.isoformat(),
+            "realized_pnl": str(realized),  # positions fold + funding (gross of fees)
+            "unrealized_pnl": str(unrealized),
+            "equity": str(realized + unrealized - fees),  # net-of-costs P&L equity (base 0)
+            "fees_paid": str(fees),
+            "funding_paid": str(funding),
+        }
+        try:
+            self._pod.records.create("pnl_snapshots", data)
+            self._last_snapshot_key = key
+        except Exception as exc:
+            # NOT claimed: a pod outage retries next tick and the interval's point is kept.
+            # (A unique-key collision would retry-warn until the interval rolls — but the
+            # baseline seeds the cursor, so collisions need a failed seed AND a restart.)
+            _log.warning("pnl_snapshot_sync_failed", snapshot_key=key, error=str(exc))
 
 
 def _to_command(item: dict[str, Any]) -> Command:

@@ -58,6 +58,7 @@ from worker.config import EnvConfig, active_venue, load_env_config, load_venues
 from worker.pod_sync import (
     PodCommandSource,
     PodStatusWriter,
+    PodTradeSync,
     build_pod_client,
     read_envfile_token,
 )
@@ -85,6 +86,7 @@ class Worker:
         command_watcher: CommandWatcher | None = None,
         pod_status: PodStatusWriter | None = None,
         pod_command_source: PodCommandSource | None = None,
+        pod_trade_sync: PodTradeSync | None = None,
         clock: Clock | None = None,
         funding: FundingConfig | None = None,
     ) -> None:
@@ -112,6 +114,10 @@ class Worker:
         # the relay refreshes $token_env in the .env file (so a long-lived worker stays pod-synced
         # without a restart). Both best-effort (TEST-8) — rotation never touches trading/safety.
         self._pod_command_source = pod_command_source
+        # Trade-coupled per-event sync (orders/fills/positions/pnl_snapshots), run from the
+        # pod-status loop — best-effort, never on the money path (TEST-8). None = off (no
+        # deployment_id configured).
+        self._pod_trade_sync = pod_trade_sync
         self._clock = clock or SystemClock()
         # Perp funding accrual (R13): None = venue has no funding (spot/equity). The rate per
         # boundary comes from the VENUE (adapter.funding_rate); the config rate is only the
@@ -225,6 +231,7 @@ class Worker:
                     detail=self._status_detail(),
                 )
                 await self._maybe_sync_kill_event()
+                await self._maybe_sync_trades()
             except Exception as exc:  # self-healing: telemetry must never kill its own loop
                 self._log.warning("pod_status_loop_error", error=str(exc))
             await asyncio.sleep(cadence)
@@ -250,6 +257,24 @@ class Worker:
                     "trigger": trigger.value if trigger else None,
                 },
             )
+
+    async def _maybe_sync_trades(self) -> None:
+        """Push the trade-coupled tables (orders/fills/positions/pnl_snapshots) to the pod —
+        from the telemetry loop, never the trading path (TEST-8). The fill history is read
+        from the durable store OFF the event loop (it is the derived-P&L truth, R11); the
+        sync itself swallows every pod error, so this can only cost telemetry freshness."""
+        if self._pod_trade_sync is None:
+            return
+        fills = await asyncio.to_thread(self._oms.all_fills)
+        await self._pod_trade_sync.sync(
+            now=self._now(),
+            orders=self._oms.orders,
+            fills=fills,
+            positions=self._oms.positions,
+            realized=self._oms.total_realized_pnl(),
+            unrealized=self._oms.total_unrealized_pnl(),
+            funding=self._oms.total_funding(),
+        )
 
     async def _pod_token_refresh_loop(self) -> None:
         """Best-effort token rotation. The pod token is ~60-min and the worker reads ``$token_env``
@@ -277,6 +302,8 @@ class Worker:
                 self._pod_status.set_pod(pod)
                 if self._pod_command_source is not None:
                     self._pod_command_source.set_pod(pod)
+                if self._pod_trade_sync is not None:
+                    self._pod_trade_sync.set_pod(pod)
                 current = token
                 self._log.info("pod_token_refreshed")  # the VALUE is never logged
             except Exception as exc:  # self-healing: rotation must never kill its own loop
@@ -490,6 +517,17 @@ def build_worker(env: EnvConfig) -> Worker:
     # gate/OMS. drain=False matches drain_inline=False (consume_events books flatten fills).
     # Named so the token-rotation loop can swap its pod client alongside the status writer.
     pod_command_source = PodCommandSource(pod) if pod is not None else None
+    # Trade-coupled per-event sync — only when the deployment's pod row id is configured
+    # (the FK every trade table requires). Best-effort telemetry, off the money path (TEST-8).
+    pod_trade_sync = (
+        PodTradeSync(
+            pod,
+            deployment_id=env.pod_sync.deployment_id,
+            snapshot_seconds=env.pod_sync.pnl_snapshot_seconds,
+        )
+        if pod is not None and env.pod_sync is not None and env.pod_sync.deployment_id
+        else None
+    )
     command_watcher = (
         CommandWatcher(
             source=pod_command_source,
@@ -516,6 +554,7 @@ def build_worker(env: EnvConfig) -> Worker:
         feed=AdapterFeed(adapter),
         feed_stale_seconds=feed_stale,
         pod_command_source=pod_command_source,  # rotated alongside pod_status by the refresh loop
+        pod_trade_sync=pod_trade_sync,  # trade-coupled tables (None unless deployment_id set)
         # The CcxtAdapter's order_events() is ALWAYS continuous — a ccxt.pro ws stream
         # OR an infinite REST poll (Delta) — never a bounded sim that returns after
         # draining. So the worker ALWAYS consumes it via the long-lived consume_events
