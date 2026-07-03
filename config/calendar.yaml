@@ -1,0 +1,38 @@
+# config/calendar.yaml — exchange trading-holiday calendar (ADR 0010; consumed by
+# scheduler.calendar.load_trading_calendar -> MarketSchedule session gating, SCHED-1).
+#
+# ▲ ANNUAL OPS STEP: refresh each December from the NSE circular ("Trading Holidays"
+# on nseindia.com) for the coming year. FAIL-SAFE ASYMMETRY — a MISSING holiday is
+# harmless live (the feed simply delivers no ticks; the worker idles), but a WRONG
+# entry would suppress a REAL trading session — so only circular-verified dates
+# belong here. Weekend closures are implied (trades_weekends: false) and never listed.
+#
+# Dates are exchange-LOCAL calendar dates (IST for NSE) — never tz-aware instants.
+
+exchanges:
+  NSE:
+    trades_weekends: false
+    holidays:
+      # --- 2025 (full list, NSE circular 2024) ---
+      - 2025-02-26   # Mahashivratri
+      - 2025-03-14   # Holi
+      - 2025-03-31   # Id-Ul-Fitr (Ramzan Eid)
+      - 2025-04-10   # Shri Mahavir Jayanti
+      - 2025-04-14   # Dr. B. R. Ambedkar Jayanti
+      - 2025-04-18   # Good Friday
+      - 2025-05-01   # Maharashtra Day
+      - 2025-08-15   # Independence Day
+      - 2025-08-27   # Ganesh Chaturthi
+      - 2025-10-02   # Mahatma Gandhi Jayanti / Dussehra
+      - 2025-10-21   # Diwali Laxmi Pujan (muhurat session only — regular market closed)
+      - 2025-10-22   # Diwali Balipratipada
+      - 2025-11-05   # Prakash Gurpurb (Guru Nanak Jayanti)
+      - 2025-12-25   # Christmas
+      # --- 2026 (PARTIAL: fixed-date holidays only; lunar-calendar dates pending the
+      #     circular re-verification — ▲ [You]/ops: complete from the NSE 2026 circular) ---
+      - 2026-01-26   # Republic Day
+      - 2026-04-03   # Good Friday
+      - 2026-04-14   # Dr. B. R. Ambedkar Jayanti
+      - 2026-05-01   # Maharashtra Day
+      - 2026-10-02   # Mahatma Gandhi Jayanti
+      - 2026-12-25   # Christmas

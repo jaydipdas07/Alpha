@@ -54,3 +54,7 @@ discovery_runs/
 
 # Worker runtime state (dbs, heartbeats, instrument caches) — never committed
 var/
+
+# Local demo/runbook harnesses (kept out of the repo; see PR #157/#159 reviews)
+config/demo.yaml
+scripts/demo_trade_sync.py

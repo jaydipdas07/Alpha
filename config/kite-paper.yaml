@@ -33,3 +33,4 @@ pod_sync:
   token_refresh_seconds: 60
   # deployment_id: "<pod deployments.id>"
   pnl_snapshot_seconds: 300
+intraday_square_off: false  # CNC-style: hold overnight; true = MIS-style daily square-off

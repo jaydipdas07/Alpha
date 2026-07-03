@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from alpha_core.adapters.paper import PaperBroker
@@ -53,7 +53,7 @@ from alpha_core.observability.logging import get_logger
 from alpha_core.observability.notify import LoggingNotifier, Notifier, Severity
 from alpha_core.risk.limits import load_risk_config
 from alpha_core.risk.manager import KillTrigger, RiskManager
-from alpha_core.scheduler.clock import Clock, SystemClock
+from alpha_core.scheduler.clock import Clock, MarketSchedule, SystemClock, schedule_for
 from alpha_core.strategy.engine import StrategyEngine
 from alpha_core.strategy.registry import build_strategy
 from worker.adapters import build_adapter, build_kite_ticker_feed
@@ -91,6 +91,7 @@ class Worker:
         pod_command_source: PodCommandSource | None = None,
         pod_trade_sync: PodTradeSync | None = None,
         data_adapter: BrokerAdapter | None = None,
+        schedule: MarketSchedule | None = None,
         clock: Clock | None = None,
         funding: FundingConfig | None = None,
     ) -> None:
@@ -126,6 +127,12 @@ class Worker:
         # the execution adapter; None when the feed owns its own transport (kite) or the
         # execution adapter IS the data source (venue mode).
         self._data_adapter = data_adapter
+        # Session rules (SCHED-1, ADR 0010): None/24x7 = no gating (crypto). Otherwise
+        # entries are blocked outside the session and past no_new_entry_time, and —
+        # when the env opts in — the book squares off daily at square_off_time.
+        self._schedule = schedule
+        self._session_block_logged: str | None = None  # log-once key (reason@date)
+        self._squared_off_on: date | None = None  # the last session date squared off
         self._clock = clock or SystemClock()
         # Perp funding accrual (R13): None = venue has no funding (spot/equity). The rate per
         # boundary comes from the VENUE (adapter.funding_rate); the config rate is only the
@@ -207,7 +214,7 @@ class Worker:
             if bar is not None:
                 # Same order as the backtest runner (parity, ADR 0001): submit -> book
                 # fills -> mark -> kill-check, so a daily-loss kill sees the just-booked P&L.
-                if self._control.should_submit:
+                if self._control.should_submit and not self._session_blocks_entry(now):
                     for signal in self._engine.process_bar(bar):
                         await self._oms.submit_signal(signal, reference_price=bar.close)
                 if self._drain_inline:
@@ -340,6 +347,71 @@ class Worker:
             "last_tick_age_s": round(age, 1) if age is not None else None,
         }
 
+    def _session_blocks_entry(self, now: datetime) -> bool:
+        """True when the session rules block the strategy at ``now`` (SCHED-1):
+        outside the trading session (holiday / pre-open / post-close — Kite pushes
+        pre-open snapshot ticks that must not trade) or past ``no_new_entry_time``.
+        NB the gate wraps ``process_bar`` itself, so strategy signals — entries AND
+        exits — defer to the next session's first processed bar; only the halt and
+        square-off flatteners still place orders in a blocked window. (Blocked-window
+        bars never reach the strategy, so its state cannot desync from the book.)"""
+        if self._schedule is None or self._schedule.is_24x7:
+            return False
+        if not self._schedule.is_open(now):
+            reason = "session_closed"
+        elif self._schedule.is_after_no_new_entry(now):
+            reason = "no_new_entry_cutoff"
+        else:
+            return False
+        key = f"{reason}@{now.astimezone(UTC).date().isoformat()}"
+        if self._session_block_logged != key:  # once per reason-TRANSITION per day
+            self._session_block_logged = key
+            self._log.info("session_entry_blocked", reason=reason)
+        return True
+
+    async def _maybe_square_off(self, now: datetime) -> None:
+        """Opt-in (``intraday_square_off``) daily square-off at the segment's
+        ``square_off_time`` (SCHED-1): cancel working orders, flatten the book —
+        ONCE per session date. NOT a kill: the risk gate stays armed and trading
+        resumes next session (entries are already blocked past no_new_entry).
+
+        PRE-LIVE GATE (review #160 SF3): before this flag ever runs against a real
+        order API, ``flatten_all`` must net/skip symbols with an in-flight closing
+        order — a daily-loss halt landing between the square-off SELL and its fill
+        would otherwise size a SECOND flatten off the stale local book (net short
+        overnight). Paper's inline drain closes that window today."""
+        if not self._env.intraday_square_off or self._schedule is None:
+            return
+        if self._risk.is_halted or not self._schedule.is_at_or_after_square_off(now):
+            return  # a halt owns the book via handle_kill, never two flatteners
+        day = now.astimezone(UTC).date()
+        if self._squared_off_on == day:
+            return
+        self._squared_off_on = day  # claim before the awaits (periodic re-entry safety)
+        working = [o for o in self._oms.orders if not o.state.is_terminal]
+        holding = any(p.quantity != 0 for p in self._oms.positions)
+        if not working and not holding:
+            return  # nothing to do; the claim still stops re-checks today
+        self._log.info("intraday_square_off", working=len(working), holding=holding)
+        try:
+            await self._oms.cancel_all_working()
+            await self._oms.flatten_all()
+            if self._drain_inline:
+                await self._oms.drain_events()  # book the closing fills now (bounded path)
+                if any(p.quantity != 0 for p in self._oms.positions):
+                    raise RuntimeError("book not flat after the square-off fills")
+            # Success is announced AFTER the attempt, never before (review #160).
+            self._notifier.send("intraday square-off: day book closed", severity=Severity.INFO)
+        except Exception as exc:
+            # The day stays CLAIMED (retrying blind is unsafe until flatten_all nets
+            # in-flight closes — review #160 SF3, pre-live), so the operator MUST act:
+            # the book may carry positions overnight.
+            self._log.error("square_off_failed", error=repr(exc))
+            self._notifier.send(
+                f"intraday square-off FAILED — book may be open overnight: {exc}",
+                severity=Severity.CRITICAL,
+            )
+
     async def _periodic(self) -> None:
         # NB: the heartbeat is beaten ONLY from the market loop (per tick), never here —
         # so a wedged market loop (no ticks) stops beating and the INDEPENDENT deadman
@@ -355,6 +427,7 @@ class Worker:
                 await self._accrue_funding()  # after reconcile: on the broker-truth book
                 self._check_feed_stale()
                 await self._maybe_flatten_on_halt()
+                await self._maybe_square_off(self._now())
             except BrokerError as exc:
                 # a transient venue error degrades ONE cycle — it must never silently
                 # kill this task (reconcile cadence, feed-stale, and halt-flatten all
@@ -426,7 +499,14 @@ class Worker:
         REST poll) ride out transient outages during the idle no-trade soak."""
         if self._last_tick_at is None or self._risk.is_halted:
             return
-        age = (self._now() - self._last_tick_at).total_seconds()
+        now = self._now()
+        if self._schedule is not None and not self._schedule.is_open(now):
+            # A closed session's silence is EXPECTED (SCHED-1): without this, any
+            # position held overnight (the documented CNC default) would trip the
+            # FEED_STALE kill ~90s after the 15:30 close, get flattened at the last
+            # quote, and latch a halt needing a manual re-arm every single day.
+            return
+        age = (now - self._last_tick_at).total_seconds()
         if age <= self._feed_stale_seconds:
             return
         holding = any(p.quantity != 0 for p in self._oms.positions)
@@ -557,6 +637,11 @@ def build_worker(env: EnvConfig) -> Worker:
         feed = AdapterFeed(adapter)
     risk_config = load_risk_config()
     risk = RiskManager(risk_config)
+    # Session rules by venue market type (SCHED-1): Indian equity trades the NSE
+    # session + holiday calendar; crypto market types are 24x7 (no gating).
+    schedule = (
+        schedule_for(frozenset({AssetClass.EQUITY})) if venue_cfg.market_type == "equity" else None
+    )
     clock = SystemClock()
     oms = OMS(adapter=adapter, risk=risk, store=store, venue=venue_cfg.venue, clock=clock)
     reconciler = Reconciler(adapter=adapter, risk=risk)
@@ -621,6 +706,7 @@ def build_worker(env: EnvConfig) -> Worker:
         command_watcher=command_watcher,  # pod->worker command bus (None unless configured)
         pod_status=pod_status,  # best-effort worker->pod heartbeat (None unless configured)
         data_adapter=data_adapter,  # the paper mode's separate data leg (closed at shutdown)
+        schedule=schedule,  # session gating (None = 24x7 crypto)
         clock=clock,
         # Perp funding accrual (R13) — only derivatives venues fund; a spot/equity venue
         # gets None (no accrual). Rates come from the venue at each boundary; the

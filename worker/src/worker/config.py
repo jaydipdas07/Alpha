@@ -122,6 +122,9 @@ class EnvConfig(BaseModel):
     # Where the factory caches the Kite instrument master (symbol -> instrument_token);
     # refreshed automatically when absent. Gitignored var/ by convention.
     kite_instruments_cache: str = "var/kite_instruments.json"
+    # Daily square-off at the segment's square_off_time (SCHED-1) — an INTRADAY-style
+    # book (MIS). False = positions may hold overnight (CNC-style; the default).
+    intraday_square_off: bool = False
 
     @model_validator(mode="after")
     def _live_gate(self) -> Self:
