@@ -18,6 +18,13 @@ from worker.config import active_venue, load_dotenv, load_env_config, load_venue
 
 async def run_deadman(env_name: str = "paper") -> None:
     env = load_env_config(env_name)
+    if env.execution == "paper":
+        # No venue-side book EXISTS under paper execution (fills are simulated in the
+        # worker process; the book dies with it), so there is nothing independent to
+        # flatten. Exit cleanly so a worker+deadman unit pairing doesn't crash-loop
+        # on the (correct) refusal to build an order adapter.
+        print(f"deadman inapplicable for env {env_name!r}: execution=paper has no venue-side book")
+        return
     venue_cfg = active_venue(env, load_venues())  # live-gate check
     adapter = build_adapter(venue_cfg, env)  # the deadman's OWN adapter
     deadman = Deadman(

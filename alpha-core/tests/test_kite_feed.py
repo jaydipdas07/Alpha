@@ -113,7 +113,7 @@ async def test_ticks_bridge_from_the_ws_thread_normalized() -> None:
     assert tick.last_price == Decimal("2871.4")  # Decimal(str(float)) — no float artifacts
     assert tick.bid == Decimal("2871.35")
     assert tick.ask == Decimal("2871.45")
-    assert tick.volume == Decimal("123456")
+    assert tick.volume is None  # first packet: cumulative volume has no baseline yet
     # naive 10:00 IST -> 04:30 UTC, tz-aware
     assert tick.ts == datetime(2026, 7, 3, 4, 30, 0, tzinfo=UTC)
 
@@ -165,3 +165,69 @@ async def test_unknown_symbol_fails_fast() -> None:
 def test_stream_bars_is_not_supported() -> None:
     with pytest.raises(NotImplementedError):
         _feed(_FakeTicker([])).stream_bars(["NSE:RELIANCE"])
+
+
+async def test_reconnect_resubscribes_from_the_ws_thread() -> None:
+    # Kite forgets subscriptions across reconnects: the SECOND on_connect (fired from
+    # the ws thread mid-stream, as the real SDK does) must re-issue subscribe+mode.
+    class _Reconnecting(_FakeTicker):
+        def connect(self, threaded: bool = False) -> None:
+            assert threaded
+            self.on_connect(self, None)
+
+            def _deliver() -> None:
+                self.on_ticks(self, [_raw()])
+                self.on_connect(self, None)  # the ws thread reconnects mid-stream
+                self.on_ticks(self, [_raw()])
+
+            self._thread = threading.Thread(target=_deliver)
+            self._thread.start()
+
+    ticker = _Reconnecting([])
+    ticks = await _collect(_feed(ticker), ["NSE:RELIANCE"], 2)
+    assert len(ticks) == 2
+    assert ticker.subscribed == [[738561], [738561]]  # re-subscribed on the reconnect
+    assert ticker.modes == [("full", [738561]), ("full", [738561])]
+
+
+async def test_cumulative_volume_ships_as_per_tick_deltas() -> None:
+    # Kite's volume_traded is day-cumulative; Tick.volume is the increment BarBuilder
+    # SUMS (DATA-1) — the first packet has no baseline (None), later ones the delta,
+    # and a decrease (session reset) rebases silently.
+    def _v(cum: int) -> dict[str, Any]:
+        raw = _raw()
+        raw["volume_traded"] = cum
+        return raw
+
+    batches = [[_v(5_000_000), _v(5_000_250), _v(100)]]
+    ticks = await _collect(_feed(_FakeTicker(batches)), ["NSE:RELIANCE"], 3)
+    assert [t.volume for t in ticks] == [None, Decimal("250"), None]
+
+
+async def test_tee_feed_updates_the_callback_before_yielding() -> None:
+    # The paper splice: the PaperBroker's quote must be current BEFORE the consumer
+    # (BarBuilder -> strategy -> OMS) can act on the tick — tee-then-yield ordering.
+    from alpha_core.data.feed import ReplayFeed, TeeFeed
+
+    seen: list[tuple[str, Decimal | None]] = []
+    inner_ticks = [
+        Tick(
+            symbol="NSE:RELIANCE",
+            venue=Venue.NSE,
+            asset_class=AssetClass.EQUITY,
+            ts=datetime(2026, 7, 3, 4, 30, tzinfo=UTC),
+            last_price=Decimal(p),
+        )
+        for p in ("100", "101")
+    ]
+    feed = TeeFeed(ReplayFeed(ticks=inner_ticks), lambda t: seen.append(("tee", t.last_price)))
+    async for tick in feed.stream_ticks(["NSE:RELIANCE"]):
+        seen.append(("consumer", tick.last_price))
+    assert seen == [
+        ("tee", Decimal("100")),
+        ("consumer", Decimal("100")),
+        ("tee", Decimal("101")),
+        ("consumer", Decimal("101")),
+    ]
+    with pytest.raises(NotImplementedError):
+        feed.stream_bars(["NSE:RELIANCE"])

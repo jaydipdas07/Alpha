@@ -90,6 +90,7 @@ class Worker:
         pod_status: PodStatusWriter | None = None,
         pod_command_source: PodCommandSource | None = None,
         pod_trade_sync: PodTradeSync | None = None,
+        data_adapter: BrokerAdapter | None = None,
         clock: Clock | None = None,
         funding: FundingConfig | None = None,
     ) -> None:
@@ -121,6 +122,10 @@ class Worker:
         # pod-status loop — best-effort, never on the money path (TEST-8). None = off (no
         # deployment_id configured).
         self._pod_trade_sync = pod_trade_sync
+        # Paper mode's SEPARATE market-data adapter (ccxt), closed at shutdown alongside
+        # the execution adapter; None when the feed owns its own transport (kite) or the
+        # execution adapter IS the data source (venue mode).
+        self._data_adapter = data_adapter
         self._clock = clock or SystemClock()
         # Perp funding accrual (R13): None = venue has no funding (spot/equity). The rate per
         # boundary comes from the VENUE (adapter.funding_rate); the config rate is only the
@@ -490,6 +495,8 @@ class Worker:
             self._bars.flush(symbol)  # drop the forming bars
         self._log.info("worker_shutdown", worker_id=self._env.worker_id)
         await self._adapter.aclose()  # release the ccxt ws/http session
+        if self._data_adapter is not None:
+            await self._data_adapter.aclose()  # paper mode's separate data leg
 
 
 def _ensure_db_dir(state_db: str) -> None:
@@ -514,8 +521,12 @@ def build_worker(env: EnvConfig) -> Worker:
     machinery run identically against the simulated book."""
     venues = load_venues()
     venue_cfg = active_venue(env, venues)  # live-gate check (kite => paper-only enforced here)
+    _ensure_db_dir(env.state_db)
+    store = StateStore(env.state_db)
+    store.create_schema()
     drain_inline = False
     feed: DataFeed
+    data_adapter: BrokerAdapter | None = None  # a separate data leg to close at shutdown
     if env.execution == "paper":
         registry = InstrumentRegistry.from_config()
         paper = PaperBroker(
@@ -523,15 +534,20 @@ def build_worker(env: EnvConfig) -> Worker:
             instruments={s: registry.get(s).cost_meta() for s in env.symbols},
             starting_cash=env.paper_starting_cash,
         )
+        # Restart continuity: the simulated book IS the venue, so it must re-home the
+        # durable store's orders/positions or the startup gate reads phantom drift
+        # (position at the store, nothing broker-side) and latches an unclearable halt.
+        with store.transaction() as _s:
+            paper.seed_from_store(store.load_orders(_s), store.load_positions(_s))
         adapter: BrokerAdapter = paper
         # The DATA leg: kite's ticker feed, or a (gated) ccxt venue's tick stream —
         # either way TeeFeed splices every tick into the paper broker's quotes, so
         # simulated fills price off exactly the stream the strategy saw.
-        data_feed = (
-            build_kite_ticker_feed(venue_cfg, env)
-            if venue_cfg.adapter == "kite"
-            else AdapterFeed(build_adapter(venue_cfg, env))
-        )
+        if venue_cfg.adapter == "kite":
+            data_feed: DataFeed = build_kite_ticker_feed(venue_cfg, env)
+        else:
+            data_adapter = build_adapter(venue_cfg, env)
+            data_feed = AdapterFeed(data_adapter)
         feed = TeeFeed(data_feed, paper.on_tick)
         # PaperBroker's order_events() is BOUNDED (drains pending fills, returns) —
         # the inline drain after each bar is the correct consumption (see the ctor note).
@@ -541,9 +557,6 @@ def build_worker(env: EnvConfig) -> Worker:
         feed = AdapterFeed(adapter)
     risk_config = load_risk_config()
     risk = RiskManager(risk_config)
-    _ensure_db_dir(env.state_db)
-    store = StateStore(env.state_db)
-    store.create_schema()
     clock = SystemClock()
     oms = OMS(adapter=adapter, risk=risk, store=store, venue=venue_cfg.venue, clock=clock)
     reconciler = Reconciler(adapter=adapter, risk=risk)
@@ -607,6 +620,7 @@ def build_worker(env: EnvConfig) -> Worker:
         drain_inline=drain_inline,
         command_watcher=command_watcher,  # pod->worker command bus (None unless configured)
         pod_status=pod_status,  # best-effort worker->pod heartbeat (None unless configured)
+        data_adapter=data_adapter,  # the paper mode's separate data leg (closed at shutdown)
         clock=clock,
         # Perp funding accrual (R13) — only derivatives venues fund; a spot/equity venue
         # gets None (no accrual). Rates come from the venue at each boundary; the

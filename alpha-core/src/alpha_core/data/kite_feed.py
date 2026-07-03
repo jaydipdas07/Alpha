@@ -84,6 +84,9 @@ class KiteTickerFeed(DataFeed):
         self._token_by_symbol = dict(token_by_symbol)
         self._asset_class = asset_class
         self._venue = venue
+        # Kite's volume_traded is the DAY-CUMULATIVE total; Tick.volume is the per-tick
+        # increment BarBuilder SUMS (DATA-1) — so ship the delta, never the level.
+        self._cum_volume: dict[str, Decimal] = {}
         self._log = get_logger("kite_feed")
 
     async def stream_ticks(self, symbols: Sequence[str]) -> AsyncIterator[Tick]:
@@ -93,6 +96,9 @@ class KiteTickerFeed(DataFeed):
         tokens = [self._token_by_symbol[s] for s in symbols]
         symbol_by_token = {self._token_by_symbol[s]: s for s in symbols}
         loop = asyncio.get_running_loop()
+        # Unbounded by design: the market loop consumes tick-by-tick and beats the
+        # heartbeat per tick, so a stalled consumer is a dead worker the deadman ends —
+        # NSE per-symbol rates (~1-2 packets/s) cannot outrun a live loop.
         queue: asyncio.Queue[Tick | Exception] = asyncio.Queue()
 
         def _put(item: Tick | Exception) -> None:
@@ -161,7 +167,15 @@ class KiteTickerFeed(DataFeed):
         else:
             # The edge owns wall-clock; a missing venue stamp degrades to arrival time.
             stamped = datetime.now(UTC)
-        volume = raw.get("volume_traded", raw.get("volume"))
+        volume: Decimal | None = None
+        cum_raw = raw.get("volume_traded", raw.get("volume"))
+        if cum_raw is not None:
+            cum = _dec(cum_raw)
+            prev = self._cum_volume.get(symbol)
+            if prev is not None and cum >= prev:
+                volume = cum - prev  # the traded increment since the last packet
+            # else: first packet (no baseline) or a session reset — rebase, ship None
+            self._cum_volume[symbol] = cum
         return Tick(
             symbol=symbol,
             venue=self._venue,
@@ -170,5 +184,5 @@ class KiteTickerFeed(DataFeed):
             last_price=last,
             bid=bid,
             ask=ask,
-            volume=_dec(volume) if volume is not None else None,
+            volume=volume,
         )

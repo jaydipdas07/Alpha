@@ -99,14 +99,15 @@ def build_kite_ticker_feed(venue: VenueConfig, env: EnvConfig) -> KiteTickerFeed
     from alpha_core.observability.logging import get_logger
 
     log = get_logger("kite_factory")
-    api_key = os.environ.get("KITE_API_KEY", "")
-    access_token = os.environ.get("KITE_ACCESS_TOKEN", "")
+    prefix = venue.key_env  # the ccxt _keys idiom: env names derive from venues.yaml
+    api_key = os.environ.get(f"{prefix}_API_KEY", "")
+    access_token = os.environ.get(f"{prefix}_ACCESS_TOKEN", "")
     if not api_key or not access_token:
         raise RuntimeError(
-            "missing KITE_API_KEY / KITE_ACCESS_TOKEN in the environment — run the daily "
-            "2FA flow (scripts/ingest_kite.py) to stage a fresh token"
+            f"missing {prefix}_API_KEY / {prefix}_ACCESS_TOKEN in the environment — run "
+            "the daily 2FA flow (scripts/ingest_kite.py) to stage a fresh token"
         )
-    token_at_raw = os.environ.get("KITE_ACCESS_TOKEN_AT", "").strip()
+    token_at_raw = os.environ.get(f"{prefix}_ACCESS_TOKEN_AT", "").strip()
     if token_at_raw:
         try:
             stale = access_token_is_stale(
@@ -114,6 +115,7 @@ def build_kite_ticker_feed(venue: VenueConfig, env: EnvConfig) -> KiteTickerFeed
             )
         except ValueError:
             stale = False  # a malformed stamp is a warning problem, not a build problem
+            log.debug("kite_token_stamp_unparseable", raw=token_at_raw)
         if stale:
             log.warning(
                 "kite_token_probably_stale",
