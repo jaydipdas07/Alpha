@@ -12,6 +12,7 @@ from decimal import Decimal
 import pytest
 
 from alpha_core.core.enums import AssetClass, OptionRight
+from alpha_core.core.models import OptionContract
 from alpha_core.execution.instruments import InstrumentSpec
 from alpha_core.options.chain import nearest_expiry, select_chain
 from alpha_core.options.pricing import bs_price, greeks, implied_vol, time_to_expiry
@@ -97,13 +98,13 @@ def _spec(
         asset_class=AssetClass.INDEX_OPTION,
         lot_size=Decimal("75"),
         tick_size=Decimal("0.05"),
-        option={
-            "underlying": underlying,
-            "right": right,
-            "strike": Decimal(strike),
-            "expiry": expiry,
-            "lot_size": 75,
-        },
+        option=OptionContract(
+            underlying=underlying,
+            right=right,
+            strike=Decimal(strike),
+            expiry=expiry,
+            lot_size=75,
+        ),
     )
 
 

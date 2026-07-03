@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
 import pytest
 
-from alpha_core.core.enums import AssetClass, OrderState, OrderType, Side, Venue
-from alpha_core.core.models import BookGreeks, Order, Position
+from alpha_core.core.enums import AssetClass, OptionRight, OrderState, OrderType, Side, Venue
+from alpha_core.core.models import BookGreeks, OptionContract, Order, Position
 from alpha_core.execution.instruments import InstrumentRegistry, InstrumentSpec
 from alpha_core.risk.limits import RiskConfig, load_risk_config
 from alpha_core.risk.manager import KillTrigger, RiskManager, WorkingExposure
@@ -373,13 +373,13 @@ def _opt_registry() -> InstrumentRegistry:
         asset_class=AssetClass.INDEX_OPTION,
         lot_size=Decimal("75"),
         tick_size=Decimal("0.05"),
-        option={
-            "underlying": "NIFTY",
-            "right": "CALL",
-            "strike": Decimal("24000"),
-            "expiry": "2026-07-30",
-            "lot_size": 75,
-        },
+        option=OptionContract(
+            underlying="NIFTY",
+            right=OptionRight.CALL,
+            strike=Decimal("24000"),
+            expiry=date(2026, 7, 30),
+            lot_size=75,
+        ),
     )
     return InstrumentRegistry({spec.symbol: spec})
 
