@@ -181,7 +181,11 @@ class RiskManager:
         cur_qty = cur.quantity if cur else Decimal(0)
         signed = order.quantity if order.side is Side.BUY else -order.quantity
         new_qty = cur_qty + signed
-        reducing = abs(new_qty) < abs(cur_qty)
+        # A REDUCTION shrinks the position toward zero on the SAME side. A flip
+        # THROUGH zero (SELL 149 against +75) is an entry in disguise — without the
+        # sign guard it would skip exposure/margin/Greeks (steps 5-9b) and leave an
+        # unchecked naked short (review #161 BLOCKER).
+        reducing = abs(new_qty) < abs(cur_qty) and new_qty * cur_qty >= 0
 
         # 3. Fat-finger hard cap.
         if order_notional > self._cfg.cap(lim.max_order_value):
@@ -335,8 +339,15 @@ class RiskManager:
         po = self._cfg.portfolio
         if po is None or (po.max_net_delta is None and po.max_net_vega is None):
             return None  # no Greeks caps configured
-        if self._spec_option(order.symbol) is None:
+        is_option = (
+            order.asset_class is AssetClass.INDEX_OPTION
+            or self._spec_option(order.symbol) is not None
+        )
+        if not is_option:
             return None  # not an option order — the caps don't bind here
+        # NB keying off the ASSET CLASS as well as the registry: caps configured +
+        # an option order the gate cannot resolve (no registry wired, or a symbol
+        # missing from it) must still fail CLOSED, never silently open (review #161).
         if book_greeks_after is None:
             return RiskDecision(
                 False, "greeks caps configured but no book greeks supplied (fail closed)"

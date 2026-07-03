@@ -23,8 +23,12 @@ from zoneinfo import ZoneInfo
 from alpha_core.core.enums import OptionRight
 from alpha_core.core.models import OptionGreeks
 
-_DAYS_PER_YEAR = Decimal(365)  # ACT/365 — the research fold's convention (parity)
-_NSE_CLOSE = time(15, 30)  # Indian index options settle at the cash close
+_DAYS_PER_YEAR = Decimal(365)  # ACT/365 calendar-time (crypto funds daily; simple + uniform)
+# The DEFAULT settlement instant mirrors instruments.yaml's NSE session close (the
+# config is authoritative — callers with a loaded schedule should pass its values;
+# these defaults exist so the pure module needs no config I/O). Crypto options
+# settle elsewhere (Delta: 12:00 UTC) — pass settle/tz explicitly for that leg.
+_NSE_CLOSE = time(15, 30)
 _NSE_TZ = ZoneInfo("Asia/Kolkata")
 
 # Implied-vol bisection bounds/precision: [0.01%, 500%] annualized covers every
@@ -42,13 +46,21 @@ def _norm_pdf(x: float) -> float:
     return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
 
 
-def time_to_expiry(now: datetime, expiry: date) -> Decimal:
+def time_to_expiry(
+    now: datetime,
+    expiry: date,
+    *,
+    settle_time: time = _NSE_CLOSE,
+    settle_tz: ZoneInfo = _NSE_TZ,
+) -> Decimal:
     """ACT/365 year-fraction from ``now`` (tz-aware, injected) to the contract's
-    settlement instant (the NSE cash close on the expiry date). Floors at zero —
+    settlement instant — by default the NSE cash close on the expiry date (pass
+    ``settle_time``/``settle_tz`` for other venues; Delta crypto options settle
+    12:00 UTC, hours off the default on the expiry day itself). Floors at zero —
     an expired contract prices as intrinsic (T=0), never a negative time."""
     if now.tzinfo is None:
         raise ValueError("now must be tz-aware (the caller owns the clock)")
-    settle = datetime.combine(expiry, _NSE_CLOSE, tzinfo=_NSE_TZ)
+    settle = datetime.combine(expiry, settle_time, tzinfo=settle_tz)
     seconds = (settle - now).total_seconds()
     if seconds <= 0:
         return Decimal(0)
@@ -143,7 +155,7 @@ def greeks(
     delta = dff * _norm_cdf(d1) if right is OptionRight.CALL else -dff * _norm_cdf(-d1)
     gamma = dff * pdf1 / (f * sigma * math.sqrt(t))
     vega = dff * f * pdf1 * math.sqrt(t)
-    theta = -dff * f * pdf1 * sigma / (2.0 * math.sqrt(t))  # flat-zero-rate Black-76
+    theta = -dff * f * pdf1 * sigma / (2.0 * math.sqrt(t))  # NB assumes df=1 (omits +r*C)
     return OptionGreeks(
         delta=Decimal(str(delta)),
         gamma=Decimal(str(gamma)),

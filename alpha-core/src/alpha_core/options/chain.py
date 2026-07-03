@@ -30,7 +30,9 @@ def select_chain(
 ) -> list[InstrumentSpec]:
     """The contracts of ``underlying`` expiring within ``[min_dte, max_dte]`` calendar
     days of ``reference``, optionally filtered by right and strike band — sorted by
-    (expiry, strike, right) so selection is deterministic for a given master."""
+    (expiry, strike, right) so selection is deterministic for a given master.
+    ``rights=None`` means both rights; an EMPTY sequence selects nothing (set
+    semantics — deliberate)."""
     if min_dte < 0 or max_dte < min_dte:
         raise ValueError("require 0 <= min_dte <= max_dte")
     wanted = set(rights) if rights is not None else None
@@ -57,6 +59,8 @@ def nearest_expiry(
     specs: Iterable[InstrumentSpec], underlying: str, *, reference: date, min_dte: int = 0
 ) -> date | None:
     """The chain's earliest expiry at least ``min_dte`` days out, or None."""
+    if min_dte < 0:
+        raise ValueError("require min_dte >= 0 (a negative window admits expired contracts)")
     expiries = {
         s.option.expiry
         for s in specs

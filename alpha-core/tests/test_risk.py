@@ -498,3 +498,36 @@ def test_without_registry_option_symbols_fall_back_to_leverage_margin() -> None:
         _opt_order(Side.SELL), reference_price=Decimal("100"), positions=[], now=NOW
     )
     assert d.approved  # 7,500 notional / 8x leverage — the pre-ADR-0017 estimate
+
+
+def test_flip_through_zero_is_not_a_reduction() -> None:
+    # Review #161 BLOCKER: SELL 149 against +75 nets to -74 (smaller in absolute
+    # terms) but is an ENTRY in disguise — the sign flip must run the full gate,
+    # where the naked-short margin model rejects it.
+    relaxed = _cfg(max_order_value="1.0", max_position_per_instrument="1.0")
+    mgr = RiskManager(relaxed, instruments=_opt_registry())
+    held = _pos("NFO:NIFTY26JUL24000CE", "75", price="100", ac=AssetClass.INDEX_OPTION)
+    d = mgr.check_order(
+        _opt_order(Side.SELL, qty="149"), reference_price=Decimal("100"), positions=[held], now=NOW
+    )
+    assert not d.approved and d.reason == "insufficient margin"
+    # A true same-side reduction (SELL 75 -> flat) keeps the carve-out.
+    flat = mgr.check_order(
+        _opt_order(Side.SELL, qty="75"), reference_price=Decimal("100"), positions=[held], now=NOW
+    )
+    assert flat.approved
+
+
+def test_greeks_caps_fail_closed_even_without_a_registry() -> None:
+    # Review #161 S1: caps configured + an INDEX_OPTION order the gate cannot
+    # resolve (no instrument master wired) must reject, never silently pass.
+    mgr = RiskManager(_caps_cfg())  # note: NO instruments registry
+    d = mgr.check_order(_opt_order(Side.BUY), reference_price=Decimal("100"), positions=[], now=NOW)
+    assert not d.approved and "fail closed" in (d.reason or "")
+
+
+def test_book_greeks_rejects_floats() -> None:
+    from alpha_core.core.models import BookGreeks
+
+    with pytest.raises(ValueError):
+        BookGreeks(net_delta=0.5, net_vega=Decimal("1"))  # type: ignore[arg-type]
