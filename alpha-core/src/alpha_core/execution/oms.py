@@ -259,6 +259,14 @@ class OMS:
         with self._store.transaction() as s:
             return self._store.load_fills(s)
 
+    def all_orders(self) -> list[Order]:
+        """The full order history from the durable store (``save_order`` upserts by client
+        id and never deletes) — for read-only consumers (pod telemetry): a fill whose order
+        was pruned from the live book (or predates this process) still finds its order row.
+        BLOCKING (a DB read): call off the event loop (``asyncio.to_thread``)."""
+        with self._store.transaction() as s:
+            return self._store.load_orders(s)
+
     def total_realized_pnl(self) -> Decimal:
         return sum((p.realized_pnl for p in self._positions.values()), Decimal(0)) + self._funding
 

@@ -260,20 +260,28 @@ class Worker:
 
     async def _maybe_sync_trades(self) -> None:
         """Push the trade-coupled tables (orders/fills/positions/pnl_snapshots) to the pod —
-        from the telemetry loop, never the trading path (TEST-8). The fill history is read
-        from the durable store OFF the event loop (it is the derived-P&L truth, R11); the
-        sync itself swallows every pod error, so this can only cost telemetry freshness."""
+        from the telemetry loop, never the trading path (TEST-8). Orders AND fills are read
+        from the durable store OFF the event loop (the derived-P&L truth, R11; store-sourced
+        orders mean a fill whose order left the live book still syncs); the sync itself
+        swallows every pod error, so this can only cost telemetry freshness."""
         if self._pod_trade_sync is None:
             return
+        # Book scalars BEFORE the store reads: a fill booking in between then leaves the
+        # interval's snapshot with the fee counted but its P&L not yet — equity UNDER-stated
+        # for one cadence, never over-stated (the next interval's row is exact).
+        realized = self._oms.total_realized_pnl()
+        unrealized = self._oms.total_unrealized_pnl()
+        funding = self._oms.total_funding()
+        orders = await asyncio.to_thread(self._oms.all_orders)
         fills = await asyncio.to_thread(self._oms.all_fills)
         await self._pod_trade_sync.sync(
             now=self._now(),
-            orders=self._oms.orders,
+            orders=orders,
             fills=fills,
             positions=self._oms.positions,
-            realized=self._oms.total_realized_pnl(),
-            unrealized=self._oms.total_unrealized_pnl(),
-            funding=self._oms.total_funding(),
+            realized=realized,
+            unrealized=unrealized,
+            funding=funding,
         )
 
     async def _pod_token_refresh_loop(self) -> None:

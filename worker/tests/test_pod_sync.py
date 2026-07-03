@@ -601,3 +601,67 @@ async def test_trade_sync_set_pod_swaps_the_client() -> None:
     sync.set_pod(cast(Pod, fresh))
     await _full_sync(sync, fresh)
     assert len(fresh.tables["fills"]) == 1  # writes land on the swapped-in client
+
+
+async def test_lost_create_ack_self_heals_by_rebaselining() -> None:
+    # The create COMMITS pod-side but the response is lost (timeout/reset). The row must
+    # not wedge into a forever-failing re-create: the failure schedules a re-baseline,
+    # which finds the landed row and resumes updating it in place.
+    pod = _TradePod()
+    real_create = pod.create
+    lost: list[str] = []
+
+    def _lossy_create(table: str, data: dict[str, Any]) -> dict[str, Any]:
+        row = real_create(table, data)
+        if table == "orders" and not lost:  # first order create: commit, then "lose" the ack
+            lost.append(row["id"])
+            raise RuntimeError("response lost")
+        return row
+
+    pod.create = _lossy_create  # type: ignore[method-assign]
+    sync = _trade_sync(pod)
+    await _full_sync(sync, pod)  # order landed pod-side; ack lost; fill skipped (no FK yet)
+    assert len(pod.tables["orders"]) == 1
+    await _full_sync(sync, pod)  # re-baseline finds the row -> fill lands, no duplicate order
+    assert len(pod.tables["orders"]) == 1
+    assert len(pod.tables["fills"]) == 1
+    assert pod.tables["fills"][0]["order_id"] == lost[0]
+    # And a subsequent state change UPDATES the landed row (the id was adopted).
+    await _full_sync(sync, pod, orders=[_order(state="CANCELLED", filled="1")])
+    assert len(pod.tables["orders"]) == 1
+    assert pod.tables["orders"][0]["state"] == "CANCELLED"
+
+
+async def test_pod_side_deletion_self_heals_by_recreating() -> None:
+    # An operator wipes the tables mid-run (demo reset): the cached ids go stale, the
+    # updates fail once, the re-baseline forgets them, and the rows re-create.
+    pod = _TradePod()
+    sync = _trade_sync(pod)
+    await _full_sync(sync, pod)
+    for table in ("fills", "orders", "positions", "pnl_snapshots"):
+        pod.tables[table].clear()  # pod-side wipe
+    # A changed book forces writes against the now-dead cached ids -> fail -> re-baseline.
+    await _full_sync(sync, pod, orders=[_order(state="CANCELLED")], positions=[_held("2")])
+    await _full_sync(sync, pod, orders=[_order(state="CANCELLED")], positions=[_held("2")])
+    assert len(pod.tables["orders"]) == 1  # re-created, not wedged on the stale id
+    assert pod.tables["orders"][0]["state"] == "CANCELLED"
+    assert len(pod.tables["positions"]) == 1
+    assert pod.tables["positions"][0]["quantity"] == "2"
+    assert len(pod.tables["fills"]) == 1  # re-created from the durable local history
+
+
+async def test_degrade_and_recover_log_once_per_transition() -> None:
+    # Finding-8 damping: a mid-life outage warns ONCE (trade_sync_degraded), row detail is
+    # debug-level, and recovery logs once — never one warning per row per tick.
+    pod = _TradePod()
+    sync = _trade_sync(pod)
+    await _full_sync(sync, pod)
+    assert sync._sync_ok is True
+    pod.fail = True
+    await _full_sync(sync, pod, orders=[_order(state="CANCELLED")])  # rows fail -> degraded
+    assert sync._sync_ok is False
+    await _full_sync(sync, pod, orders=[_order(state="CANCELLED")])  # still down: no re-warn path
+    assert sync._sync_ok is False
+    pod.fail = False
+    await _full_sync(sync, pod, orders=[_order(state="CANCELLED")])
+    assert sync._sync_ok is True  # clean pass -> recovered (logged once)
