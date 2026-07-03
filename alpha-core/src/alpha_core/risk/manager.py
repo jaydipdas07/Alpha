@@ -16,7 +16,8 @@ from decimal import Decimal
 from enum import StrEnum
 
 from alpha_core.core.enums import AssetClass, Side, Venue
-from alpha_core.core.models import Order, Position
+from alpha_core.core.models import BookGreeks, OptionContract, Order, Position
+from alpha_core.execution.instruments import InstrumentRegistry
 from alpha_core.risk.limits import RiskConfig
 
 
@@ -57,9 +58,19 @@ def _pos_price(p: Position) -> Decimal:
 class RiskManager:
     """Hand-written, non-bypassable risk gate."""
 
-    def __init__(self, config: RiskConfig, *, require_stop: bool = False) -> None:
+    def __init__(
+        self,
+        config: RiskConfig,
+        *,
+        require_stop: bool = False,
+        instruments: InstrumentRegistry | None = None,
+    ) -> None:
         self._cfg = config
         self._require_stop = require_stop
+        # The instrument master (ADR 0017): lets the margin estimate recognize option
+        # symbols (strike/lot/right) and the Greeks step demand its context. None =
+        # no options in this deployment's universe (equity/crypto books unchanged).
+        self._instruments = instruments
         self._halted = False
         self._halt_trigger: KillTrigger | None = None
         # Monotonic counter incremented on each *transition* into a halt. Lets a
@@ -143,6 +154,7 @@ class RiskManager:
         positions: list[Position],
         now: datetime,
         working: Sequence[WorkingExposure] = (),
+        book_greeks_after: BookGreeks | None = None,
     ) -> RiskDecision:
         """Run the 10-step pre-trade order; first failure rejects.
 
@@ -211,6 +223,15 @@ class RiskManager:
                 )
                 if required > self._cfg.base_capital:
                     return RiskDecision(False, "insufficient margin")
+
+            # 9b. Options Greeks caps (ADR 0017) — only when the portfolio config
+            # sets them AND this order is a registry-known option. FAIL-CLOSED: caps
+            # configured but no computed book context supplied => reject (a cap the
+            # gate cannot verify is a cap, not a suggestion). Equity/crypto orders
+            # and cap-less configs pass straight through.
+            greeks_decision = self._check_option_greeks(order, book_greeks_after)
+            if greeks_decision is not None:
+                return greeks_decision
 
         # 10. Stop-loss discipline.
         if self._require_stop:
@@ -301,6 +322,31 @@ class RiskManager:
             Decimal(0),
         )
 
+    def _spec_option(self, symbol: str) -> OptionContract | None:
+        """The registry's option metadata for ``symbol`` (None = not a known option)."""
+        if self._instruments is None or not self._instruments.is_known(symbol):
+            return None
+        return self._instruments.get(symbol).option
+
+    def _check_option_greeks(
+        self, order: Order, book_greeks_after: BookGreeks | None
+    ) -> RiskDecision | None:
+        """Step 9b (see check_order). Returns a rejection, or None to continue."""
+        po = self._cfg.portfolio
+        if po is None or (po.max_net_delta is None and po.max_net_vega is None):
+            return None  # no Greeks caps configured
+        if self._spec_option(order.symbol) is None:
+            return None  # not an option order — the caps don't bind here
+        if book_greeks_after is None:
+            return RiskDecision(
+                False, "greeks caps configured but no book greeks supplied (fail closed)"
+            )
+        if po.max_net_delta is not None and abs(book_greeks_after.net_delta) > po.max_net_delta:
+            return RiskDecision(False, "max_net_delta exceeded")
+        if po.max_net_vega is not None and abs(book_greeks_after.net_vega) > po.max_net_vega:
+            return RiskDecision(False, "max_net_vega exceeded")
+        return None
+
     def _leverage(self, asset_class: AssetClass) -> Decimal:
         """Per-segment leverage for the margin estimate (default 1x = full notional)."""
         return self._cfg.margin.leverage.get(asset_class.value.lower(), Decimal(1))
@@ -313,11 +359,27 @@ class RiskManager:
         new_qty: Decimal,
         reference_price: Decimal,
     ) -> Decimal:
-        """Estimated margin to hold the resulting book = sum(notional / leverage)."""
+        """Estimated margin to hold the resulting book: option rows use the options
+        model (long = premium; short = premium + ``options_short_pct`` x strike
+        notional — ADR 0017); everything else = notional / segment leverage."""
         total = Decimal(0)
         keys = set(by_symbol) | {order_key}
         for k in keys:
             p = by_symbol.get(k)
+            contract = self._spec_option(k[1])
+            if contract is not None:
+                signed = new_qty if k == order_key else (p.quantity if p else Decimal(0))
+                premium = reference_price if k == order_key else _pos_price(p) if p else Decimal(0)
+                required = abs(signed) * premium * contract.multiplier  # the premium leg
+                if signed < 0:  # short: add the strike-notional charge (SPAN stand-in)
+                    required += (
+                        self._cfg.margin.options_short_pct
+                        * contract.strike
+                        * abs(signed)
+                        * contract.multiplier
+                    )
+                total += required
+                continue
             ac = order_ac if k == order_key else (p.asset_class if p else order_ac)
             notional = self._resulting_notional(p, k, order_key, new_qty, reference_price)
             total += notional / self._leverage(ac)

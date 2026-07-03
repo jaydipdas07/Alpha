@@ -61,6 +61,12 @@ class MarginConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool = True
     leverage: dict[str, Decimal] = Field(default_factory=_default_leverage)
+    # SHORT-option margin (ADR 0017): premium + this fraction of STRIKE notional per
+    # unit — a conservative ATM-equivalent stand-in for SPAN+exposure that needs no
+    # live underlying feed (it slightly over-charges OTM shorts, under-charges deep
+    # ITM ones; real SPAN is refined live, same posture as `leverage` above). Long
+    # options charge the full premium. Applied only to registry-known option symbols.
+    options_short_pct: Decimal = Field(default=Decimal("0.15"), gt=0)
 
     @model_validator(mode="after")
     def _check(self) -> Self:
