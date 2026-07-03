@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from decimal import Decimal
 from pathlib import Path
 from typing import Literal, Self
 
@@ -42,13 +43,16 @@ class VenueConfig(BaseModel):
     """One venue's adapter wiring (a row of ``venues.yaml``)."""
 
     model_config = ConfigDict(extra="forbid")
-    adapter: Literal["ccxt"]
-    exchange: str  # ccxt exchange id (binance / delta)
+    # ccxt = crypto exchanges (data + orders). kite = Zerodha's ticker websocket —
+    # MARKET DATA ONLY today (M4.5): a kite venue must run under execution=paper
+    # (simulated fills); a real Kite order adapter is a later, separately-gated build.
+    adapter: Literal["ccxt", "kite"]
+    exchange: str  # ccxt exchange id (binance / delta), or "kite"
     venue: Venue  # the core Venue enum the OMS/risk tag orders with
-    market_type: Literal["spot", "swap", "future"]
+    market_type: Literal["spot", "swap", "future", "equity"]
     testnet: bool
-    streaming: bool = True  # ccxt.pro ws (Binance) vs REST poll (Delta)
-    key_env: str  # .env prefix: <key_env>_API_KEY / _API_SECRET
+    streaming: bool = True  # ccxt.pro ws (Binance) vs REST poll (Delta); kite is always ws
+    key_env: str  # .env prefix: <key_env>_API_KEY / _API_SECRET (kite: KITE_API_KEY+ACCESS_TOKEN)
     # Override ccxt's built-in testnet URL when the venue's sandbox lives elsewhere —
     # e.g. Delta INDIA demo is cdn-ind.testnet.deltaex.org, not ccxt's global testnet.
     testnet_url: str | None = None
@@ -109,6 +113,15 @@ class EnvConfig(BaseModel):
     command_poll_seconds: float = Field(gt=0)
     reconcile_interval_seconds: float = Field(gt=0)  # periodic reconcile + feed-stale check cadence
     pod_sync: PodSyncConfig | None = None  # best-effort worker->pod telemetry (off without a token)
+    # HOW ORDERS EXECUTE (M4.5). "venue" = the venue's own order API (testnet/live per the
+    # gate). "paper" = the LIVE feed drives the PaperBroker — simulated fills through the
+    # cost model, no order ever leaves the process (live-feed paper, R9 — not replay).
+    execution: Literal["venue", "paper"] = "venue"
+    # The simulated account's starting cash under execution=paper (string -> Decimal, B5).
+    paper_starting_cash: Decimal = Field(default=Decimal("1000000"), gt=0)
+    # Where the factory caches the Kite instrument master (symbol -> instrument_token);
+    # refreshed automatically when absent. Gitignored var/ by convention.
+    kite_instruments_cache: str = "var/kite_instruments.json"
 
     @model_validator(mode="after")
     def _live_gate(self) -> Self:
@@ -118,6 +131,8 @@ class EnvConfig(BaseModel):
             raise ValueError("mode=live requires allow_live=true (the live gate)")
         if self.mode == "paper" and self.allow_live:
             raise ValueError("paper mode must keep the live gate shut (allow_live=false)")
+        if self.mode == "live" and self.execution == "paper":
+            raise ValueError("mode=live contradicts execution=paper (paper never goes live)")
         return self
 
 
@@ -137,6 +152,16 @@ def active_venue(env: EnvConfig, venues: dict[str, VenueConfig]) -> VenueConfig:
     if env.venue not in venues:
         raise ValueError(f"env venue {env.venue!r} not in venues.yaml: {sorted(venues)}")
     vc = venues[env.venue]
+    if vc.adapter == "kite":
+        # A kite venue is MARKET DATA ONLY (no order surface exists) — it may run
+        # without the live gate, but ONLY under paper execution: live-feed paper (M4.5)
+        # reads real quotes and simulates fills locally; no order can reach the venue.
+        if env.execution != "paper":
+            raise ValueError(
+                f"venue {env.venue!r} (kite) is data-only today — set execution: paper "
+                "(a real Kite order adapter is a later, separately-gated build)"
+            )
+        return vc
     # Same condition the factory's build_adapter uses, so the two never drift.
     if not vc.testnet and not (env.allow_live and env.mode == "live"):
         raise ValueError(

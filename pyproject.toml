@@ -90,6 +90,12 @@ module = ["vectorbt.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 
+# kiteconnect (the worker's Indian market-data SDK) ships no py.typed marker;
+# the kernel only speaks to it through the KiteTickerLike protocol.
+[[tool.mypy.overrides]]
+module = ["kiteconnect.*"]
+ignore_missing_imports = true
+
 # ccxt (the worker's crypto venue SDK) ships partial/untyped APIs; treat it as
 # untyped so --strict doesn't flag every call. The adapter's own boundary types
 # (Order/Fill/Position in/out) stay fully checked. Worker dep, never the kernel.

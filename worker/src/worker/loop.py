@@ -33,14 +33,17 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+from alpha_core.adapters.paper import PaperBroker
 from alpha_core.core.enums import AssetClass
 from alpha_core.core.errors import BrokerError
 from alpha_core.core.interfaces import BrokerAdapter, DataFeed
 from alpha_core.data.bar_builder import BarBuilder
-from alpha_core.data.feed import AdapterFeed
+from alpha_core.data.feed import AdapterFeed, TeeFeed
 from alpha_core.execution.commands import CommandWatcher, RunState, WorkerControl
+from alpha_core.execution.costs import CostModel
 from alpha_core.execution.deadman import HeartbeatFile
 from alpha_core.execution.funding import FundingConfig, funding_cash_flow, load_funding_config
+from alpha_core.execution.instruments import InstrumentRegistry
 from alpha_core.execution.oms import OMS
 from alpha_core.execution.reconcile import Reconciler, ReconcileStatus
 from alpha_core.execution.session import handle_kill, rearm_on_clean_reconcile
@@ -53,7 +56,7 @@ from alpha_core.risk.manager import KillTrigger, RiskManager
 from alpha_core.scheduler.clock import Clock, SystemClock
 from alpha_core.strategy.engine import StrategyEngine
 from alpha_core.strategy.registry import build_strategy
-from worker.adapters import build_adapter
+from worker.adapters import build_adapter, build_kite_ticker_feed
 from worker.config import EnvConfig, active_venue, load_env_config, load_venues
 from worker.pod_sync import (
     PodCommandSource,
@@ -501,10 +504,41 @@ def _ensure_db_dir(state_db: str) -> None:
 
 
 def build_worker(env: EnvConfig) -> Worker:
-    """Construct the live paper/► worker from config + the active (gated) venue."""
+    """Construct the live paper/► worker from config + the active (gated) venue.
+
+    Two execution modes (M4.5): ``venue`` (the venue's own order API — the M3 path,
+    testnet/live per the gate) and ``paper`` (the LIVE feed drives the ``PaperBroker``:
+    real quotes, simulated fills through the cost model, no order ever leaves the
+    process — live-feed paper, R9). Under paper, the broker-of-record for the OMS,
+    reconciler, and shutdown IS the paper broker, so reconcile-truth and the halt
+    machinery run identically against the simulated book."""
     venues = load_venues()
-    venue_cfg = active_venue(env, venues)  # live-gate check
-    adapter = build_adapter(venue_cfg, env)  # live-gate check (defence in depth)
+    venue_cfg = active_venue(env, venues)  # live-gate check (kite => paper-only enforced here)
+    drain_inline = False
+    feed: DataFeed
+    if env.execution == "paper":
+        registry = InstrumentRegistry.from_config()
+        paper = PaperBroker(
+            cost_model=CostModel(load_yaml("costs.yaml")),
+            instruments={s: registry.get(s).cost_meta() for s in env.symbols},
+            starting_cash=env.paper_starting_cash,
+        )
+        adapter: BrokerAdapter = paper
+        # The DATA leg: kite's ticker feed, or a (gated) ccxt venue's tick stream —
+        # either way TeeFeed splices every tick into the paper broker's quotes, so
+        # simulated fills price off exactly the stream the strategy saw.
+        data_feed = (
+            build_kite_ticker_feed(venue_cfg, env)
+            if venue_cfg.adapter == "kite"
+            else AdapterFeed(build_adapter(venue_cfg, env))
+        )
+        feed = TeeFeed(data_feed, paper.on_tick)
+        # PaperBroker's order_events() is BOUNDED (drains pending fills, returns) —
+        # the inline drain after each bar is the correct consumption (see the ctor note).
+        drain_inline = True
+    else:
+        adapter = build_adapter(venue_cfg, env)  # live-gate check (defence in depth)
+        feed = AdapterFeed(adapter)
     risk_config = load_risk_config()
     risk = RiskManager(risk_config)
     _ensure_db_dir(env.state_db)
@@ -559,18 +593,18 @@ def build_worker(env: EnvConfig) -> Worker:
         bar_builder=BarBuilder(env.bar_interval_seconds),
         heartbeat=HeartbeatFile(env.heartbeat_path),
         control=control,
-        feed=AdapterFeed(adapter),
+        feed=feed,
         feed_stale_seconds=feed_stale,
         pod_command_source=pod_command_source,  # rotated alongside pod_status by the refresh loop
         pod_trade_sync=pod_trade_sync,  # trade-coupled tables (None unless deployment_id set)
-        # The CcxtAdapter's order_events() is ALWAYS continuous — a ccxt.pro ws stream
-        # OR an infinite REST poll (Delta) — never a bounded sim that returns after
-        # draining. So the worker ALWAYS consumes it via the long-lived consume_events
-        # background task, never the inline drain_events: draining `async for`s over the
-        # stream, which for the REST poll NEVER returns and wedges the market loop on the
-        # first closed bar (the heartbeat freezes -> the deadman trips). drain_inline=True
-        # is only for a bounded PaperBroker sim, which build_adapter never builds.
-        drain_inline=False,
+        # execution=venue: the CcxtAdapter's order_events() is ALWAYS continuous — a
+        # ccxt.pro ws stream OR an infinite REST poll (Delta) — so it MUST be consumed by
+        # the long-lived consume_events task, never the inline drain (which would `async
+        # for` a never-ending stream and wedge the market loop on the first closed bar;
+        # the heartbeat freezes -> the deadman trips). execution=paper: PaperBroker's
+        # order_events() is BOUNDED (drains pending fills, returns), so the inline drain
+        # after each bar is the correct consumption. The flag is set with the feed above.
+        drain_inline=drain_inline,
         command_watcher=command_watcher,  # pod->worker command bus (None unless configured)
         pod_status=pod_status,  # best-effort worker->pod heartbeat (None unless configured)
         clock=clock,

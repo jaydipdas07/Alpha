@@ -114,3 +114,112 @@ async def test_testnet_url_override_applied(monkeypatch) -> None:  # type: ignor
         assert adapter._ex.urls["api"] == {"public": url, "private": url}  # type: ignore[attr-defined]
     finally:
         await adapter.aclose()
+
+
+# --- build_kite_ticker_feed (M4.5 — the data-only Kite factory) -------------------
+
+
+class _FakeKiteConnect:
+    """Stands in for kiteconnect.KiteConnect: serves the instrument master."""
+
+    dumps = 0
+
+    def __init__(self, api_key: str, access_token: str) -> None:
+        self.api_key = api_key
+        self.access_token = access_token
+
+    def instruments(self, exchange: str) -> list[dict[str, object]]:
+        assert exchange == "NSE"
+        type(self).dumps += 1
+        return [
+            {
+                "instrument_token": 738561,
+                "tradingsymbol": "RELIANCE",
+                "exchange": "NSE",
+                "segment": "NSE",
+                "instrument_type": "EQ",
+                "lot_size": 1,
+                "tick_size": 0.05,
+                "expiry": "",
+            },
+            {
+                "instrument_token": 408065,
+                "tradingsymbol": "INFY",
+                "exchange": "NSE",
+                "segment": "NSE",
+                "instrument_type": "EQ",
+                "lot_size": 1,
+                "tick_size": 0.05,
+                "expiry": "",
+            },
+        ]
+
+
+class _FakeKiteTicker:
+    def __init__(self, api_key: str, access_token: str) -> None:
+        self.api_key = api_key
+        self.access_token = access_token
+
+
+def _kite_env(tmp_path: object, **over: object) -> EnvConfig:
+    base: dict[str, object] = {
+        "venue": "kite-nse",
+        "execution": "paper",
+        "symbols": ["NSE:RELIANCE"],
+        "kite_instruments_cache": f"{tmp_path}/kite_instruments.json",
+    }
+    base.update(over)
+    return _env(**base)
+
+
+def _kite_venue() -> VenueConfig:
+    return _venue(
+        adapter="kite", exchange="kite", venue="NSE", market_type="equity", key_env="KITE"
+    )
+
+
+@pytest.fixture
+def _kite_sdk(monkeypatch):  # type: ignore[no-untyped-def]
+    """Install a fake `kiteconnect` module (the factory lazy-imports it)."""
+    import sys
+    import types
+
+    mod = types.ModuleType("kiteconnect")
+    mod.KiteConnect = _FakeKiteConnect  # type: ignore[attr-defined]
+    mod.KiteTicker = _FakeKiteTicker  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "kiteconnect", mod)
+    monkeypatch.setenv("KITE_API_KEY", "k-api")
+    monkeypatch.setenv("KITE_ACCESS_TOKEN", "k-tok")
+    monkeypatch.delenv("KITE_ACCESS_TOKEN_AT", raising=False)
+    _FakeKiteConnect.dumps = 0
+    return mod
+
+
+def test_kite_feed_factory_fetches_caches_and_maps_tokens(_kite_sdk, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from pathlib import Path
+
+    from worker.adapters import build_kite_ticker_feed
+
+    env = _kite_env(tmp_path)
+    feed = build_kite_ticker_feed(_kite_venue(), env)
+    assert feed._token_by_symbol == {"NSE:RELIANCE": 738561}  # filtered to env.symbols
+    assert feed._ticker.api_key == "k-api"  # type: ignore[attr-defined]
+    assert Path(env.kite_instruments_cache).is_file()  # dump cached for the next boot
+    # Second build: served from the cache — no second network dump.
+    build_kite_ticker_feed(_kite_venue(), env)
+    assert _FakeKiteConnect.dumps == 1
+
+
+def test_kite_feed_factory_requires_the_daily_token(_kite_sdk, tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from worker.adapters import build_kite_ticker_feed
+
+    monkeypatch.delenv("KITE_ACCESS_TOKEN", raising=False)
+    with pytest.raises(RuntimeError, match="KITE_ACCESS_TOKEN"):
+        build_kite_ticker_feed(_kite_venue(), _kite_env(tmp_path))
+
+
+def test_kite_feed_factory_fails_fast_on_an_unknown_symbol(_kite_sdk, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from worker.adapters import build_kite_ticker_feed
+
+    with pytest.raises(RuntimeError, match="NSE:NOSUCH"):
+        build_kite_ticker_feed(_kite_venue(), _kite_env(tmp_path, symbols=["NSE:NOSUCH"]))

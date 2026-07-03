@@ -24,3 +24,12 @@ venues:
     streaming: false         # Delta has no ccxt.pro ws -> REST poll (P18.1)
     key_env: DELTA_TESTNET
     testnet_url: https://cdn-ind.testnet.deltaex.org  # Delta INDIA demo (not ccxt's global testnet)
+
+  kite-nse:
+    adapter: kite            # Zerodha ticker websocket — MARKET DATA ONLY (M4.5)
+    exchange: kite
+    venue: NSE
+    market_type: equity
+    testnet: false           # Kite has no sandbox; data-only + execution=paper is the guard
+    streaming: true          # always ws (KiteTicker)
+    key_env: KITE            # KITE_API_KEY + KITE_ACCESS_TOKEN (the daily 2FA token)

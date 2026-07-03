@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 
 from alpha_core.adapters.crypto_ccxt import CcxtAdapter
+from alpha_core.data.kite_feed import KiteTickerFeed
 from worker.config import EnvConfig, VenueConfig
 
 
@@ -78,3 +79,69 @@ def build_adapter(venue: VenueConfig, env: EnvConfig) -> CcxtAdapter:
         if venue.testnet_url is not None:  # the venue's sandbox isn't ccxt's default testnet
             exchange.urls["api"] = {"public": venue.testnet_url, "private": venue.testnet_url}
     return CcxtAdapter(exchange=exchange, venue=venue.venue, streaming=venue.streaming)
+
+
+def build_kite_ticker_feed(venue: VenueConfig, env: EnvConfig) -> KiteTickerFeed:
+    """Build the LIVE Kite market-data feed for paper execution (M4.5) — data only,
+    no order surface. Reads ``KITE_API_KEY`` + ``KITE_ACCESS_TOKEN`` from the
+    environment (the daily token ``scripts/ingest_kite.py``'s 2FA flow stages; a
+    stale one is warned loudly here and then fails at connect with Kite's own
+    error). Instrument tokens come from the Kite instrument master — the gitignored
+    cache when present, else fetched once and cached (network at the edge)."""
+    import json
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from kiteconnect import KiteConnect, KiteTicker  # worker dep — never the kernel's
+
+    from alpha_core.data.ingest.kite import access_token_is_stale
+    from alpha_core.execution.instruments import InstrumentRegistry
+    from alpha_core.observability.logging import get_logger
+
+    log = get_logger("kite_factory")
+    api_key = os.environ.get("KITE_API_KEY", "")
+    access_token = os.environ.get("KITE_ACCESS_TOKEN", "")
+    if not api_key or not access_token:
+        raise RuntimeError(
+            "missing KITE_API_KEY / KITE_ACCESS_TOKEN in the environment — run the daily "
+            "2FA flow (scripts/ingest_kite.py) to stage a fresh token"
+        )
+    token_at_raw = os.environ.get("KITE_ACCESS_TOKEN_AT", "").strip()
+    if token_at_raw:
+        try:
+            stale = access_token_is_stale(
+                datetime.fromisoformat(token_at_raw), now=datetime.now(UTC)
+            )
+        except ValueError:
+            stale = False  # a malformed stamp is a warning problem, not a build problem
+        if stale:
+            log.warning(
+                "kite_token_probably_stale",
+                hint="tokens die ~06:00 IST daily; rerun scripts/ingest_kite.py",
+            )
+
+    cache = Path(env.kite_instruments_cache)
+    if cache.is_file():
+        registry = InstrumentRegistry.from_kite_json(cache)
+        log.info("kite_instruments_cached", path=str(cache))
+    else:
+        rows = KiteConnect(api_key=api_key, access_token=access_token).instruments("NSE")
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        # Kite rows carry date objects — stringify; the registry parses them back.
+        cache.write_text(json.dumps(rows, default=str), encoding="utf-8")
+        registry = InstrumentRegistry.from_kite_dump(rows)
+        log.info("kite_instruments_fetched", rows=len(rows), cached=str(cache))
+
+    tokens = registry.token_map()
+    missing = [s for s in env.symbols if s not in tokens]
+    if missing:
+        raise RuntimeError(
+            f"no Kite instrument token for {missing} — not in the NSE instrument master "
+            f"(check the symbol spelling, or delete {cache} to refresh the dump)"
+        )
+    ticker = KiteTicker(api_key, access_token)
+    return KiteTickerFeed(
+        ticker,
+        token_by_symbol={s: tokens[s] for s in env.symbols},
+        venue=venue.venue,
+    )
