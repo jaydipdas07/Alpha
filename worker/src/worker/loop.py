@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from alpha_core.adapters.paper import PaperBroker
@@ -132,7 +132,7 @@ class Worker:
         # when the env opts in — the book squares off daily at square_off_time.
         self._schedule = schedule
         self._session_block_logged: str | None = None  # log-once key (reason@date)
-        self._squared_off_on: object | None = None  # the last session date squared off
+        self._squared_off_on: date | None = None  # the last session date squared off
         self._clock = clock or SystemClock()
         # Perp funding accrual (R13): None = venue has no funding (spot/equity). The rate per
         # boundary comes from the VENUE (adapter.funding_rate); the config rate is only the
@@ -348,10 +348,13 @@ class Worker:
         }
 
     def _session_blocks_entry(self, now: datetime) -> bool:
-        """True when the session rules forbid NEW entries at ``now`` (SCHED-1):
+        """True when the session rules block the strategy at ``now`` (SCHED-1):
         outside the trading session (holiday / pre-open / post-close — Kite pushes
         pre-open snapshot ticks that must not trade) or past ``no_new_entry_time``.
-        Exits are untouched — the square-off/halt paths place their own orders."""
+        NB the gate wraps ``process_bar`` itself, so strategy signals — entries AND
+        exits — defer to the next session's first processed bar; only the halt and
+        square-off flatteners still place orders in a blocked window. (Blocked-window
+        bars never reach the strategy, so its state cannot desync from the book.)"""
         if self._schedule is None or self._schedule.is_24x7:
             return False
         if not self._schedule.is_open(now):
@@ -361,7 +364,7 @@ class Worker:
         else:
             return False
         key = f"{reason}@{now.astimezone(UTC).date().isoformat()}"
-        if self._session_block_logged != key:  # once per reason per day, not per bar
+        if self._session_block_logged != key:  # once per reason-TRANSITION per day
             self._session_block_logged = key
             self._log.info("session_entry_blocked", reason=reason)
         return True
@@ -370,7 +373,13 @@ class Worker:
         """Opt-in (``intraday_square_off``) daily square-off at the segment's
         ``square_off_time`` (SCHED-1): cancel working orders, flatten the book —
         ONCE per session date. NOT a kill: the risk gate stays armed and trading
-        resumes next session (entries are already blocked past no_new_entry)."""
+        resumes next session (entries are already blocked past no_new_entry).
+
+        PRE-LIVE GATE (review #160 SF3): before this flag ever runs against a real
+        order API, ``flatten_all`` must net/skip symbols with an in-flight closing
+        order — a daily-loss halt landing between the square-off SELL and its fill
+        would otherwise size a SECOND flatten off the stale local book (net short
+        overnight). Paper's inline drain closes that window today."""
         if not self._env.intraday_square_off or self._schedule is None:
             return
         if self._risk.is_halted or not self._schedule.is_at_or_after_square_off(now):
@@ -384,11 +393,24 @@ class Worker:
         if not working and not holding:
             return  # nothing to do; the claim still stops re-checks today
         self._log.info("intraday_square_off", working=len(working), holding=holding)
-        self._notifier.send("intraday square-off: closing the day's book", severity=Severity.INFO)
-        await self._oms.cancel_all_working()
-        await self._oms.flatten_all()
-        if self._drain_inline:
-            await self._oms.drain_events()  # book the closing fills now (bounded path)
+        try:
+            await self._oms.cancel_all_working()
+            await self._oms.flatten_all()
+            if self._drain_inline:
+                await self._oms.drain_events()  # book the closing fills now (bounded path)
+                if any(p.quantity != 0 for p in self._oms.positions):
+                    raise RuntimeError("book not flat after the square-off fills")
+            # Success is announced AFTER the attempt, never before (review #160).
+            self._notifier.send("intraday square-off: day book closed", severity=Severity.INFO)
+        except Exception as exc:
+            # The day stays CLAIMED (retrying blind is unsafe until flatten_all nets
+            # in-flight closes — review #160 SF3, pre-live), so the operator MUST act:
+            # the book may carry positions overnight.
+            self._log.error("square_off_failed", error=repr(exc))
+            self._notifier.send(
+                f"intraday square-off FAILED — book may be open overnight: {exc}",
+                severity=Severity.CRITICAL,
+            )
 
     async def _periodic(self) -> None:
         # NB: the heartbeat is beaten ONLY from the market loop (per tick), never here —
@@ -477,7 +499,14 @@ class Worker:
         REST poll) ride out transient outages during the idle no-trade soak."""
         if self._last_tick_at is None or self._risk.is_halted:
             return
-        age = (self._now() - self._last_tick_at).total_seconds()
+        now = self._now()
+        if self._schedule is not None and not self._schedule.is_open(now):
+            # A closed session's silence is EXPECTED (SCHED-1): without this, any
+            # position held overnight (the documented CNC default) would trip the
+            # FEED_STALE kill ~90s after the 15:30 close, get flattened at the last
+            # quote, and latch a halt needing a manual re-arm every single day.
+            return
+        age = (now - self._last_tick_at).total_seconds()
         if age <= self._feed_stale_seconds:
             return
         holding = any(p.quantity != 0 for p in self._oms.positions)

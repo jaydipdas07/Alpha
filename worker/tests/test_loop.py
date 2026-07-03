@@ -29,6 +29,7 @@ from alpha_core.execution.funding import FundingConfig
 from alpha_core.execution.oms import OMS
 from alpha_core.execution.reconcile import Reconciler
 from alpha_core.execution.state import StateStore
+from alpha_core.observability.notify import Notifier, Severity
 from alpha_core.risk.limits import RiskConfig
 from alpha_core.risk.manager import KillTrigger, RiskManager
 from alpha_core.scheduler.calendar import TradingCalendar
@@ -1057,3 +1058,115 @@ async def test_square_off_defers_to_a_latched_halt(tmp_path) -> None:  # type: i
     await worker._maybe_square_off(datetime(2026, 6, 15, 9, 46, tzinfo=UTC))
     assert worker._squared_off_on is None  # handle_kill owns a halted book
     await worker._adapter.aclose()
+
+
+async def test_market_loop_itself_skips_blocked_bars(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # The wiring line, not just the helper: with a schedule and a clock parked
+    # PRE-OPEN, the same tick stream that trades in-session places NOTHING.
+    worker, venue, _oms, _hb = _worker(
+        tmp_path, _ticks(["100", "100", "100", "100"]), strategy=_AlwaysBuy("0.01")
+    )
+    worker._schedule = _nse_schedule()
+    cast(FakeClock, worker._clock).set(datetime(2026, 6, 15, 3, 0, tzinfo=UTC))  # 08:30 IST
+    await worker.run()
+    assert venue.placed == []  # bars formed, strategy never ran, nothing submitted
+
+
+async def test_feed_stale_is_silent_while_the_session_is_closed(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # Review #160 SF1: a position held overnight (the CNC default) must NOT trip
+    # FEED_STALE after the close — the silence is expected; the kill would flatten
+    # at the last quote and latch a halt needing a manual re-arm every day.
+    worker, _venue, oms, _hb = _worker(
+        tmp_path, _ticks(["100", "100"]), strategy=_AlwaysBuy("0.02")
+    )
+    worker._schedule = _nse_schedule()
+    await worker.start()
+    for tick in _ticks(["100", "100"]):
+        bar = worker._bars.add(tick)
+        if bar is not None:
+            for sig in worker._engine.process_bar(bar):
+                await oms.submit_signal(sig, reference_price=bar.close)
+            await oms.drain_events()
+    assert oms.positions[0].quantity == Decimal("0.02")  # held book
+    worker._last_tick_at = datetime(2026, 6, 15, 9, 59, tzinfo=UTC)  # last tick 15:29 IST
+    cast(FakeClock, worker._clock).set(datetime(2026, 6, 15, 10, 30, tzinfo=UTC))  # 16:00 IST
+    worker._check_feed_stale()
+    assert not worker._risk.is_halted  # silent overnight
+    # In-session the same staleness DOES trip (the guard is session-scoped, not gone).
+    cast(FakeClock, worker._clock).set(datetime(2026, 6, 16, 5, 0, tzinfo=UTC))  # 10:30 IST
+    worker._last_tick_at = datetime(2026, 6, 16, 4, 0, tzinfo=UTC)  # an hour silent
+    worker._check_feed_stale()
+    assert worker._risk.is_halted
+    await worker._adapter.aclose()
+
+
+async def test_square_off_failure_alerts_critical_and_keeps_the_claim(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # Review #160 SF2: a failed square-off must NOT pretend success — CRITICAL
+    # alert, error log, day stays claimed (no blind retry until flatten nets
+    # in-flight closes), and the operator owns the overnight book.
+    class _Notes:
+        def __init__(self) -> None:
+            self.sent: list[tuple[str, object]] = []
+
+        def send(self, message: str, *, severity: object = None) -> None:
+            self.sent.append((message, severity))
+
+    worker, _venue, oms, _hb = _worker(
+        tmp_path, _ticks(["100", "100"]), strategy=_AlwaysBuy("0.02")
+    )
+    notes = _Notes()
+    worker._notifier = cast(Notifier, notes)
+    worker._schedule = _nse_schedule()
+    worker._env = worker._env.model_copy(update={"intraday_square_off": True})
+    await worker.start()
+    for tick in _ticks(["100", "100"]):
+        bar = worker._bars.add(tick)
+        if bar is not None:
+            for sig in worker._engine.process_bar(bar):
+                await oms.submit_signal(sig, reference_price=bar.close)
+            await oms.drain_events()
+    assert oms.positions[0].quantity == Decimal("0.02")
+
+    async def _boom() -> list[Order]:
+        raise RuntimeError("venue down")
+
+    worker._oms.flatten_all = _boom  # type: ignore[method-assign]
+    at = datetime(2026, 6, 15, 9, 46, tzinfo=UTC)  # 15:16 IST
+    await worker._maybe_square_off(at)
+    assert any("FAILED" in m and s is Severity.CRITICAL for m, s in notes.sent)
+    assert not any("day book closed" in m for m, _ in notes.sent)  # no false success
+    assert worker._squared_off_on is not None  # claimed: no blind retry today
+    await worker._adapter.aclose()
+
+
+async def test_build_worker_wires_the_schedule_by_market_type(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from worker.loop import build_worker
+
+    sentinel_feed = object()
+    monkeypatch.setattr("worker.loop.build_kite_ticker_feed", lambda vc, env: sentinel_feed)
+    base = {
+        "env": "kite-paper",
+        "mode": "paper",
+        "allow_live": False,
+        "worker_id": "w",
+        "strategy": "idle",
+        "bar_interval_seconds": 60,
+        "state_db": "sqlite:///:memory:",
+        "heartbeat_path": f"{tmp_path}/hb",
+        "command_poll_seconds": 1.0,
+        "reconcile_interval_seconds": 30,
+    }
+    equity = build_worker(
+        EnvConfig.model_validate(
+            {**base, "venue": "kite-nse", "symbols": ["NSE:RELIANCE"], "execution": "paper"}
+        )
+    )
+    assert equity._schedule is not None and not equity._schedule.is_24x7
+    await equity._adapter.aclose()
+    monkeypatch.setenv("BINANCE_TESTNET_API_KEY", "k")
+    monkeypatch.setenv("BINANCE_TESTNET_API_SECRET", "s")
+    crypto = build_worker(
+        EnvConfig.model_validate({**base, "venue": "binance-spot-testnet", "symbols": [SYMBOL]})
+    )
+    assert crypto._schedule is None  # 24x7: no session gating at all
+    await crypto._adapter.aclose()
