@@ -51,3 +51,6 @@ discovery_runs/
 
 # local git worktrees (parallel-work checkouts)
 .claude/worktrees/
+
+# Worker runtime state (dbs, heartbeats, instrument caches) — never committed
+var/

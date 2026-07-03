@@ -1,0 +1,27 @@
+# LOCAL demo environment — the PR #157 trade-sync exercise (uncommitted; gitignore'd if kept).
+# Paper mode on the Delta perp testnet with the reference MA-crossover on fast bars, so
+# orders/fills/positions/pnl_snapshots demonstrably flow worker -> pod. allow_live=false.
+
+env: demo
+mode: paper
+allow_live: false
+
+worker_id: alpha-demo-mac
+venue: binance-spot-testnet
+strategy: ma_crossover      # the reference strategy — trades on 10/30 SMA crosses
+symbols:
+  - BTC/USDT               # Binance spot testnet pair
+bar_interval_seconds: 1     # fast bars: ~30s warmup, crosses within minutes
+state_db: sqlite:///var/demo-worker.db
+heartbeat_path: var/run/demo-worker.heartbeat
+command_poll_seconds: 5.0
+reconcile_interval_seconds: 15
+
+pod_sync:
+  enabled: true
+  pod_id: "019ef606-7b77-76f1-853a-978ddf819415"  # Vault
+  base_url: https://api.lemma.work
+  heartbeat_seconds: 5        # fast sync cadence for the demo window
+  token_refresh_seconds: 60
+  deployment_id: "c76a2257-8706-4aa6-a109-552de1c62e7c"  # the demo deployments row
+  pnl_snapshot_seconds: 60    # one snapshot row per minute during the demo

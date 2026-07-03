@@ -21,7 +21,7 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from alpha_core.core.enums import OrderType, Side, Venue
+from alpha_core.core.enums import OrderState, OrderType, Side, Venue
 from alpha_core.core.errors import OrderRejected, UnknownOrder
 from alpha_core.core.interfaces import (
     BrokerAdapter,
@@ -75,6 +75,12 @@ class PaperBroker(BrokerAdapter):
         self._quotes: dict[str, Tick] = {}
         self._resting: dict[str, _Resting] = {}
         self._by_client: dict[str, str] = {}  # client_order_id -> venue_order_id
+        # EVERY order this session in its CURRENT state (the BrokerAdapter.get_orders
+        # contract — "all orders the broker knows", not just resting ones). Without the
+        # filled/cancelled snapshots, an instantly-filled market order vanishes from
+        # broker-orders while the book already moved: the reconciler then reads
+        # unexplained drift and latches a spurious halt (PR #159 review BLOCKER).
+        self._session: dict[str, Order] = {}
         self._ids = itertools.count(1)
         self._events: asyncio.Queue[BrokerOrderEvent] = asyncio.Queue()
         self.emitted: list[BrokerOrderEvent] = []  # synchronous mirror for tests
@@ -143,6 +149,20 @@ class PaperBroker(BrokerAdapter):
         )
         self._apply_to_book(fill)
         self._resting.pop(order.client_order_id, None)
+        base = self._session.get(order.client_order_id, order)
+        prev_filled = base.filled_quantity
+        prev_avg = base.average_fill_price or Decimal(0)
+        total = prev_filled + quantity
+        done = total >= base.quantity
+        self._session[order.client_order_id] = base.model_copy(
+            update={
+                "state": OrderState.FILLED if done else OrderState.PARTIALLY_FILLED,
+                "filled_quantity": total,
+                "average_fill_price": (prev_avg * prev_filled + price * quantity) / total,
+                "venue_order_id": venue_order_id,
+                "updated_at": fill.ts,
+            }
+        )
         self._emit(
             BrokerOrderEvent(
                 kind=BrokerEventKind.FILL,
@@ -186,6 +206,9 @@ class PaperBroker(BrokerAdapter):
             raise OrderRejected("no market", reason="no quote to fill against")
         venue_order_id = f"P{next(self._ids)}"
         self._by_client[order.client_order_id] = venue_order_id
+        self._session[order.client_order_id] = order.model_copy(
+            update={"state": OrderState.OPEN, "venue_order_id": venue_order_id}
+        )
         if self._marketable(order):
             self._fill(order, order.quantity)
         else:
@@ -199,6 +222,10 @@ class PaperBroker(BrokerAdapter):
             if client_order_id not in self._by_client:
                 raise UnknownOrder(client_order_id)
             return
+        cancelled = self._session[client_order_id]
+        self._session[client_order_id] = cancelled.model_copy(
+            update={"state": OrderState.CANCELLED}
+        )
         self._emit(
             BrokerOrderEvent(
                 kind=BrokerEventKind.CANCEL,
@@ -227,6 +254,7 @@ class PaperBroker(BrokerAdapter):
             updates["quantity"] = quantity
             resting.remaining = quantity
         resting.order = resting.order.model_copy(update=updates)
+        self._session[client_order_id] = self._session[client_order_id].model_copy(update=updates)
         if self._marketable(resting.order):
             self._fill(resting.order, resting.remaining)
 
@@ -234,7 +262,10 @@ class PaperBroker(BrokerAdapter):
         return list(self._book.positions.values())
 
     async def get_orders(self) -> list[Order]:
-        return [r.order for r in self._resting.values()]
+        # ALL session orders in their current state (the adapter contract): the
+        # reconciler needs the FILLED snapshot to explain a just-moved position as a
+        # missed fill instead of halting on unexplained drift.
+        return list(self._session.values())
 
     async def find_order_id(self, client_order_id: str) -> str | None:
         return self._by_client.get(client_order_id)
@@ -249,6 +280,26 @@ class PaperBroker(BrokerAdapter):
     async def order_events(self) -> AsyncIterator[BrokerOrderEvent]:
         while not self._events.empty():
             yield self._events.get_nowait()
+
+    def seed_from_store(self, orders: Sequence[Order], positions: Sequence[Position]) -> None:
+        """Restart continuity for paper execution (M4.5): the simulated book is the
+        VENUE, so it must survive a worker restart or the startup gate reads phantom
+        drift (position at the store, nothing broker-side) and latches a halt that a
+        re-arm can never clear. Re-homes the durable store's positions and re-registers
+        session orders (working LIMIT/STOP orders rest again; terminal ones stay
+        queryable for dedup/reconcile). Cash is NOT reconstructed — P&L truth lives in
+        the OMS store; the book needs qty/avg only (marking + flatten)."""
+        for position in positions:
+            if position.quantity != 0:
+                self._book.positions[(position.venue, position.symbol)] = position.model_copy()
+        for order in orders:
+            venue_order_id = order.venue_order_id or f"P{next(self._ids)}"
+            self._by_client[order.client_order_id] = venue_order_id
+            self._session[order.client_order_id] = order.model_copy()
+            if not order.state.is_terminal and order.order_type is not OrderType.MARKET:
+                self._resting[order.client_order_id] = _Resting(
+                    order.model_copy(), venue_order_id, order.quantity - order.filled_quantity
+                )
 
     @property
     def cash(self) -> Decimal:

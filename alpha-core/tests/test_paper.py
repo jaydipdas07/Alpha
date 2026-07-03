@@ -168,7 +168,10 @@ async def test_limit_rests_until_marketable() -> None:
     # ask drops to 100 -> now marketable -> fills
     b.on_tick(_tick(bid="98", ask="100"))
     assert [e for e in b.emitted if e.kind is BrokerEventKind.FILL]
-    assert len(await b.get_orders()) == 0
+    # The filled order STAYS visible in its terminal state (the adapter contract —
+    # get_orders is the whole session, not just the resting book; #159 BLOCKER).
+    (snapshot,) = await b.get_orders()
+    assert snapshot.state is OrderState.FILLED
 
 
 # --- cancel --------------------------------------------------------------------
@@ -306,3 +309,88 @@ async def test_paper_crypto_fills_resting_order_via_streamed_feed() -> None:
         e.kind is BrokerEventKind.FILL and e.fill is not None and e.fill.symbol == sym
         for e in events
     )
+
+
+# --- the session-order contract (PR #159 review BLOCKER) -------------------------
+
+
+async def test_get_orders_reports_the_full_session_not_just_resting() -> None:
+    # An instantly-filled market order must stay visible as FILLED (the adapter
+    # contract) — otherwise the reconciler reads a vanished order + a moved book as
+    # unexplained drift and latches a spurious halt mid-soak.
+    broker = _broker()
+    broker.on_tick(_tick())
+    await broker.place_order(_order(cid="alpha-m1"))
+    (snapshot,) = await broker.get_orders()
+    assert snapshot.state is OrderState.FILLED
+    assert snapshot.filled_quantity == Decimal("10")
+    assert snapshot.average_fill_price is not None
+    # A cancelled resting order stays visible too, in its terminal state.
+    await broker.place_order(_order(order_type=OrderType.LIMIT, limit="90", cid="alpha-l1"))
+    await broker.cancel("alpha-l1")
+    states = {o.client_order_id: o.state for o in await broker.get_orders()}
+    assert states == {"alpha-m1": OrderState.FILLED, "alpha-l1": OrderState.CANCELLED}
+
+
+async def test_reconcile_race_adopts_the_instant_fill_instead_of_halting() -> None:
+    # The reproduced #159 BLOCKER: reconcile fires between the venue fill and the
+    # OMS drain. Broker truth (FILLED order + moved position) must EXPLAIN the local
+    # OPEN order + flat book as a missed fill -> CLEAN adoption, never a halt.
+    from alpha_core.execution.reconcile import Reconciler, ReconcileStatus
+    from alpha_core.risk.limits import RiskConfig
+    from alpha_core.risk.manager import RiskManager
+
+    broker = _broker()
+    broker.on_tick(_tick())
+    local_open = _order(cid="alpha-race")  # what the OMS holds: submitted, not yet drained
+    await broker.place_order(local_open)  # venue-side: filled instantly
+    risk = RiskManager(
+        RiskConfig.model_validate(
+            {
+                "base_capital": "100000",
+                "limits": {
+                    "max_gross_exposure": "1.00",
+                    "max_position_per_instrument": "0.20",
+                    "max_concurrent_positions": 5,
+                    "max_order_value": "0.25",
+                    "max_orders_per_minute": 10,
+                    "max_daily_loss_halt": "0.02",
+                    "max_loss_per_trade": "0.01",
+                    "per_segment_exposure_cap": "0.60",
+                },
+            }
+        )
+    )
+    report = await Reconciler(adapter=broker, risk=risk).reconcile(
+        local_orders=[local_open.model_copy(update={"state": OrderState.OPEN})],
+        local_positions=[],
+    )
+    assert report.status is ReconcileStatus.CLEAN
+    assert not risk.is_halted
+    assert [o.state for o in report.adopted_orders] == [OrderState.FILLED]
+    assert [p.quantity for p in report.adopted_positions] == [Decimal("10")]
+
+
+async def test_seed_from_store_restores_broker_truth_across_restart() -> None:
+    # S1: a restart while holding must NOT brick the startup gate — the fresh paper
+    # book re-homes the durable store's positions/orders, so broker == local again.
+    broker = _broker()
+    broker.on_tick(_tick())
+    await broker.place_order(_order(cid="alpha-s1"))
+    held = (await broker.get_positions())[0]
+    (filled,) = await broker.get_orders()
+
+    fresh = _broker()  # the restarted process: empty book
+    fresh.seed_from_store([filled], [held])
+    assert (await fresh.get_positions())[0].quantity == held.quantity
+    (seen,) = await fresh.get_orders()
+    assert seen.state is OrderState.FILLED  # dedup/reconcile can see the old order
+    assert await fresh.find_order_id("alpha-s1") is not None
+    # And a still-working limit order rests again, fillable by a later tick.
+    resting = _order(order_type=OrderType.LIMIT, limit="90", cid="alpha-s2").model_copy(
+        update={"state": OrderState.OPEN}
+    )
+    fresh.seed_from_store([resting], [])
+    fresh.on_tick(_tick(bid="88", ask="89"))  # crosses the 90 limit
+    fills = [e for e in fresh.emitted if e.kind.name == "FILL"]
+    assert any(e.client_order_id == "alpha-s2" for e in fills)

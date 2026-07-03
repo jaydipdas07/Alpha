@@ -47,10 +47,13 @@ def _venue(**over: object) -> dict[str, object]:
 # --- the shipped config loads + is paper-safe ----------------------------------
 
 
-def test_shipped_venues_are_all_testnet() -> None:
+def test_shipped_venues_are_all_testnet_or_data_only() -> None:
+    # No venue that can take LIVE ORDERS is defined (that config is the human's).
+    # ccxt venues carry an order surface -> must be testnet; kite is market-data
+    # only by construction (no order adapter exists) and paper-only by validation.
     venues = load_venues()
-    assert set(venues) >= {"binance-spot-testnet", "delta-testnet"}
-    assert all(v.testnet for v in venues.values())  # no live venue is defined (human's)
+    assert set(venues) >= {"binance-spot-testnet", "delta-testnet", "kite-nse"}
+    assert all(v.testnet for v in venues.values() if v.adapter == "ccxt")
 
 
 def test_shipped_paper_env_keeps_the_gate_shut() -> None:
@@ -121,3 +124,47 @@ def test_pod_sync_deployment_id_must_be_a_uuid() -> None:
         EnvConfig.model_validate(
             {**base, "pod_sync": {"pod_id": "p", "deployment_id": "1; DROP TABLE orders"}}
         )
+
+
+def _m45_base() -> dict[str, object]:
+    return {
+        "env": "kite-paper",
+        "mode": "paper",
+        "allow_live": False,
+        "worker_id": "w",
+        "venue": "kite-nse",
+        "strategy": "idle",
+        "symbols": ["NSE:RELIANCE"],
+        "bar_interval_seconds": 60,
+        "state_db": "sqlite:///:memory:",
+        "heartbeat_path": "/tmp/hb",
+        "command_poll_seconds": 1.0,
+        "reconcile_interval_seconds": 30,
+    }
+
+
+def test_kite_venue_is_paper_only_and_bypasses_the_live_gate() -> None:
+    # Data-only kite (no order surface) may run without the live gate — but ONLY
+    # under paper execution; venue execution against kite must fail fast.
+    venues = load_venues()
+    assert "kite-nse" in venues and venues["kite-nse"].adapter == "kite"
+    paper_env = EnvConfig.model_validate({**_m45_base(), "execution": "paper"})
+    assert active_venue(paper_env, venues).venue is Venue.NSE  # allowed, gate untouched
+    venue_env = EnvConfig.model_validate(_m45_base())  # execution defaults to "venue"
+    with pytest.raises(ValueError, match="data-only"):
+        active_venue(venue_env, venues)
+
+
+def test_live_mode_contradicts_paper_execution() -> None:
+    with pytest.raises(ValidationError, match="paper never goes live"):
+        EnvConfig.model_validate(
+            {**_m45_base(), "mode": "live", "allow_live": True, "execution": "paper"}
+        )
+
+
+def test_paper_starting_cash_is_decimal_never_float() -> None:
+    env = EnvConfig.model_validate({**_m45_base(), "paper_starting_cash": "250000.50"})
+    from decimal import Decimal
+
+    assert env.paper_starting_cash == Decimal("250000.50")
+    assert isinstance(env.paper_starting_cash, Decimal)

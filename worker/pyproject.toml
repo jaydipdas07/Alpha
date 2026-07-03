@@ -14,6 +14,9 @@ dependencies = [
     # the pod-backed CommandSource. A WORKER dep (like ccxt), never alpha-core (no SDK in
     # the kernel). Lemma is never on the money path (TEST-8).
     "lemma-sdk>=0.5.3",
+    # Zerodha's SDK — the M4.5 live-feed paper DATA leg (KiteTicker ws). Market data
+    # only: no Kite order adapter exists; kite venues are paper-execution-only.
+    "kiteconnect>=5.0.1",
 ]
 
 [build-system]

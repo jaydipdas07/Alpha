@@ -9,7 +9,7 @@ and preserves input order (the caller sorts by time).
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Sequence
 
 from alpha_core.core.interfaces import BrokerAdapter, DataFeed
 from alpha_core.core.models import Bar, Tick
@@ -58,3 +58,22 @@ class AdapterFeed(DataFeed):
 
     def stream_bars(self, symbols: Sequence[str]) -> AsyncIterator[Bar]:
         raise NotImplementedError("AdapterFeed streams ticks only; bars are built by BarBuilder")
+
+
+class TeeFeed(DataFeed):
+    """Yield the inner feed's ticks, teeing each into a callback first — the paper
+    assembly's market-data splice (M4.5): the same tick that drives the BarBuilder
+    also updates the ``PaperBroker``'s quotes, so simulated fills price off exactly
+    the stream the strategy saw (live feed + simulated execution, R9 — not replay)."""
+
+    def __init__(self, inner: DataFeed, on_tick: Callable[[Tick], None]) -> None:
+        self._inner = inner
+        self._on_tick = on_tick
+
+    async def stream_ticks(self, symbols: Sequence[str]) -> AsyncIterator[Tick]:
+        async for tick in self._inner.stream_ticks(symbols):
+            self._on_tick(tick)
+            yield tick
+
+    def stream_bars(self, symbols: Sequence[str]) -> AsyncIterator[Bar]:
+        raise NotImplementedError("TeeFeed streams ticks only; bars are built by BarBuilder")

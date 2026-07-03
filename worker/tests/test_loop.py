@@ -945,3 +945,40 @@ async def test_maybe_sync_trades_pushes_the_booked_state(tmp_path) -> None:  # t
 async def test_maybe_sync_trades_is_a_noop_without_a_sync(tmp_path) -> None:  # type: ignore[no-untyped-def]
     worker, _venue, _oms, _hb = _worker(tmp_path, _ticks(["100"]), strategy=_AlwaysBuy())
     await worker._maybe_sync_trades()  # no trade sync configured: returns without touching the OMS
+
+
+async def test_build_worker_paper_execution_assembles_the_m45_stack(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # execution=paper: the OMS/reconciler broker IS the PaperBroker, the feed is the
+    # TeeFeed splice over the (monkeypatched) live kite feed, and the paper broker's
+    # bounded order_events drain inline — no venue order adapter is ever built.
+    from alpha_core.adapters.paper import PaperBroker
+    from alpha_core.data.feed import TeeFeed
+    from worker.loop import build_worker
+
+    sentinel_feed = object()
+    monkeypatch.setattr("worker.loop.build_kite_ticker_feed", lambda vc, env: sentinel_feed)
+    env = EnvConfig.model_validate(
+        {
+            "env": "kite-paper",
+            "mode": "paper",
+            "allow_live": False,
+            "worker_id": "w",
+            "venue": "kite-nse",
+            "strategy": "idle",
+            "symbols": ["NSE:RELIANCE"],
+            "bar_interval_seconds": 60,
+            "state_db": "sqlite:///:memory:",
+            "heartbeat_path": f"{tmp_path}/hb",
+            "command_poll_seconds": 1.0,
+            "reconcile_interval_seconds": 30,
+            "execution": "paper",
+            "paper_starting_cash": "500000",
+        }
+    )
+    worker = build_worker(env)
+    assert isinstance(worker._adapter, PaperBroker)
+    assert worker._adapter.cash == Decimal("500000")
+    assert isinstance(worker._feed, TeeFeed)
+    assert worker._feed._inner is sentinel_feed
+    assert worker._drain_inline is True  # PaperBroker's bounded events drain per bar
+    assert worker._funding_cfg is None  # equity venue: no perp funding accrual

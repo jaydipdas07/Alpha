@@ -38,9 +38,9 @@ dev = [
     "pytz>=2025.1",  # duckdb needs it for TIMESTAMPTZ ops (the store's tz-aware `start`)
     "vectorbt>=1.0.0",
     # The Kite Connect SDK for the Indian 1-minute historical ingest (scripts/ingest_kite.py):
-    # the daily-2FA auth flow + historical_data fetch. A research/ingest-plane dep like the cold
-    # store above — NEVER alpha-core (no broker SDK in the kernel) and NEVER the lean worker prod
-    # (its live executor is ccxt); only CI/research/dev pull it via --all-groups.
+    # the daily-2FA auth flow + historical_data fetch. NEVER alpha-core (no broker SDK in the
+    # kernel; the kernel's KiteTickerFeed speaks a protocol). Since M4.5 the WORKER also declares
+    # it (worker/pyproject.toml) for the live-feed paper DATA leg — market data only, no orders.
     "kiteconnect>=5.0.1",
 ]
 
@@ -89,6 +89,12 @@ follow_imports = "skip"
 module = ["vectorbt.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
+
+# kiteconnect (the worker's Indian market-data SDK) ships no py.typed marker;
+# the kernel only speaks to it through the KiteTickerLike protocol.
+[[tool.mypy.overrides]]
+module = ["kiteconnect.*"]
+ignore_missing_imports = true
 
 # ccxt (the worker's crypto venue SDK) ships partial/untyped APIs; treat it as
 # untyped so --strict doesn't flag every call. The adapter's own boundary types

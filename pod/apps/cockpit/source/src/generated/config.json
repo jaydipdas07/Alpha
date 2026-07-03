@@ -429,6 +429,15 @@
           "streaming": false,
           "key_env": "DELTA_TESTNET",
           "testnet_url": "https://cdn-ind.testnet.deltaex.org"
+        },
+        "kite-nse": {
+          "adapter": "kite",
+          "exchange": "kite",
+          "venue": "NSE",
+          "market_type": "equity",
+          "testnet": false,
+          "streaming": true,
+          "key_env": "KITE"
         }
       }
     },

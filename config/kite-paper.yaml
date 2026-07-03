@@ -1,0 +1,35 @@
+# Kite live-feed paper (M4.5, R9): LIVE NSE quotes drive the strategy; fills are
+# SIMULATED by the PaperBroker through the cost model — no order ever leaves the
+# process (a real Kite order adapter is a later, separately-gated build). Needs the
+# daily 2FA token staged by scripts/ingest_kite.py (KITE_API_KEY/KITE_ACCESS_TOKEN).
+
+env: kite-paper
+mode: paper
+allow_live: false           # the live gate stays shut; kite is data-only regardless
+execution: paper            # live feed -> PaperBroker (the M4.5 assembly)
+
+worker_id: alpha-kite-paper-1
+venue: kite-nse
+strategy: idle              # no-trade soak by default; swap per deployment (e.g. ma_crossover)
+symbols:
+  - NSE:RELIANCE
+  - NSE:HDFCBANK
+  - NSE:INFY
+bar_interval_seconds: 60    # 1-minute bars — the Indian-leg research cadence
+state_db: sqlite:///var/kite-paper-worker.db
+heartbeat_path: var/run/kite-paper-worker.heartbeat
+command_poll_seconds: 5.0
+reconcile_interval_seconds: 30
+paper_starting_cash: "1000000"   # INR, string -> Decimal (B5)
+kite_instruments_cache: var/kite_instruments.json  # auto-refreshed when absent
+
+# Pod telemetry (heartbeat + commands + trade tables). Trade sync needs a
+# deployments row: create it pod-side, then set deployment_id (fresh state_db!).
+pod_sync:
+  enabled: true
+  pod_id: "019ef606-7b77-76f1-853a-978ddf819415"  # Vault
+  base_url: https://api.lemma.work
+  heartbeat_seconds: 15
+  token_refresh_seconds: 60
+  # deployment_id: "<pod deployments.id>"
+  pnl_snapshot_seconds: 300
