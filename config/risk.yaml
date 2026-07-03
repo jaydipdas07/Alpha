@@ -43,8 +43,14 @@ margin:
   enabled: true
   leverage:
     equity: 5          # intraday MIS ~5x
-    index_option: 8    # approximate (real SPAN+exposure differs)
+    index_option: 8    # approximate (real SPAN+exposure differs); registry-known option
+                       # symbols use the options model below INSTEAD of this leverage
     crypto: 3
+  # SHORT-option margin (ADR 0017): premium + this fraction of STRIKE notional per unit
+  # — a conservative ATM-equivalent SPAN+exposure stand-in needing no live underlying
+  # feed (over-charges OTM shorts, under-charges deep-ITM ones; refined to real SPAN
+  # live). Long options charge the full premium.
+  options_short_pct: "0.15"
 
 # Portfolio-risk overlay (P3) — caps on the allocator's TARGET WEIGHTS, applied
 # every rebalance before orders (non-bypassable, scaling design D9). Independent

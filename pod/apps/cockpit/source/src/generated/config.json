@@ -35,7 +35,8 @@
           "equity": 5,
           "index_option": 8,
           "crypto": 3
-        }
+        },
+        "options_short_pct": "0.15"
       },
       "portfolio": {
         "max_gross_weight": "1.0",

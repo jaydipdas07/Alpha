@@ -114,6 +114,16 @@ class OptionGreeks(_Frozen):
     iv: Greek | None = None  # implied volatility solved from the mid premium
 
 
+class BookGreeks(_Frozen):
+    """The BOOK's aggregate sensitivities (ADR 0017) — what the risk gate caps.
+    Computed by the options loop as a pure fold over positions x per-contract
+    ``OptionGreeks`` x signed quantity x multiplier; required (never None) fields —
+    an aggregate you present to the gate must have been actually computed."""
+
+    net_delta: Greek  # sum(signed qty x delta x multiplier) — underlying-units
+    net_vega: Greek  # sum(signed qty x vega x multiplier) — per 1.00 vol
+
+
 class Bar(_Frozen):
     """OHLCV bar covering ``[start, start + interval)`` (immutable)."""
 

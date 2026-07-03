@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
 import pytest
 
-from alpha_core.core.enums import AssetClass, OrderState, OrderType, Side, Venue
-from alpha_core.core.models import Order, Position
+from alpha_core.core.enums import AssetClass, OptionRight, OrderState, OrderType, Side, Venue
+from alpha_core.core.models import BookGreeks, OptionContract, Order, Position
+from alpha_core.execution.instruments import InstrumentRegistry, InstrumentSpec
 from alpha_core.risk.limits import RiskConfig, load_risk_config
 from alpha_core.risk.manager import KillTrigger, RiskManager, WorkingExposure
 
@@ -361,3 +362,172 @@ def test_reducing_order_ignores_working_reservation() -> None:
         working=working,
     )
     assert d.approved is True
+
+
+# --- options margin + Greeks caps (ADR 0017, item-7 core) -------------------------
+
+
+def _opt_registry() -> InstrumentRegistry:
+    spec = InstrumentSpec(
+        symbol="NFO:NIFTY26JUL24000CE",
+        asset_class=AssetClass.INDEX_OPTION,
+        lot_size=Decimal("75"),
+        tick_size=Decimal("0.05"),
+        option=OptionContract(
+            underlying="NIFTY",
+            right=OptionRight.CALL,
+            strike=Decimal("24000"),
+            expiry=date(2026, 7, 30),
+            lot_size=75,
+        ),
+    )
+    return InstrumentRegistry({spec.symbol: spec})
+
+
+def _opt_order(side: Side = Side.SELL, qty: str = "75") -> Order:
+    return Order(
+        client_order_id="alpha-opt-1",
+        symbol="NFO:NIFTY26JUL24000CE",
+        venue=Venue.NSE,
+        asset_class=AssetClass.INDEX_OPTION,
+        side=side,
+        order_type=OrderType.MARKET,
+        quantity=Decimal(qty),
+        state=OrderState.NEW,
+        strategy_id="s1",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+
+def test_short_option_margin_charges_premium_plus_strike_notional() -> None:
+    # SELL 75 units @ premium 100: margin = 75*100 + 0.15*24000*75 = 277,500 —
+    # far beyond the 100k base capital -> reject; a LONG pays premium only -> pass.
+    # (Fat-finger/per-instrument caps are relaxed: this test isolates step 9.)
+    relaxed = _cfg(max_order_value="1.0", max_position_per_instrument="1.0")
+    mgr = RiskManager(relaxed, instruments=_opt_registry())
+    short = mgr.check_order(
+        _opt_order(Side.SELL), reference_price=Decimal("100"), positions=[], now=NOW
+    )
+    assert not short.approved and short.reason == "insufficient margin"
+    long = mgr.check_order(
+        _opt_order(Side.BUY), reference_price=Decimal("100"), positions=[], now=NOW
+    )
+    assert long.approved  # 7,500 premium against 100k capital
+
+
+def test_option_margin_ignores_leverage_table() -> None:
+    # The same SHORT under a huge index_option leverage would pass on the OLD
+    # notional/leverage model — the options model must be the one that binds.
+    cfg = _cfg(max_order_value="1.0", max_position_per_instrument="1.0")
+    cfg.margin.leverage["index_option"] = Decimal("1000")
+    mgr = RiskManager(cfg, instruments=_opt_registry())
+    d = mgr.check_order(
+        _opt_order(Side.SELL), reference_price=Decimal("100"), positions=[], now=NOW
+    )
+    assert not d.approved and d.reason == "insufficient margin"
+
+
+def _caps_cfg() -> RiskConfig:
+    base = _cfg(max_order_value="1.0", max_position_per_instrument="1.0").model_dump()
+    base["base_capital"] = "10000000"  # margin never binds in these tests
+    base["portfolio"] = {
+        "max_gross_weight": "1.0",
+        "max_weight_per_name": "0.5",
+        "max_weight_per_sector": "1.0",
+        "max_net_delta": "75",
+        "max_net_vega": "5000",
+    }
+    return RiskConfig.model_validate(base)
+
+
+def test_greeks_caps_fail_closed_without_book_context() -> None:
+    mgr = RiskManager(_caps_cfg(), instruments=_opt_registry())
+    blind = mgr.check_order(
+        _opt_order(Side.BUY), reference_price=Decimal("100"), positions=[], now=NOW
+    )
+    assert not blind.approved and "fail closed" in (blind.reason or "")
+    within = mgr.check_order(
+        _opt_order(Side.BUY),
+        reference_price=Decimal("100"),
+        positions=[],
+        now=NOW,
+        book_greeks_after=BookGreeks(net_delta=Decimal("40"), net_vega=Decimal("1000")),
+    )
+    assert within.approved
+    over_delta = mgr.check_order(
+        _opt_order(Side.BUY),
+        reference_price=Decimal("100"),
+        positions=[],
+        now=NOW,
+        book_greeks_after=BookGreeks(net_delta=Decimal("-76"), net_vega=Decimal("0")),
+    )
+    assert not over_delta.approved and over_delta.reason == "max_net_delta exceeded"
+    over_vega = mgr.check_order(
+        _opt_order(Side.BUY),
+        reference_price=Decimal("100"),
+        positions=[],
+        now=NOW,
+        book_greeks_after=BookGreeks(net_delta=Decimal("0"), net_vega=Decimal("5001")),
+    )
+    assert not over_vega.approved and over_vega.reason == "max_net_vega exceeded"
+
+
+def test_greeks_caps_do_not_touch_non_option_orders() -> None:
+    mgr = RiskManager(_caps_cfg(), instruments=_opt_registry())
+    d = mgr.check_order(_order(), reference_price=Decimal("100"), positions=[], now=NOW)
+    assert d.approved  # an equity order sails past caps it can't bind to
+
+
+def test_greeks_caps_skipped_for_reducing_option_orders() -> None:
+    # Closing risk must never be blocked by a Greeks cap (same carve-out as the
+    # exposure steps): a SELL that reduces an existing long book passes with no
+    # context even though caps are configured.
+    mgr = RiskManager(_caps_cfg(), instruments=_opt_registry())
+    held = _pos("NFO:NIFTY26JUL24000CE", "75", price="100", ac=AssetClass.INDEX_OPTION)
+    d = mgr.check_order(
+        _opt_order(Side.SELL), reference_price=Decimal("100"), positions=[held], now=NOW
+    )
+    assert d.approved
+
+
+def test_without_registry_option_symbols_fall_back_to_leverage_margin() -> None:
+    # No instrument master wired (crypto/equity deployments): the old model holds.
+    mgr = RiskManager(_cfg(max_order_value="1.0", max_position_per_instrument="1.0"))
+    d = mgr.check_order(
+        _opt_order(Side.SELL), reference_price=Decimal("100"), positions=[], now=NOW
+    )
+    assert d.approved  # 7,500 notional / 8x leverage — the pre-ADR-0017 estimate
+
+
+def test_flip_through_zero_is_not_a_reduction() -> None:
+    # Review #161 BLOCKER: SELL 149 against +75 nets to -74 (smaller in absolute
+    # terms) but is an ENTRY in disguise — the sign flip must run the full gate,
+    # where the naked-short margin model rejects it.
+    relaxed = _cfg(max_order_value="1.0", max_position_per_instrument="1.0")
+    mgr = RiskManager(relaxed, instruments=_opt_registry())
+    held = _pos("NFO:NIFTY26JUL24000CE", "75", price="100", ac=AssetClass.INDEX_OPTION)
+    d = mgr.check_order(
+        _opt_order(Side.SELL, qty="149"), reference_price=Decimal("100"), positions=[held], now=NOW
+    )
+    assert not d.approved and d.reason == "insufficient margin"
+    # A true same-side reduction (SELL 75 -> flat) keeps the carve-out.
+    flat = mgr.check_order(
+        _opt_order(Side.SELL, qty="75"), reference_price=Decimal("100"), positions=[held], now=NOW
+    )
+    assert flat.approved
+
+
+def test_greeks_caps_fail_closed_even_without_a_registry() -> None:
+    # Review #161 S1: caps configured + an INDEX_OPTION order the gate cannot
+    # resolve (no instrument master wired) must reject, never silently pass.
+    mgr = RiskManager(_caps_cfg())  # note: NO instruments registry
+    d = mgr.check_order(_opt_order(Side.BUY), reference_price=Decimal("100"), positions=[], now=NOW)
+    assert not d.approved and "fail closed" in (d.reason or "")
+
+
+def test_book_greeks_rejects_floats() -> None:
+    from alpha_core.core.models import BookGreeks
+
+    with pytest.raises(ValueError):
+        BookGreeks(net_delta=0.5, net_vega=Decimal("1"))  # type: ignore[arg-type]
