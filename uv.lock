@@ -3055,6 +3055,7 @@ source = { editable = "worker" }
 dependencies = [
     { name = "alpha-core" },
     { name = "ccxt" },
+    { name = "kiteconnect" },
     { name = "lemma-sdk" },
 ]
 
@@ -3062,6 +3063,7 @@ dependencies = [
 requires-dist = [
     { name = "alpha-core", editable = "alpha-core" },
     { name = "ccxt", specifier = ">=4.5.0" },
+    { name = "kiteconnect", specifier = ">=5.0.1" },
     { name = "lemma-sdk", specifier = ">=0.5.3" },
 ]
 

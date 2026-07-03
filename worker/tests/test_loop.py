@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
+from datetime import time as dt_time
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -30,7 +31,8 @@ from alpha_core.execution.reconcile import Reconciler
 from alpha_core.execution.state import StateStore
 from alpha_core.risk.limits import RiskConfig
 from alpha_core.risk.manager import KillTrigger, RiskManager
-from alpha_core.scheduler.clock import FakeClock
+from alpha_core.scheduler.calendar import TradingCalendar
+from alpha_core.scheduler.clock import FakeClock, MarketSchedule
 from alpha_core.strategy.engine import StrategyEngine
 from worker.config import EnvConfig
 from worker.loop import Worker
@@ -982,3 +984,76 @@ async def test_build_worker_paper_execution_assembles_the_m45_stack(tmp_path, mo
     assert worker._feed._inner is sentinel_feed
     assert worker._drain_inline is True  # PaperBroker's bounded events drain per bar
     assert worker._funding_cfg is None  # equity venue: no perp funding accrual
+
+
+def _nse_schedule(*, holidays: set[object] | None = None) -> MarketSchedule:
+    return MarketSchedule(
+        tz="Asia/Kolkata",
+        open_time=dt_time(9, 15),
+        close_time=dt_time(15, 30),
+        no_new_entry=dt_time(15, 10),
+        square_off=dt_time(15, 15),
+        calendar=TradingCalendar(holidays=holidays or set()),  # type: ignore[arg-type]
+    )
+
+
+async def test_session_gate_blocks_entries_outside_and_after_cutoff(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # SCHED-1: pre-open snapshot ticks and post-cutoff bars must not trade; a
+    # mid-session bar must. 2026-06-15 is a Monday; IST = UTC+5:30.
+    worker, _venue, _oms, _hb = _worker(
+        tmp_path, _ticks(["100", "100"]), strategy=_AlwaysBuy("0.01")
+    )
+    worker._schedule = _nse_schedule()
+    mid = datetime(2026, 6, 15, 5, 0, tzinfo=UTC)  # 10:30 IST — open
+    pre = datetime(2026, 6, 15, 3, 30, tzinfo=UTC)  # 09:00 IST — pre-open
+    late = datetime(2026, 6, 15, 9, 42, tzinfo=UTC)  # 15:12 IST — past no_new_entry
+    assert worker._session_blocks_entry(pre) is True
+    assert worker._session_blocks_entry(mid) is False
+    assert worker._session_blocks_entry(late) is True
+    await worker._adapter.aclose()
+
+
+async def test_session_gate_no_op_for_crypto(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    worker, _venue, _oms, _hb = _worker(tmp_path, _ticks(["100"]), strategy=_AlwaysBuy())
+    assert worker._schedule is None  # the fixture builds no schedule (24x7 path)
+    assert worker._session_blocks_entry(NOW) is False
+    await worker._adapter.aclose()
+
+
+async def test_intraday_square_off_flattens_once_per_day(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # Build a position mid-session, cross square_off_time: the book flattens ONCE
+    # (not per periodic tick), the risk gate stays ARMED, and a halt defers to
+    # handle_kill (no double-flattener).
+    worker, _venue, oms, _hb = _worker(
+        tmp_path, _ticks(["100", "100"]), strategy=_AlwaysBuy("0.02")
+    )
+    worker._schedule = _nse_schedule()
+    worker._env = worker._env.model_copy(update={"intraday_square_off": True})
+    await worker.start()
+    for tick in _ticks(["100", "100"]):
+        bar = worker._bars.add(tick)
+        if bar is not None:
+            for sig in worker._engine.process_bar(bar):
+                await oms.submit_signal(sig, reference_price=bar.close)
+            await oms.drain_events()
+    assert oms.positions[0].quantity == Decimal("0.02")
+
+    at_square_off = datetime(2026, 6, 15, 9, 46, tzinfo=UTC)  # 15:16 IST
+    await worker._maybe_square_off(at_square_off)
+    await oms.drain_events()
+    assert all(p.quantity == 0 for p in oms.positions)  # flattened
+    assert not worker._risk.is_halted  # NOT a kill — trading resumes next session
+    fills_after_first = len(oms.all_fills())
+    await worker._maybe_square_off(at_square_off + timedelta(seconds=60))
+    assert len(oms.all_fills()) == fills_after_first  # once per day: no second pass
+    await worker._adapter.aclose()
+
+
+async def test_square_off_defers_to_a_latched_halt(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    worker, _venue, _oms, _hb = _worker(tmp_path, _ticks(["100"]), strategy=_AlwaysBuy())
+    worker._schedule = _nse_schedule()
+    worker._env = worker._env.model_copy(update={"intraday_square_off": True})
+    worker._risk.trip(KillTrigger.MANUAL)
+    await worker._maybe_square_off(datetime(2026, 6, 15, 9, 46, tzinfo=UTC))
+    assert worker._squared_off_on is None  # handle_kill owns a halted book
+    await worker._adapter.aclose()
