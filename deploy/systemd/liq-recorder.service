@@ -1,0 +1,22 @@
+# F4 liquidation recorder (staged, NOT enabled by default — [You] enables at a deploy):
+#   sudo systemctl enable --now liq-recorder.service
+# Public um forceOrder stream -> daily JSONL under ~/alpha/data_liq_live (a few MB/day).
+# Research-plane: no keys read, no orders; hard memory cap so it can never crowd the worker.
+[Unit]
+Description=Alpha F4 liquidation recorder (Binance um forceOrder -> JSONL)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/alpha
+Environment=ALPHA_LIQ_LIVE_ROOT=/home/ubuntu/alpha/data_liq_live
+ExecStart=/home/ubuntu/.local/bin/uv run --no-sync python scripts/record_liquidations.py
+Restart=always
+RestartSec=10
+MemoryMax=128M
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
