@@ -101,7 +101,7 @@ def _sweep_one(
     for proposal, a in assessments:
         print(
             f"  {dict(proposal.params)}: {a.verdict.name} "
-            f"(DSR={a.dsr:.3f}, OOS sharpe={a.oos_sharpe:+.4f})"
+            f"(DSR={a.deflated_sharpe:.3f}, OOS sharpe={a.oos_sharpe:+.4f})"
         )
     survivors = [(p, a) for p, a in assessments if a.verdict is Verdict.PROMOTE]
     print(
