@@ -25,7 +25,7 @@ discovery loop is synchronous). Money is ``Decimal`` on the equity curve; the re
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from decimal import Decimal
 from typing import cast
@@ -36,7 +36,7 @@ from alpha_core.core.interfaces import Strategy
 from alpha_core.core.models import Bar
 from alpha_core.execution.costs import InstrumentMeta
 from alpha_core.helpers.config import load_rigor_config
-from alpha_core.research.strategist import TEMPLATES, StrategyProposal
+from alpha_core.research.strategist import TEMPLATES, StrategyProposal, StrategyTemplate
 from alpha_core.risk.limits import RiskConfig
 
 # Source the cell's in-sample bars for ``(market, window)``. CONTRACT: must return in-sample-only
@@ -73,6 +73,7 @@ class EngineBacktester:
         venue: Venue = Venue.NSE,
         starting_cash: Decimal = Decimal("1000000"),
         stress: bool = False,
+        templates: Mapping[str, StrategyTemplate] | None = None,
     ) -> None:
         self._bars_for = bars_for
         self._instruments = instruments
@@ -81,6 +82,12 @@ class EngineBacktester:
         self._venue = venue
         self._starting_cash = starting_cash
         self._stress = stress
+        # default = the nightly's single-instrument registry; a family with its own registry
+        # (SEASONAL_TEMPLATES — the PANEL_TEMPLATES precedent) injects it here, exactly as it
+        # injects the same registry into its Strategist (the two must resolve identically).
+        self._templates: Mapping[str, StrategyTemplate] = (
+            templates if templates is not None else TEMPLATES
+        )
         # the rigor gate needs >= 2*n_groups observations; one fewer return than bars, so require
         # that many bars and fail fast on a thin cell (rather than crash later in `assess`).
         self._min_bars = 2 * load_rigor_config().cpcv.n_groups
@@ -89,9 +96,11 @@ class EngineBacktester:
         """Build the proposal's strategy, run it through the engine on the cell's in-sample bars,
         and return the per-bar return series. Raises ``ValueError`` for an unknown template or a
         window with too few bars for the rigor gate."""
-        template = TEMPLATES.get(proposal.template)
+        template = self._templates.get(proposal.template)
         if template is None:
-            raise ValueError(f"unknown template {proposal.template!r}; known: {sorted(TEMPLATES)}")
+            raise ValueError(
+                f"unknown template {proposal.template!r}; known: {sorted(self._templates)}"
+            )
         bars = self._bars_for(proposal.market, proposal.window)
         if len(bars) < self._min_bars:
             raise ValueError(

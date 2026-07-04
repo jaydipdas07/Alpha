@@ -24,7 +24,7 @@ Research-plane only (imports the cold store / engine); the lean live worker neve
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -43,7 +43,13 @@ from alpha_core.research.discovery import Backtester, DiscoveryReport, run_disco
 from alpha_core.research.engine_backtester import EngineBacktester
 from alpha_core.research.proposal_ledger import ProposalLedger
 from alpha_core.research.quant_analyst import QuantAnalyst
-from alpha_core.research.strategist import TEMPLATES, Proposer, Strategist, StrategyProposal
+from alpha_core.research.strategist import (
+    TEMPLATES,
+    Proposer,
+    Strategist,
+    StrategyProposal,
+    StrategyTemplate,
+)
 from alpha_core.risk.limits import RiskConfig, load_risk_config
 
 # Every registered strategy family, sorted for a deterministic run order. A cell with no explicit
@@ -199,6 +205,7 @@ def engine_backtester_for(
     risk_config: RiskConfig,
     cost_config: dict[str, object],
     stress: bool = False,
+    templates: Mapping[str, StrategyTemplate] | None = None,
 ) -> BacktesterFor:
     """Build a per-cell :class:`EngineBacktester` factory over ``bars_for``. Each cell's backtester
     gets instruments from the market (``asset_class`` only — equity/crypto slippage is bps,
@@ -215,6 +222,7 @@ def engine_backtester_for(
             venue=cell.venue,
             starting_cash=cell.starting_cash,
             stress=stress,
+            templates=templates,
         )
 
     return _make

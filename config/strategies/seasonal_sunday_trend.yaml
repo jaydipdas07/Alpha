@@ -1,0 +1,7 @@
+# config/strategies/seasonal_sunday_trend.yaml — Sunday-entry weekly trend window (F2, ADR 0011).
+# The "Monday Asia open" effect (Concretum 2018–2025): from late Sunday UTC, trend persists ~24h.
+strategy_id: seasonal_sunday_trend
+entry_hour: 22          # UTC hour on SUNDAY the window opens
+hold_hours: 24          # holding horizon (family-fixed; not a searched knob)
+trend_lookback_days: 1  # direction = sign of the trailing N-day return at entry
+quantity: "1"
