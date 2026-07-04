@@ -38,7 +38,7 @@ from pathlib import Path
 from alpha_core.core.enums import Venue
 from alpha_core.core.models import Bar
 from alpha_core.data.ingest.binance import aggtrades_to_bars
-from alpha_core.data.tick_store import TickStore
+from alpha_core.data.tick_store import TickStore, month_of
 
 _BASE = "https://data.binance.vision/data/futures/um/daily/aggTrades"
 _INTERVAL_SECONDS = 1
@@ -52,7 +52,9 @@ def _daily_dates(start: date, end: date) -> list[date]:
     return [start + timedelta(days=i) for i in range((end - start).days + 1)]
 
 
-def _download_rows(symbol: str, day: date) -> list[list[str]] | None:
+def _download_bars(symbol: str, day: date) -> list[Bar] | None:
+    """Daily aggTrades ZIP -> 1s bars, streaming the CSV through the fold (a busy BTC day is
+    10-20M rows — only the zip blob and the day's ~86k bars are ever materialized)."""
     url = f"{_BASE}/{symbol}/{symbol}-aggTrades-{day.isoformat()}.zip"
     try:
         with urllib.request.urlopen(url, timeout=300) as resp:
@@ -62,19 +64,26 @@ def _download_rows(symbol: str, day: date) -> list[list[str]] | None:
             return None  # not published (future date / archive gap)
         raise
     with zipfile.ZipFile(io.BytesIO(blob)) as zf, zf.open(zf.namelist()[0]) as f:
-        return list(csv.reader(io.TextIOWrapper(f, encoding="utf-8")))
+        reader = csv.reader(io.TextIOWrapper(f, encoding="utf-8"))
+        return aggtrades_to_bars(reader, symbol=symbol, interval_seconds=_INTERVAL_SECONDS)
 
 
-def _flush(store: TickStore, month: str, buffer: list[Bar], symbol: str) -> None:
+def _flush(store: TickStore, buffer: list[Bar], symbol: str) -> None:
+    """Write the buffer grouped by each bar's OWN month (a rare boundary-spilling row lands
+    in its true partition and merges idempotently, instead of wedging the run)."""
     if not buffer:
         return
-    t0 = time.time()
-    on_disk = store.write_bars(buffer, month=month)
-    print(
-        f"[{symbol}] month {month}: wrote {len(buffer)} bars -> {on_disk} on disk "
-        f"({time.time() - t0:.0f}s)",
-        flush=True,
-    )
+    by_month: dict[str, list[Bar]] = {}
+    for b in buffer:
+        by_month.setdefault(month_of(b.start), []).append(b)
+    for month, chunk in sorted(by_month.items()):
+        t0 = time.time()
+        on_disk = store.write_bars(chunk, month=month)
+        print(
+            f"[{symbol}] month {month}: wrote {len(chunk)} bars -> {on_disk} on disk "
+            f"({time.time() - t0:.0f}s)",
+            flush=True,
+        )
 
 
 def ingest_symbol(store: TickStore, symbol: str, start: date, end: date) -> int:
@@ -96,20 +105,56 @@ def ingest_symbol(store: TickStore, symbol: str, start: date, end: date) -> int:
         if covered is not None and covered[0] <= day <= covered[1]:
             continue
         if buffer_month is not None and month != buffer_month:
-            _flush(store, buffer_month, buffer, symbol)
+            _flush(store, buffer, symbol)
             buffer, buffer_month = [], None
-        rows = _download_rows(symbol, day)
-        if rows is None:
+        bars = _download_bars(symbol, day)
+        if bars is None:
             print(f"[{symbol}] {day}: not published, skipped", flush=True)
             continue
-        bars = aggtrades_to_bars(rows, symbol=symbol, interval_seconds=_INTERVAL_SECONDS)
         buffer.extend(bars)
         buffer_month = month
         total += len(bars)
         time.sleep(0.1)  # polite pacing on the public CDN
     if buffer_month is not None:
-        _flush(store, buffer_month, buffer, symbol)
+        _flush(store, buffer, symbol)
     return total
+
+
+def _coverage_report(store: TickStore, symbol: str, start: date, end: date) -> None:
+    """Per-month distinct-day counts vs the requested calendar — an interior 404 hole is
+    loud here, never silent (min/max month spans cannot see holes between them)."""
+    import duckdb
+
+    d = store.series_dir(Venue.BINANCE, symbol, _INTERVAL_SECONDS)
+    if not d.is_dir() or not any(d.glob("*.parquet")):
+        print(f"[{symbol}] coverage: NO DATA", flush=True)
+        return
+    con = duckdb.connect()
+    con.execute("SET TimeZone='UTC'")
+    glob_sql = str(d / "*.parquet").replace("'", "''")
+    rows = con.execute(
+        f"SELECT strftime(start, '%Y-%m'), count(DISTINCT date_trunc('day', start)) "
+        f"FROM read_parquet('{glob_sql}') WHERE start >= ? AND start < ? GROUP BY 1 ORDER BY 1",
+        [
+            datetime.combine(start, datetime.min.time(), tzinfo=UTC),
+            datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=UTC),
+        ],
+    ).fetchall()
+    con.close()
+    holes = []
+    for month, days in rows:
+        y, m = (int(x) for x in month.split("-"))
+        from calendar import monthrange
+
+        lo = max(start, date(y, m, 1))
+        hi = min(end, date(y, m, monthrange(y, m)[1]))
+        expected = (hi - lo).days + 1
+        if days < expected:
+            holes.append(f"{month}: {days}/{expected} days")
+    if holes:
+        print(f"[{symbol}] coverage HOLES (archive 404s or gaps): {', '.join(holes)}", flush=True)
+    else:
+        print(f"[{symbol}] coverage: complete over the requested range", flush=True)
 
 
 def main() -> int:
@@ -128,8 +173,12 @@ def main() -> int:
         n = ingest_symbol(store, symbol, start, end)
         grand += n
         print(f"=== {symbol}: {n} bars in {(time.time() - t0) / 60:.0f} min ===", flush=True)
-    print(f"=== done: {grand} bars total ===", flush=True)
-    return 0 if grand else 1
+        _coverage_report(store, symbol, start, end)
+    print(
+        f"=== done: {grand} bars total (0 = nothing new; healthy on a complete re-run) ===",
+        flush=True,
+    )
+    return 0
 
 
 if __name__ == "__main__":

@@ -6,10 +6,10 @@ pydantic ``Bar`` models in a Python dict** — perfect at daily/hourly scale, ca
 1-second scale (a 60M-row series would materialize tens of GB of model objects per write; this
 is exactly how the t4g.small research attempt died). ``TickStore`` therefore:
 
-- partitions each series into **one Parquet per month** (`{VENUE}__{SYMBOL}__{interval}s/
+- partitions each series into **one Parquet per month** (`{VENUE}__{SYMBOL}__{interval}/
   {YYYY-MM}.parquet`, ~2.7M rows for 1s) — writes touch one month, never the series;
-- moves data **columnar-in, columnar-out** (pyarrow tables / DuckDB reads) — no per-row model
-  round-trip; the vectorized research folds want arrays anyway;
+- moves data **columnar-in, columnar-out** on the READ path (DuckDB, UTC-pinned) — the
+  vectorized folds want arrays; the write-merge round-trips at most ONE month through models;
 - keeps the ``BarStore`` schema (same columns, Decimal money per B5) so the two stores stay
   mutually legible, and dedups **within a month by ``start``** (newest wins, idempotent).
 
@@ -19,6 +19,7 @@ over month files — cheap file moves plus one row-split of the boundary month.
 
 from __future__ import annotations
 
+import os
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -98,6 +99,7 @@ class TickStore:
             merged[b.start] = b
         ordered = sorted(merged.values(), key=lambda b: b.start)
         path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
         table = pa.Table.from_pylist(
             [
                 {
@@ -116,7 +118,8 @@ class TickStore:
             ],
             schema=_SCHEMA,
         )
-        pq.write_table(table, path)
+        pq.write_table(table, tmp)
+        os.replace(tmp, path)  # atomic: a kill mid-write can never leave a torn partition
         return len(ordered)
 
     def _read_month(self, path: Path) -> list[Bar]:
@@ -157,10 +160,14 @@ class TickStore:
     ) -> pa.Table:
         """Columnar read of one series over ``[start, end)``, ordered by ``start`` — the
         vectorized research folds' input (no per-row models)."""
+        for bound in (start, end):
+            if bound is not None and bound.tzinfo is None:
+                raise ValueError("start/end must be tz-aware (naive would be read as host-local)")
         d = self.series_dir(venue, symbol, interval_seconds)
         if not d.is_dir() or not any(d.glob("*.parquet")):
             return _SCHEMA.empty_table().select(list(columns))
         con = duckdb.connect()
+        con.execute("SET TimeZone='UTC'")  # host-tz sessions would re-render every timestamp
         cols = ", ".join(f'"{c}"' for c in columns)
         clauses = []
         params: list[object] = []
@@ -174,7 +181,7 @@ class TickStore:
         glob_sql = str(d / "*.parquet").replace("'", "''")
         result = con.execute(
             f"SELECT {cols} FROM read_parquet('{glob_sql}') {where} ORDER BY start", params
-        ).fetch_arrow_table()
+        ).to_arrow_table()
         con.close()
         return result
 
