@@ -45,15 +45,23 @@ async def record(symbols: list[str]) -> None:
             try:
                 liquidations = await exchange.watch_liquidations_for_symbols(symbols)
                 for liq in liquidations:
+                    side = liq.get("side")
                     _append(
                         OUT_ROOT,
                         {
                             "recorded_at": datetime.now(UTC).isoformat(),
                             "symbol": liq.get("symbol"),
-                            "side": liq.get("side"),
+                            # UPPERCASE to match the archive/loader convention ('BUY'/'SELL')
+                            # — a lowercase 'buy' would sign every event -1 in a reused loader.
+                            "side": side.upper() if isinstance(side, str) else side,
                             "price": liq.get("price"),
-                            "amount": liq.get("amount"),
+                            # ccxt's liquidation structure has NO 'amount' key — the size is
+                            # 'contracts' (review #171 HIGH: months of size-less events would
+                            # cripple the size-weighted recorder-era family).
+                            "contracts": liq.get("contracts"),
+                            "contract_size": liq.get("contractSize"),
                             "timestamp": liq.get("timestamp"),
+                            "info": liq.get("info"),  # raw venue payload for fidelity
                         },
                     )
             except Exception as exc:  # reconnect-with-backoff: the recorder must outlive blips

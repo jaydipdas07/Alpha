@@ -2,6 +2,12 @@
 
 *** NO GATE, NO HOLDOUT READ, NO DEPLOYMENT CLAIM CAN COME FROM THIS SCRIPT. ***
 
+Recorder-era pre-registration notes (carry forward): the z is mean-free (``f/sigma``) — under
+persistently one-sided flow it reads level, not surprise; and after a fully-quiet trailing
+day the FIRST event of any size saturates ``|z| ~ sqrt(n_valid)`` — on the quieter,
+downsampled um stream the {4,8} z grid partially collapses after quiet stretches. Both must
+be addressed (or explicitly accepted) in the recorder-era family definition.
+
 The archived liquidation series ends 2024-10-14 (before any holdout window) and the
 deployable live signal (um forceOrder) is a different, downsampled source — so this run is a
 PRIOR CHECK only: does archive-era cascade reversion clear taker costs in-sample at all? The
@@ -20,6 +26,8 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+
+import numpy as np
 
 from alpha_core.core.enums import AssetClass
 from alpha_core.data.tick_store import TickStore
@@ -74,7 +82,9 @@ def main() -> None:
                     print(f"  [liq_cascade_revert] saturated after {len(proposals)} (exhaustive)")
                     break
                 returns.append(explorer.run(proposals[-1]))
-            n_trials = ledger.count(AssetClass.CRYPTO, "liq_cascade_revert", window)
+            n_trials = ledger.count(
+                AssetClass.CRYPTO, LIQ_TEMPLATES["liq_cascade_revert"].family, window
+            )
             _, variance = deflation_inputs(returns, oos_fraction=qa.oos_fraction)
             for p, series in zip(proposals, returns, strict=True):
                 a = qa.assess(
@@ -83,11 +93,9 @@ def main() -> None:
                     trial_sharpe_variance=variance,
                     oos_fraction=qa.oos_fraction,
                 )
-                import numpy as np
-
                 arr = np.asarray(series)
                 print(
-                    f"  {dict(p.params)}: {a.verdict.name} (DSR={a.deflated_sharpe:.3f}, "
+                    f"  {dict(p.params)}: prior:{a.verdict.name} (DSR={a.deflated_sharpe:.3f}, "
                     f"OOS sharpe={a.oos_sharpe:+.4f}, trades~{int(np.count_nonzero(arr))}, "
                     f"sum={arr.sum():+.4f})"
                 )

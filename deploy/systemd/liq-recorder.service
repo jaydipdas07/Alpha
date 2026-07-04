@@ -15,7 +15,8 @@ Environment=ALPHA_LIQ_LIVE_ROOT=/home/ubuntu/alpha/data_liq_live
 ExecStart=/home/ubuntu/.local/bin/uv run --no-sync python scripts/record_liquidations.py
 Restart=always
 RestartSec=10
-MemoryMax=128M
+# ccxt.pro peaks ~330MB after load_markets (measured); 128M would OOM-crash-loop at start.
+MemoryMax=512M
 Nice=10
 
 [Install]

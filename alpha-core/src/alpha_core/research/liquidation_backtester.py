@@ -85,8 +85,11 @@ LIQ_TEMPLATES: dict[str, StrategyTemplate] = {
 
 
 def load_liq_events(liq_root: Path, contract: str) -> tuple[np.ndarray, np.ndarray]:
-    """(epoch-seconds int64, signed notional float64) — BUY (shorts squeezed, upward push)
-    positive, SELL negative; time-ordered."""
+    """(epoch-seconds int64, signed contract-value flow float64) — BUY (shorts squeezed,
+    upward push) positive, SELL negative; time-ordered. NB ``qty*px`` on a cm INVERSE
+    contract is notional*px/multiplier, not USD notional — scale-free for the per-symbol
+    1-day z (measured immaterial: median |z-ratio| 1.000 vs true-notional weighting); a um
+    loader should use amount*price (quote notional) and re-verify."""
     table = pq.read_table(liq_root / f"{contract}.parquet")
     if table.num_rows == 0:
         raise ValueError(f"no liquidation events for {contract}")
