@@ -21,6 +21,7 @@ from alpha_core.strategy.examples.momentum_roc import MomentumRoc
 from alpha_core.strategy.examples.opening_range_breakout import OpeningRangeBreakout
 from alpha_core.strategy.examples.placeholder import PlaceholderStrategy
 from alpha_core.strategy.examples.rsi_bollinger import RsiBollinger
+from alpha_core.strategy.examples.seasonal_window import SeasonalHourLong, SeasonalSundayTrend
 from alpha_core.strategy.examples.trend_pullback import TrendPullback
 from alpha_core.strategy.examples.vwap_reversion import VwapReversion
 
@@ -39,6 +40,9 @@ _BUILDERS: dict[str, Callable[[], Strategy]] = {
     "donchian_atr": DonchianAtr.from_config,
     "bollinger_squeeze": BollingerSqueeze.from_config,
     "trend_pullback": TrendPullback.from_config,
+    # F2 seasonality (the intraday-mandate family) — config-driven deployment of a survivor.
+    "seasonal_hour_long": SeasonalHourLong.from_config,
+    "seasonal_sunday_trend": SeasonalSundayTrend.from_config,
     "placeholder": PlaceholderStrategy,
     "idle": IdleStrategy,  # no-trade: infra soak / live smoke check
 }

@@ -142,7 +142,11 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    templates = sorted(SEASONAL_TEMPLATES) if args.templates == "all" else args.templates.split(",")
+    templates = (
+        sorted(SEASONAL_TEMPLATES)
+        if args.templates == "all"
+        else [t.strip() for t in args.templates.split(",")]
+    )
     unknown = [t for t in templates if t not in SEASONAL_TEMPLATES]
     if unknown:
         raise SystemExit(f"unknown template(s) {unknown}; registered: {sorted(SEASONAL_TEMPLATES)}")
