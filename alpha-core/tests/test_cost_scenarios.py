@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import copy
 from decimal import Decimal
+from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 
 from alpha_core.core.enums import AssetClass, Side
 from alpha_core.execution.costs import CostModel, InstrumentMeta
@@ -16,7 +19,7 @@ from alpha_core.research.funding_window_backtester import taker_cost_per_side
 CRYPTO = InstrumentMeta(asset_class=AssetClass.CRYPTO)
 
 # A controlled config for exact-math assertions (mirrors costs.yaml shape).
-CONFIG: dict[str, object] = {
+CONFIG: dict[str, Any] = {
     "slippage": {
         "crypto_perp": {"type": "bps", "value": 3},
         "default_spread": {"crypto_perp": 0.0003},
@@ -40,10 +43,12 @@ def test_taker_matches_the_legacy_helper_exactly() -> None:
 
 
 def test_taker_is_fee_plus_slippage_from_real_config() -> None:
+    """The identical float expression the pre-scenario helper computed — exact equality, not
+    approx: this is the bit-fidelity pin that three families' folds are repriced by nothing."""
     cfg = load_yaml("costs.yaml")
     fee = float(cfg["segments"]["crypto_perp"]["trading_fee"]["pct"])
     slip = float(cfg["slippage"]["crypto_perp"]["value"]) / 10_000.0
-    assert cost_per_side("taker") == pytest.approx(fee + slip)
+    assert cost_per_side("taker") == fee + slip
 
 
 def test_maker_is_maker_fee_only_from_real_config() -> None:
@@ -57,6 +62,21 @@ def test_maker_is_maker_fee_only_from_real_config() -> None:
 def test_unknown_scenario_raises() -> None:
     with pytest.raises(ValueError, match="unknown cost scenario"):
         cost_per_side("stop_hunting")
+
+
+def test_tick_plane_maker_requires_maker_fee(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A costs.yaml without maker_fee must RAISE on the tick plane too — a maker-scenario
+    fold must never silently price as taker (load_yaml honors ALPHA_CONFIG_DIR per call)."""
+    stripped = copy.deepcopy(CONFIG)
+    del stripped["segments"]["crypto_perp"]["maker_fee"]
+    (tmp_path / "costs.yaml").write_text(yaml.safe_dump(stripped))
+    monkeypatch.setenv("ALPHA_CONFIG_DIR", str(tmp_path))
+    with pytest.raises(ValueError, match="maker_fee"):
+        cost_per_side("maker")
+    # the taker path still prices from the same stripped file (fee + slippage)
+    assert cost_per_side("taker") == 0.0005 + 3 / 10_000.0
 
 
 # --- scenario_cost_config (engine plane) --------------------------------------------
@@ -108,6 +128,11 @@ def test_cost_model_prices_a_maker_order_with_no_crossing_legs() -> None:
 
 def test_real_costs_yaml_transforms_cleanly() -> None:
     """Config-drift guard: the checked-in costs.yaml must always carry the maker_fee the
-    scenario needs (it also feeds basis_cost_fraction)."""
-    out = scenario_cost_config(load_yaml("costs.yaml"), "maker")
-    assert out["segments"]["crypto_perp"]["trading_fee"]["pct"] == 0.0002
+    scenario needs (it also feeds basis_cost_fraction). Asserted against the yaml itself —
+    never a literal — so a legitimate one-config-value retune doesn't break the suite."""
+    cfg = load_yaml("costs.yaml")
+    out = scenario_cost_config(cfg, "maker")
+    assert (
+        out["segments"]["crypto_perp"]["trading_fee"]["pct"]
+        == cfg["segments"]["crypto_perp"]["maker_fee"]["pct"]
+    )
