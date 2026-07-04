@@ -38,6 +38,7 @@ import pyarrow.compute as pc
 from pydantic import BaseModel, ConfigDict
 
 from alpha_core.core.enums import Venue
+from alpha_core.data.holdout import assert_disjoint_roots
 from alpha_core.data.tick_store import TickStore
 from alpha_core.research.discovery import Backtester
 from alpha_core.research.funding_window_backtester import taker_cost_per_side
@@ -56,7 +57,7 @@ LEADER_SYMBOL = "BTCUSDT"
 _INTERVAL_S = 1
 _LATENCY_S = 2  # pre-registered execution latency (decision -> first executable bar)
 _STALE_S = 3  # max as-of staleness for the signal and the entry print
-_SIGMA_SAMPLES = 3600  # rolling-sigma window (valid samples on the alt grid)
+_SIGMA_SAMPLES = 3600  # rolling-sigma span in grid positions (valid-sample-counted inside)
 _SIGMA_MIN_SAMPLES = 600  # warmup floor before any trigger may fire
 _MINUTE = 60
 
@@ -138,8 +139,9 @@ def rolling_sigma(
     window: int = _SIGMA_SAMPLES,
     min_samples: int = _SIGMA_MIN_SAMPLES,
 ) -> np.ndarray:
-    """Rolling std of ``x`` over the last ``window`` *valid* samples (invalid entries
-    contribute nothing); NaN until ``min_samples`` valid samples have accrued. Shared by the
+    """Rolling std of ``x`` over the trailing ``window`` grid POSITIONS, using only the
+    *valid* samples inside that span (invalid entries contribute nothing to mean/var — no
+    dilution); NaN until ``min_samples`` valid samples sit inside the span. Shared by the
     tick-scale folds (lead-lag, liquidation)."""
     xz = np.where(valid, x, 0.0)
     c1 = np.concatenate(([0.0], np.cumsum(xz)))
@@ -227,5 +229,8 @@ class LeadLagBacktester:
 def build_leadlag_backtesters(
     *, research_ticks: TickStore, holdout_ticks: TickStore
 ) -> tuple[Backtester, Backtester]:
-    """The TEST-3-critical pair: each side reads ONLY its own tick store (leader included)."""
+    """The TEST-3-critical pair: each side reads ONLY its own tick store (leader included).
+    Disjoint roots are enforced here — one mispointed env var must never make the "holdout"
+    read in-sample."""
+    assert_disjoint_roots(research_ticks.root, holdout_ticks.root)
     return LeadLagBacktester(research_ticks), LeadLagBacktester(holdout_ticks)

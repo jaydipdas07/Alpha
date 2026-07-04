@@ -61,10 +61,6 @@ def _bars(symbol: str, prices: dict[int, float], n: int, base: float = 100.0) ->
     return out
 
 
-class _MemTicks(TickStore):
-    """A TickStore over tmp dirs, filled from bar lists (helper)."""
-
-
 def _store(tmp_path: Path, name: str, series: dict[str, list[Bar]]) -> TickStore:
     store = TickStore(tmp_path / name)
     for _, bars in series.items():

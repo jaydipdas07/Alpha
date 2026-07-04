@@ -15,8 +15,9 @@ holdout side must be exactly the current window (the ``seal_dataset`` rationale)
 
 from __future__ import annotations
 
+import json
 import shutil
-from datetime import UTC
+from datetime import UTC, datetime
 from urllib.parse import unquote
 
 import pyarrow.compute as pc
@@ -97,6 +98,23 @@ def seal_tick_store(
                         holdout.series_dir(venue, symbol, interval_s) / month_file.name,
                     )
         windows[key] = window
+    # Carry forward prior manifest entries for series NOT in this raw store: dropping them
+    # would erase their monotonic floor (a later re-seal with backward-extended history could
+    # then move a boundary backward — TEST-3-adjacent). The bar-store seal shares this
+    # property; parity follow-up tracked in TASKS.md.
+    manifest_path = holdout.root / "_windows.json"
+    if manifest_path.exists():
+        prior_manifest: dict[str, dict[str, str]] = json.loads(manifest_path.read_text())
+        for key, entry in prior_manifest.items():
+            if key not in {f"{v.value}|{s}|{i}" for v, s, i in _series_coords(raw)}:
+                windows.setdefault(
+                    key,
+                    HoldoutWindow(
+                        start=datetime.fromisoformat(entry["start"]),
+                        end=datetime.fromisoformat(entry["end"]),
+                        version=entry["version"],
+                    ),
+                )
     write_seal_manifest(holdout.root, windows)
     return windows
 
