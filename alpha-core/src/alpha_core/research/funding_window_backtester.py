@@ -11,14 +11,18 @@ funding. Two pre-registered templates:
   discipline:** the rate settling AT ``ts`` is only final at ``ts``, so the pre-window may
   condition ONLY on the PREVIOUS settlement's rate (known 8h earlier; funding is highly
   autocorrelated — that is the tradeable form of the hypothesis).
-- ``funding_rebound`` — ride the post-settlement relief: hold ``+sign(rate settled at ts)``
-  over ``(ts + 1m, ts + post_minutes]`` when ``|rate| >= min_funding_bps``. The rate IS final
-  at ``ts``; entry is deferred one full 1m bar past ``ts`` (live would enter seconds after).
+- ``funding_rebound`` — ride the post-settlement relief: hold ``post_minutes`` of exposure
+  over ``(ts + 1m, ts + 1m + post_minutes]`` when ``|rate settled at ts| >= min_funding_bps``.
+  The rate IS final at ``ts``; entry is deferred one full 1m bar past ``ts`` (live would enter
+  seconds after). NB when the settlement-minute bar itself is missing from the tape the entry
+  reference degrades to the close stamped AT ``ts`` — zero-latency but never clairvoyant (the
+  rate is already final), rare, and still cost-charged.
 
 Fold mechanics (float statistics plane; money never feeds back): per-bar close-to-close
 returns x a {-1,0,+1} position series built from the funding events; taker costs charged per
 side at each window's entry and exit bars (``costs.yaml`` ``crypto_perp`` trading_fee +
-slippage — no magic numbers). Windows never overlap (max 60m vs 8h cadence). The returns
+slippage — no magic numbers). Windows never overlap (the grid caps at 60m against the 8h
+cadence; even the validator's 240m ceiling cannot overlap). The returns
 series spans every bar (zeros outside windows), so the quant-analyst's OOS slicing sees
 calendar time, not cherry-picked windows.
 
@@ -67,6 +71,8 @@ def taker_cost_per_side() -> float:
     segment = cast(dict[str, dict[str, object]], cfg["segments"])["crypto_perp"]
     trading = cast(dict[str, object], segment["trading_fee"])
     slippage = cast(dict[str, dict[str, object]], cfg["slippage"])["crypto_perp"]
+    if slippage.get("type") != "bps":  # the /10000 below assumes bps — fail loud if retuned
+        raise ValueError(f"slippage.crypto_perp.type must be 'bps', got {slippage.get('type')!r}")
     return float(cast(float, trading["pct"])) + float(cast(int, slippage["value"])) / 10_000.0
 
 
@@ -166,12 +172,25 @@ class FundingWindowBacktester:
                 f"unknown funding-window cell {proposal.window!r}; "
                 f"known: {sorted(FUNDING_WINDOW_CELLS)}"
             )
-        template = FUNDING_WINDOW_TEMPLATES[proposal.template]
+        template = FUNDING_WINDOW_TEMPLATES.get(proposal.template)
+        if template is None:
+            raise ValueError(
+                f"unknown funding-window template {proposal.template!r}; "
+                f"known: {sorted(FUNDING_WINDOW_TEMPLATES)}"
+            )
         spec = template.build(proposal.params)
         ts, close = self._series(symbol)
         t_lo = datetime.fromtimestamp(int(ts[0]), tz=UTC)
         t_hi = datetime.fromtimestamp(int(ts[-1]) + _INTERVAL_S, tz=UTC)
         rates = self._funding.read(symbol=symbol, venue=Venue.BINANCE, start=t_lo, end=t_hi)
+        if not rates:
+            # An empty read is a WIRING failure (typo'd ALPHA_FUNDING_ROOT self-creates an
+            # empty store; symbol missing), and silently yields an all-zero series -> a false
+            # "family closed" verdict. Zero TRADED windows is a legitimate outcome; zero
+            # EVENTS is not.
+            raise ValueError(
+                f"no funding events for {symbol} in [{t_lo}, {t_hi}) — check ALPHA_FUNDING_ROOT"
+            )
         events = np.array([int(r.funding_time.timestamp()) for r in rates], dtype=np.int64)
         values = np.array([float(r.rate) for r in rates], dtype=np.float64)
 

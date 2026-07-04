@@ -211,7 +211,15 @@ def test_registry_spaces_enumerate_four_each() -> None:
 
 
 def test_invalid_configs_rejected() -> None:
+    # pydantic ValidationError subclasses ValueError; the spec ctors raise ValueError directly
     for name in FUNDING_WINDOW_TEMPLATES:
         template = FUNDING_WINDOW_TEMPLATES[name]
-        with pytest.raises((ValueError, Exception)):
+        with pytest.raises(ValueError):
             template.build({next(iter(template.param_space)): Decimal("0")})
+
+
+def test_empty_funding_store_raises_never_a_false_family_close(tmp_path: Path) -> None:
+    empty = FundingStore(tmp_path / "empty")  # a typo'd root self-creates exactly this
+    bt = FundingWindowBacktester(lambda s: _dip_and_rebound_bars(), empty)
+    with pytest.raises(ValueError, match="no funding events"):
+        bt.run(_proposal("funding_pre_drift", {"pre_minutes": 60, "min_funding_bps": Decimal("1")}))

@@ -4,7 +4,9 @@ Long-window 1m history for the funding-window universe (fresh, never-minute-seal
 Monthly ZIPs (~36 per symbol) keep the request count trivial; a month the archive hasn't
 published yet (the current/most-recent month) falls back to its daily ZIPs. One
 ``write_bars`` call per symbol (fresh series ⇒ no merge-rewrite amplification; ~1.6M bars
-peak in memory, sequential per symbol).
+peak in memory, sequential per symbol). **Avoid re-runs over an existing series**: a re-run
+merge-rewrites the whole ~1.6M-bar series through pydantic models (slow, RAM-heavy) — for a
+span extension, prefer a fresh ALPHA_COLD_ROOT or accept the one-off cost knowingly.
 
 Run (the FW pre-registered universe, 3y)::
 
