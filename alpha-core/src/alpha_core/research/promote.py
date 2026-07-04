@@ -59,6 +59,7 @@ from alpha_core.research.strategist import (
     ParamSpec,
     ParamValue,
     StrategyProposal,
+    StrategyTemplate,
     proposal_fingerprint,
 )
 from alpha_core.risk.limits import RiskConfig
@@ -86,6 +87,7 @@ def build_survivor_backtesters(
     holdout_store: HoldoutStore,
     risk_config: RiskConfig,
     cost_config: dict[str, object],
+    templates: Mapping[str, StrategyTemplate] | None = None,
 ) -> tuple[Backtester, Backtester]:
     """Wire the production (in-sample, holdout) backtester pair for ``cell``.
 
@@ -93,11 +95,14 @@ def build_survivor_backtesters(
     ``engine_backtester_for`` the nightly uses; the holdout backtester reads the **gate-only**
     ``HoldoutStore`` via ``HoldoutBarsFor`` — the single legitimate holdout read. Both align the
     risk config's ``base_capital`` to the cell's ``starting_cash`` so limits scale with the cell.
+    ``templates`` (default: the nightly registry) must be the SAME registry the family's
+    Strategist proposes from — both sides of the pair resolve a proposal identically.
     """
     in_sample = engine_backtester_for(
         ColdStoreBarsFor.from_config(research_store),
         risk_config=risk_config,
         cost_config=cost_config,
+        templates=templates,
     )(cell)
     holdout = EngineBacktester(
         bars_for=HoldoutBarsFor.from_config(holdout_store),
@@ -106,6 +111,7 @@ def build_survivor_backtesters(
         cost_config=cost_config,
         venue=cell.venue,
         starting_cash=cell.starting_cash,
+        templates=templates,
     )
     return in_sample, holdout
 

@@ -220,3 +220,46 @@ def test_registry_spaces_are_tiny_and_exhaustible() -> None:
 def test_default_configs_load_from_yaml() -> None:
     assert SeasonalHourLong.from_config()._cfg.hour_start == 21
     assert SeasonalSundayTrend.from_config()._cfg.entry_hour == 22
+
+
+# --- the EngineBacktester registry injection (the driver's resolver parity) ------------
+
+
+def test_engine_backtester_accepts_injected_seasonal_registry() -> None:
+    from collections.abc import Mapping
+
+    from alpha_core.execution.costs import InstrumentMeta
+    from alpha_core.helpers.config import load_yaml
+    from alpha_core.research.engine_backtester import EngineBacktester
+    from alpha_core.research.strategist import (
+        StrategyProposal,
+        StrategyTemplate,
+        proposal_fingerprint,
+    )
+    from alpha_core.risk.limits import load_risk_config
+
+    bars = [_hbar(i, str(100 + i)) for i in range(60)]
+    params = {"hour_start": 21, "hold_hours": 2}
+    proposal = StrategyProposal(
+        template="seasonal_hour_long",
+        params=params,
+        market=AssetClass.CRYPTO,
+        window="btcusdt-1h",
+        trial_index=1,
+        fingerprint=proposal_fingerprint("seasonal_hour_long", params),
+    )
+
+    def _make(templates: Mapping[str, StrategyTemplate] | None) -> EngineBacktester:
+        return EngineBacktester(
+            bars_for=lambda market, window: bars,
+            instruments={"BTCUSDT": InstrumentMeta(asset_class=AssetClass.CRYPTO)},
+            risk_config=load_risk_config(),
+            cost_config=load_yaml("costs.yaml"),
+            venue=Venue.BINANCE,
+            templates=templates,
+        )
+
+    returns = _make(SEASONAL_TEMPLATES).run(proposal)
+    assert len(returns) == len(bars)  # one return per bar through the real engine
+    with pytest.raises(ValueError, match="unknown template"):  # default registry: not registered
+        _make(None).run(proposal)

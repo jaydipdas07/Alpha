@@ -174,6 +174,8 @@ def main() -> None:
                 holdout_store=holdout,
                 risk_config=risk_config,
                 cost_config=cost_config,
+                # the SAME registry the Strategist proposes from — resolver parity
+                templates=SEASONAL_TEMPLATES,
             )
             gate = HoldoutGate(backtester=holdout_backtester, quant_analyst=qa)
             for template in templates:
