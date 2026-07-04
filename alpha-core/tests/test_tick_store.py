@@ -109,6 +109,8 @@ def test_read_columns_returns_utc_and_rejects_naive_bounds(tmp_path: Path) -> No
     assert str(table.schema.field("start").type) == "timestamp[us, tz=UTC]"  # host-tz never leaks
     with pytest.raises(ValueError, match="tz-aware"):
         store.read_columns(
-            venue=Venue.BINANCE, symbol="BTCUSDT", interval_seconds=1,
+            venue=Venue.BINANCE,
+            symbol="BTCUSDT",
+            interval_seconds=1,
             start=datetime(2025, 1, 1),
         )
