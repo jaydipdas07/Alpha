@@ -78,18 +78,23 @@ def _flush(store: TickStore, month: str, buffer: list[Bar], symbol: str) -> None
 
 
 def ingest_symbol(store: TickStore, symbol: str, start: date, end: date) -> int:
-    """Stream one symbol's days into monthly partitions, resumable: days strictly before the
-    series' last on-disk bar are skipped; the boundary day is re-fetched (a merge is an
-    idempotent no-op), so a crash mid-run costs at most one re-downloaded day."""
+    """Stream one symbol's days into monthly partitions, resumable BY MONTH COVERAGE: a day
+    is skipped iff its month partition already spans it (min date <= day <= max date). A
+    plain series-end marker would be WRONG here — a tail written first (e.g. a smoke run at
+    the range end) must not mask an unfilled backfill range before it. Re-fetched boundary
+    days merge idempotently (dedup by start)."""
     total = 0
     buffer: list[Bar] = []
     buffer_month: str | None = None
-    span = store.span(Venue.BINANCE, symbol, _INTERVAL_SECONDS)
-    resume_from = span[1].date() if span is not None else None
+    coverage = {
+        m: (lo.date(), hi.date())
+        for m, (lo, hi) in store.month_spans(Venue.BINANCE, symbol, _INTERVAL_SECONDS).items()
+    }
     for day in _daily_dates(start, end):
-        if resume_from is not None and day < resume_from:
-            continue
         month = f"{day.year:04d}-{day.month:02d}"
+        covered = coverage.get(month)
+        if covered is not None and covered[0] <= day <= covered[1]:
+            continue
         if buffer_month is not None and month != buffer_month:
             _flush(store, buffer_month, buffer, symbol)
             buffer, buffer_month = [], None

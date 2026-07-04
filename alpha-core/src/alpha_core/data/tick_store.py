@@ -178,6 +178,24 @@ class TickStore:
         con.close()
         return result
 
+    def month_spans(
+        self, venue: Venue, symbol: str, interval_seconds: int
+    ) -> dict[str, tuple[datetime, datetime]]:
+        """Per existing month partition: ``{month: (min start, max start)}`` — the ingest's
+        resume map (day-level coverage, not a single series-end marker: a series whose tail
+        was written first — e.g. a smoke test — must not mask an unfilled backfill range)."""
+        d = self.series_dir(venue, symbol, interval_seconds)
+        if not d.is_dir() or not any(d.glob("*.parquet")):
+            return {}
+        con = duckdb.connect()
+        glob_sql = str(d / "*.parquet").replace("'", "''")
+        rows = con.execute(
+            f"SELECT strftime(start AT TIME ZONE 'UTC', '%Y-%m') m, min(start), max(start) "
+            f"FROM read_parquet('{glob_sql}') GROUP BY 1"
+        ).fetchall()
+        con.close()
+        return {m: (lo.astimezone(UTC), hi.astimezone(UTC)) for m, lo, hi in rows}
+
     def span(
         self, venue: Venue, symbol: str, interval_seconds: int
     ) -> tuple[datetime, datetime] | None:

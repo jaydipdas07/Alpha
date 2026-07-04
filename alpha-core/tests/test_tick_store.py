@@ -89,3 +89,14 @@ def test_read_columns_range_filter_and_empty_series(tmp_path: Path) -> None:
     empty = store.read_columns(venue=Venue.BINANCE, symbol="NOPE", interval_seconds=1)
     assert empty.num_rows == 0
     assert store.span(Venue.BINANCE, "NOPE", 1) is None
+
+
+def test_month_spans_maps_each_partition(tmp_path: Path) -> None:
+    store = TickStore(tmp_path)
+    store.write_bars([_bar(0), _bar(1)], month="2025-01")
+    store.write_bars([_bar(2), _bar(3)], month="2025-02")
+    spans = store.month_spans(Venue.BINANCE, "BTCUSDT", 1)
+    assert set(spans) == {"2025-01", "2025-02"}
+    assert spans["2025-01"] == (_bar(0).start, _bar(1).start)
+    assert spans["2025-02"] == (_bar(2).start, _bar(3).start)
+    assert store.month_spans(Venue.BINANCE, "NOPE", 1) == {}
