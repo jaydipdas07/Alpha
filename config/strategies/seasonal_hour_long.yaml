@@ -1,0 +1,6 @@
+# config/strategies/seasonal_hour_long.yaml — daily fixed-UTC-window long (F2, ADR 0011).
+# The literature-pinned default: long BTC 21:00→23:00 UTC (QuantPedia/Padysák-Vojtko 2015–2022).
+strategy_id: seasonal_hour_long
+hour_start: 21   # UTC hour the long window opens
+hold_hours: 2    # window length in hours (elapsed-based exit)
+quantity: "1"

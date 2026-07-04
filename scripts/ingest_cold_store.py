@@ -58,7 +58,9 @@ _END = datetime(2026, 6, 30, tzinfo=UTC)  # recent boundary (covers the B1a.1b s
 # listing when startTime predates it). ~2,500 daily bars/symbol = 2 pages, well inside the cap.
 _1D_START = datetime(2019, 9, 1, tzinfo=UTC)
 _3Y = datetime(2023, 6, 1, tzinfo=UTC)  # ~3 years of daily history (the NSE/Yahoo equity leg)
-_1Y = datetime(2025, 6, 21, tzinfo=UTC)  # ~1 year of hourly history
+# Hourly reaches back to the daily span's start (F2 seasonality: the hour-of-day/day-of-week
+# family needs years of Sundays, not one; ~60k bars/symbol = 40 pages, inside the 200-page cap).
+_1H_START = _1D_START
 _INTRADAY_START = datetime(2026, 5, 1, tzinfo=UTC)  # ~7 weeks of 5-minute intraday
 _1MIN_START = datetime(2026, 5, 31, tzinfo=UTC)  # ~3 weeks of 1-minute (box-safe ~30k bars/cell)
 
@@ -80,7 +82,7 @@ _CRYPTO_SYMBOLS = [
 _CRYPTO_TFS = [
     ("1m", 60, _1MIN_START, "1m ~3wk"),
     ("5m", 300, _INTRADAY_START, "5m ~7wk"),
-    ("1h", 3600, _1Y, "1h ~1y"),
+    ("1h", 3600, _1H_START, "1h from listing (2019-09+)"),
     ("1d", 86400, _1D_START, "1d from listing (2019-09+)"),
 ]
 # interval_seconds -> (binance_interval, window_start) so a cross-sectional panel ingests at the
