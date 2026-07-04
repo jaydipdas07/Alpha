@@ -41,6 +41,9 @@ data_cold/
 # sealed research store (discovery reads) + holdout store (gate-only) — scripts/seal_cold_store.py
 data_research/
 data_holdout/
+data_cold_ticks/
+data_research_ticks/
+data_holdout_ticks/
 
 # M3.0 funding history (scripts/ingest_funding.py) + M5.5 option chains (scripts/ingest_nse_fo.py)
 data_funding/
