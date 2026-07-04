@@ -49,7 +49,7 @@ def _sweep_one(
     ledger: ProposalLedger,
     qa: QuantAnalyst,
     in_sample: Backtester,
-    holdout_gate: HoldoutGate,
+    holdout_gate: HoldoutGate | None,
 ) -> tuple[int, int]:
     proposals: list[StrategyProposal] = []
     returns: list[Sequence[float]] = []
@@ -87,6 +87,14 @@ def _sweep_one(
         f"n_trials={n_trials}, {len(survivors)} survivor(s); DSR variance={variance:.3e}"
     )
     passes = 0
+    if holdout_gate is None:
+        for p, a in survivors:
+            print(
+                f"  FROZEN survivor (no read spent) {dict(p.params)}: "
+                f"in-sample OOS={a.oos_sharpe:+.4f}, n_trials={n_trials}, "
+                f"variance={variance:.3e} — record in TASKS.md; read when the window has power"
+            )
+        return len(survivors), 0
     for p, a in survivors:  # THE ONE-SHOT HOLDOUT READ (TEST-3)
         result = holdout_gate.evaluate(p, n_trials=n_trials, trial_sharpe_variance=variance)
         passes += result.passed
@@ -105,6 +113,16 @@ def main() -> None:
     ap.add_argument("--cells", default=",".join(sorted(FUNDING_WINDOW_CELLS)))
     ap.add_argument("--seed", type=int, default=10)
     ap.add_argument("--n", type=int, default=50)
+    ap.add_argument(
+        "--holdout-reads",
+        choices=("auto", "skip"),
+        default="auto",
+        help="'skip' = in-sample only: freeze survivors WITHOUT spending the one-shot holdout "
+        "read — for when the current holdout window is too thin to power a verdict (the 1m "
+        "interval floor at 2026-06-24 leaves ~6 days today; it fattens as the span rolls "
+        "forward). Choosing WHEN to read on window SIZE (power) is legitimate — the candidate "
+        "is frozen before any holdout contact either way.",
+    )
     args = ap.parse_args()
 
     templates = (
@@ -127,7 +145,13 @@ def main() -> None:
         research_store=research, holdout_store=holdout, funding_store=funding
     )
     qa = QuantAnalyst()
-    gate = HoldoutGate(backtester=holdout_bt, quant_analyst=qa)
+    gate = (
+        HoldoutGate(backtester=holdout_bt, quant_analyst=qa)
+        if args.holdout_reads == "auto"
+        else None
+    )
+    if gate is None:
+        print("=== HOLDOUT READS: SKIPPED (in-sample only; survivors frozen, no read spent) ===")
 
     total_survivors = total_passes = 0
     with ProposalLedger() as ledger:
