@@ -46,7 +46,7 @@ from alpha_core.core.models import Bar
 from alpha_core.data.funding import FundingStore
 from alpha_core.data.holdout import HoldoutStore
 from alpha_core.data.store import BarStore
-from alpha_core.helpers.config import load_yaml
+from alpha_core.research.cost_scenarios import cost_per_side
 from alpha_core.research.discovery import Backtester
 from alpha_core.research.strategist import DecimalRange, StrategyProposal, StrategyTemplate
 
@@ -66,14 +66,9 @@ _INTERVAL_S = 60
 
 def taker_cost_per_side() -> float:
     """Per-side taker cost fraction from ``costs.yaml`` (crypto_perp trading_fee + bps
-    slippage) — one config home, no magic numbers."""
-    cfg = load_yaml("costs.yaml")
-    segment = cast(dict[str, dict[str, object]], cfg["segments"])["crypto_perp"]
-    trading = cast(dict[str, object], segment["trading_fee"])
-    slippage = cast(dict[str, dict[str, object]], cfg["slippage"])["crypto_perp"]
-    if slippage.get("type") != "bps":  # the /10000 below assumes bps — fail loud if retuned
-        raise ValueError(f"slippage.crypto_perp.type must be 'bps', got {slippage.get('type')!r}")
-    return float(cast(float, trading["pct"])) + float(cast(int, slippage["value"])) / 10_000.0
+    slippage) — one config home, no magic numbers. Delegates to the scenario-aware home
+    (``cost_scenarios.cost_per_side``) so the taker number can never drift from it."""
+    return cost_per_side("taker")
 
 
 class FundingPreDriftConfig(BaseModel):
