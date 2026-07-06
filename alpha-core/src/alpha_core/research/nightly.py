@@ -50,8 +50,8 @@ from alpha_core.research.strategist import (
     StrategyProposal,
     StrategyTemplate,
 )
-from alpha_core.risk.limits import RiskConfig
-from alpha_core.scheduler.clock import MarketSchedule, load_risk_config
+from alpha_core.risk.limits import RiskConfig, load_risk_config
+from alpha_core.scheduler.clock import MarketSchedule
 
 # Every registered strategy family, sorted for a deterministic run order. A cell with no explicit
 # ``templates`` searches all of them (the rigor gate culls the families that don't fit the cell).
