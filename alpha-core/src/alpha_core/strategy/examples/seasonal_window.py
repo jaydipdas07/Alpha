@@ -27,6 +27,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -51,6 +52,11 @@ class SeasonalHourLongConfig(BaseModel):
     hour_start: int = 21  # UTC hour the long window opens (position on from this instant)
     hold_hours: int = 2  # window length in hours (also the elapsed-exit horizon)
     quantity: Decimal = Decimal("1")
+    # "taker" (default, the frozen-verdict form): MARKET entries/exits. "post_only" (the
+    # maker fill model): the entry rests a post-only LIMIT at the decision close, alive
+    # exactly through the NEXT bar (miss = no trade that window); the exit is a MARKET
+    # reduce-only (guaranteed flat; a missed entry can never be inverted into a short).
+    entry_execution: Literal["taker", "post_only"] = "taker"
 
 
 class SeasonalSundayTrendConfig(BaseModel):
@@ -62,6 +68,7 @@ class SeasonalSundayTrendConfig(BaseModel):
     hold_hours: int = 24  # holding horizon (fixed by the family pre-registration, not searched)
     trend_lookback_days: int = 1  # direction = sign of the trailing N-day return at entry
     quantity: Decimal = Decimal("1")
+    entry_execution: Literal["taker", "post_only"] = "taker"  # see SeasonalHourLongConfig
 
 
 @dataclass
@@ -86,6 +93,11 @@ class SeasonalHourLong(Strategy):
             raise ValueError("hour_start must be in [0, 23]")
         if not 1 <= self._cfg.hold_hours <= 23:
             raise ValueError("hold_hours must be in [1, 23] (the window must be intra-day)")
+        if self._cfg.entry_execution == "post_only" and self._cfg.hold_hours < 2:
+            # #184 review F3: a 1-bar window under maker entries can fill on the exit
+            # bar's own ticks BEFORE the exit sizes itself (undrained fill -> reduce-only
+            # noop -> orphaned position). The registered space is {2,3}h; refuse below it.
+            raise ValueError("post_only entries need hold_hours >= 2 (same-bar fill/exit race)")
         self._state: dict[str, _HourState] = {}
 
     @classmethod
@@ -102,15 +114,53 @@ class SeasonalHourLong(Strategy):
             # in-window, so the same template runs at any intra-day frequency).
             if _in_window(now.hour, self._cfg.hour_start, self._cfg.hold_hours):
                 st.entered_at = now
-                return [self._signal(bar, Side.BUY, "seasonal window open", Decimal(1))]
+                return [self._entry(bar, Side.BUY, "seasonal window open")]
             return []
         if now - st.entered_at >= timedelta(hours=self._cfg.hold_hours):
             st.entered_at = None
-            return [self._signal(bar, Side.SELL, "seasonal window close", None)]
+            return [self._exit(bar, Side.SELL, "seasonal window close")]
         return []
 
     def on_tick(self, tick: Tick) -> Sequence[Signal]:
         return []
+
+    def _entry(self, bar: Bar, side: Side, reason: str) -> Signal:
+        if self._cfg.entry_execution == "post_only":
+            # The maker fill model: rest AT the decision close, alive exactly through
+            # the NEXT bar (its extremes may trade through); miss = no trade.
+            return Signal(
+                strategy_id=self._cfg.strategy_id,
+                symbol=bar.symbol,
+                asset_class=bar.asset_class,
+                side=side,
+                quantity=self._cfg.quantity,
+                order_type=OrderType.LIMIT,
+                limit_price=bar.close,
+                post_only=True,
+                valid_until=bar.start + 2 * bar.interval,
+                created_at=bar.start + bar.interval,
+                reason=reason,
+                score=Decimal(1),
+            )
+        return self._signal(bar, side, reason, Decimal(1))
+
+    def _exit(self, bar: Bar, side: Side, reason: str) -> Signal:
+        if self._cfg.entry_execution == "post_only":
+            # Taker reduce-only: guaranteed flat, and a MISSED entry can never be
+            # inverted into a fresh position by its own exit (#179's bug class).
+            return Signal(
+                strategy_id=self._cfg.strategy_id,
+                symbol=bar.symbol,
+                asset_class=bar.asset_class,
+                side=side,
+                quantity=self._cfg.quantity,
+                order_type=OrderType.MARKET,
+                reduce_only=True,
+                created_at=bar.start + bar.interval,
+                reason=reason,
+                score=None,
+            )
+        return self._signal(bar, side, reason, None)
 
     def _signal(self, bar: Bar, side: Side, reason: str, score: Decimal | None) -> Signal:
         return Signal(
@@ -163,7 +213,7 @@ class SeasonalSundayTrend(Strategy):
             if now - st.entered_at >= timedelta(hours=self._cfg.hold_hours):
                 exit_side = Side.SELL if st.side is Side.BUY else Side.BUY
                 st.entered_at, st.side = None, None
-                return [self._signal(bar, exit_side, "seasonal trend window close", None)]
+                return [self._exit(bar, exit_side, "seasonal trend window close")]
             return []
 
         if now.weekday() != _SUNDAY or now.hour != self._cfg.entry_hour:
@@ -176,7 +226,7 @@ class SeasonalSundayTrend(Strategy):
             return []  # warmup (no close old enough) or a dead-flat lookback: no direction
         side = Side.BUY if bar.close > ref else Side.SELL
         st.entered_at, st.side, st.last_entry_key = now, side, week
-        return [self._signal(bar, side, "seasonal trend window open", Decimal(1))]
+        return [self._entry(bar, side, "seasonal trend window open")]
 
     def on_tick(self, tick: Tick) -> Sequence[Signal]:
         return []
@@ -188,6 +238,44 @@ class SeasonalSundayTrend(Strategy):
             if ts <= cutoff:
                 return close
         return None
+
+    def _entry(self, bar: Bar, side: Side, reason: str) -> Signal:
+        if self._cfg.entry_execution == "post_only":
+            # The maker fill model: rest AT the decision close, alive exactly through
+            # the NEXT bar (its extremes may trade through); miss = no trade.
+            return Signal(
+                strategy_id=self._cfg.strategy_id,
+                symbol=bar.symbol,
+                asset_class=bar.asset_class,
+                side=side,
+                quantity=self._cfg.quantity,
+                order_type=OrderType.LIMIT,
+                limit_price=bar.close,
+                post_only=True,
+                valid_until=bar.start + 2 * bar.interval,
+                created_at=bar.start + bar.interval,
+                reason=reason,
+                score=Decimal(1),
+            )
+        return self._signal(bar, side, reason, Decimal(1))
+
+    def _exit(self, bar: Bar, side: Side, reason: str) -> Signal:
+        if self._cfg.entry_execution == "post_only":
+            # Taker reduce-only: guaranteed flat, and a MISSED entry can never be
+            # inverted into a fresh position by its own exit (#179's bug class).
+            return Signal(
+                strategy_id=self._cfg.strategy_id,
+                symbol=bar.symbol,
+                asset_class=bar.asset_class,
+                side=side,
+                quantity=self._cfg.quantity,
+                order_type=OrderType.MARKET,
+                reduce_only=True,
+                created_at=bar.start + bar.interval,
+                reason=reason,
+                score=None,
+            )
+        return self._signal(bar, side, reason, None)
 
     def _signal(self, bar: Bar, side: Side, reason: str, score: Decimal | None) -> Signal:
         return Signal(

@@ -24,7 +24,7 @@ from alpha_core.core.models import Bar
 from alpha_core.execution.costs import CostModel, InstrumentMeta
 from alpha_core.execution.funding import FundingConfig, funding_cash_flow
 from alpha_core.execution.oms import OMS
-from alpha_core.execution.session import handle_kill, quote_from_bar, square_off
+from alpha_core.execution.session import handle_kill, quote_from_bar, square_off, ticks_from_bar
 from alpha_core.execution.state import PnlLedgerRow, StateStore
 from alpha_core.helpers.config import PortfolioConfig
 from alpha_core.portfolio.loop import BarBarrier, rebalance_pass
@@ -169,10 +169,16 @@ async def run_backtest(
     funding: FundingConfig | None = None,
     schedule: MarketSchedule | None = None,
     intraday_square_off: bool = False,
+    ohlc_ticks: bool = False,
 ) -> BacktestResult:
     """Run ``strategy`` over historical ``bars`` and return stats. With ``funding``
     set, perp funding accrues on held crypto positions every funding interval (R13)
     — into P&L and the daily-loss kill gate.
+
+    ``ohlc_ticks`` (the post-only fill model): each bar reaches the broker as four
+    LTP ticks (O, H, L, C — close LAST), so a RESTING limit fills on the bar's true
+    range while decision-time pricing still sees the close. Default ``False`` keeps
+    the one-tick-per-bar tape — bit-identical to every frozen verdict.
 
     ``schedule`` (SF4, TEST-1) applies the live Worker's session gate symmetrically:
     bars whose close instant is outside the session or past ``no_new_entry_time``
@@ -223,7 +229,11 @@ async def run_backtest(
     for bar in bars:
         bar_close = bar.start + bar.interval
         clock.set(bar_close)  # decision instant = bar close
-        broker.on_tick(quote_from_bar(bar))
+        if ohlc_ticks:
+            for tick in ticks_from_bar(bar):
+                broker.on_tick(tick)
+        else:
+            broker.on_tick(quote_from_bar(bar))
         # Thin-tape closure (review #176 F2): live, the square-off fires WALL-CLOCK at
         # square_off_time even when no bar prints; offline the only clock is bar closes.
         # A day whose tape stopped before the cutoff would ride overnight — flatten at

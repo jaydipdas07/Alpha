@@ -77,6 +77,7 @@ class EngineBacktester:
         templates: Mapping[str, StrategyTemplate] | None = None,
         schedule: MarketSchedule | None = None,
         intraday_square_off: bool = False,
+        ohlc_ticks: bool = False,
     ) -> None:
         self._bars_for = bars_for
         self._instruments = instruments
@@ -96,6 +97,8 @@ class EngineBacktester:
         # None keeps every existing (crypto/24x7) family bit-identical.
         self._schedule = schedule
         self._intraday_square_off = intraday_square_off
+        # the post-only fill model's tape: resting limits see each bar's extremes
+        self._ohlc_ticks = ohlc_ticks
         # the rigor gate needs >= 2*n_groups observations; one fewer return than bars, so require
         # that many bars and fail fast on a thin cell (rather than crash later in `assess`).
         self._min_bars = 2 * load_rigor_config().cpcv.n_groups
@@ -130,6 +133,7 @@ class EngineBacktester:
                 stress=self._stress,
                 schedule=self._schedule,
                 intraday_square_off=self._intraday_square_off,
+                ohlc_ticks=self._ohlc_ticks,
             )
         )
         return _returns_from_equity(result.equity_curve, self._starting_cash)

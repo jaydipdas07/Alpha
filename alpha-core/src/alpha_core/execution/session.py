@@ -27,6 +27,28 @@ def quote_from_bar(bar: Bar) -> Tick:  # pragma: no cover - paper/backtest loop 
     )
 
 
+def ticks_from_bar(bar: Bar) -> list[Tick]:
+    """The bar's OHLC as four LTP ticks, CLOSE LAST (the post-only fill model's tape).
+
+    Resting limits see the bar's EXTREMES (a maker fill triggers on the true range,
+    not just the close), while everything priced "at the bar" still sees the close
+    as the final quote — decision-time pricing is unchanged. All four share the bar-
+    close timestamp (intra-bar times are unknowable); the O->H->L->C order is a
+    declared convention — with entry-limits + market exits only, fill OUTCOMES are
+    order-independent (a single bar cannot both fill and un-fill a resting order)."""
+    ts = bar.start + bar.interval
+    return [
+        Tick(
+            symbol=bar.symbol,
+            venue=bar.venue,
+            asset_class=bar.asset_class,
+            ts=ts,
+            last_price=price,
+        )
+        for price in (bar.open, bar.high, bar.low, bar.close)
+    ]
+
+
 def pos_price(pos: Position) -> Decimal:  # pragma: no cover - used only by square_off (below)
     return pos.last_price or pos.average_price or Decimal("0")
 
