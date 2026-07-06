@@ -290,3 +290,27 @@ async def test_ohlc_ticks_fill_on_the_bar_range_not_the_close() -> None:
     assert with_range.stats.num_fills == 2
     # Close-only tape: no close ever crossed 99 -> the limit never fills.
     assert close_only.stats.num_fills == 0
+
+
+async def test_ccxt_adapter_refuses_unmapped_maker_fields() -> None:
+    # TEST-1 parity guard (#184): the live adapter must refuse the fields it cannot
+    # map yet — silently placing a plain limit would take as a taker with no TTL.
+    from types import SimpleNamespace
+
+    from alpha_core.adapters.crypto_ccxt import CcxtAdapter
+    from alpha_core.core.errors import InvalidOrder
+
+    adapter = CcxtAdapter(exchange=SimpleNamespace(), venue=Venue.BINANCE, streaming=False)
+    with pytest.raises(InvalidOrder, match="not mapped"):
+        await adapter.place_order(_order(post_only=True))
+
+
+def test_post_only_hour_window_needs_two_bars() -> None:
+    from alpha_core.strategy.examples.seasonal_window import (
+        SeasonalHourLong,
+        SeasonalHourLongConfig,
+    )
+
+    with pytest.raises(ValueError, match="same-bar fill/exit race"):
+        SeasonalHourLong(SeasonalHourLongConfig(hold_hours=1, entry_execution="post_only"))
+    SeasonalHourLong(SeasonalHourLongConfig(hold_hours=2, entry_execution="post_only"))

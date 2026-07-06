@@ -132,6 +132,10 @@ def main() -> None:
         "=== THE FROZEN FIVE under the post-only fill model (strict trade-through at the "
         "limit; miss = no trade; reduce-only exits; maker scenario costs) ==="
     )
+    print(
+        "=== CAVEAT (recorded with every number below): the exit's MARKET leg is priced "
+        "at maker fees by the scenario config — a real taker exit adds ~4bps/side ==="
+    )
     if args.holdout_reads == "skip":
         print("=== HOLDOUT READS: SKIPPED (in-sample damage report only) ===")
 

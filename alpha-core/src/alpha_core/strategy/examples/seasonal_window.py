@@ -93,6 +93,11 @@ class SeasonalHourLong(Strategy):
             raise ValueError("hour_start must be in [0, 23]")
         if not 1 <= self._cfg.hold_hours <= 23:
             raise ValueError("hold_hours must be in [1, 23] (the window must be intra-day)")
+        if self._cfg.entry_execution == "post_only" and self._cfg.hold_hours < 2:
+            # #184 review F3: a 1-bar window under maker entries can fill on the exit
+            # bar's own ticks BEFORE the exit sizes itself (undrained fill -> reduce-only
+            # noop -> orphaned position). The registered space is {2,3}h; refuse below it.
+            raise ValueError("post_only entries need hold_hours >= 2 (same-bar fill/exit race)")
         self._state: dict[str, _HourState] = {}
 
     @classmethod

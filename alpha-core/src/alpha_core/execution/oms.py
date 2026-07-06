@@ -419,9 +419,7 @@ class OMS:
             )
             closeable = held if signal.side is Side.SELL else -held
             if closeable <= 0:
-                self._log.info(
-                    "reduce_only_noop", client_order_id=cid, symbol=signal.symbol
-                )
+                self._log.info("reduce_only_noop", client_order_id=cid, symbol=signal.symbol)
                 return None
             quantity = min(quantity, closeable)
         order = Order(

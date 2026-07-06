@@ -190,6 +190,16 @@ class CcxtAdapter(BrokerAdapter):
     # --- placement -------------------------------------------------------------
 
     async def place_order(self, order: Order) -> str:
+        if order.post_only or order.reduce_only or order.valid_until is not None:
+            # TEST-1 parity guard (#184 review): this adapter does not yet MAP these
+            # fields to the venue (ccxt postOnly/reduceOnly + GTX-reason translation is
+            # Phase-4+ work). Passing them through silently would place a plain limit
+            # that TAKES (wrong fees, no TTL) and real GTX rejects would stride the
+            # consecutive-errors kill — refuse loudly instead of diverging quietly.
+            raise InvalidOrder(
+                "post_only/reduce_only/valid_until are not mapped by CcxtAdapter yet "
+                "(paper-only until the Phase-4+ maker execution lands)"
+            )
         existing = self._known.get(order.client_order_id)
         if existing is not None and existing.venue_order_id is not None:
             return existing.venue_order_id  # idempotent: never place the same intent twice
