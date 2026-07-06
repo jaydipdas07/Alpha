@@ -124,3 +124,45 @@ def aggtrades_to_bars(
     if bucket_ms is not None:
         _flush()
     return bars
+
+
+def aggtrades_to_flows(
+    rows: Iterable[Sequence[Any]],
+    *,
+    interval_seconds: int,
+) -> list[tuple[int, float, float]]:
+    """Fold time-ordered aggTrade rows into per-bucket SIGNED taker flow (the G2 family's
+    input): ``(bucket_epoch_seconds, taker_buy_volume, taker_sell_volume)``.
+
+    The archive row's ``isBuyerMaker`` (index 6, "true"/"false") gives the aggressor:
+    ``false`` = the BUYER took (taker-buy volume), ``true`` = the seller took. Floats by
+    design — flow is the STATISTICS plane (a signal input, never money; the money path
+    stays Decimal in ``aggtrades_to_bars``). Rows must be time-ordered; a header row is
+    skipped; empty -> ``[]``. Buckets with trades on one side only carry 0.0 on the other.
+    """
+    interval_ms = interval_seconds * 1000
+    out: list[tuple[int, float, float]] = []
+    bucket_ms: int | None = None
+    buy = sell = 0.0
+    for row in rows:
+        try:
+            ts_ms = int(row[5])
+        except (ValueError, TypeError):
+            continue  # header row
+        qty = float(row[2])
+        maker_flag = str(row[6]).strip().lower() == "true"
+        b_ms = (ts_ms // interval_ms) * interval_ms
+        if bucket_ms is None:
+            bucket_ms = b_ms
+        elif b_ms < bucket_ms:
+            raise ValueError("aggTrade rows must be time-ordered")
+        elif b_ms > bucket_ms:
+            out.append((bucket_ms // 1000, buy, sell))
+            bucket_ms, buy, sell = b_ms, 0.0, 0.0
+        if maker_flag:
+            sell += qty  # buyer was the maker -> the SELLER took
+        else:
+            buy += qty  # the buyer took
+    if bucket_ms is not None:
+        out.append((bucket_ms // 1000, buy, sell))
+    return out

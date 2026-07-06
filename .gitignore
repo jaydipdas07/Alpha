@@ -49,6 +49,9 @@ data_holdout_ticks/
 data_funding/
 data_options/
 data_research_nge/
+data_cold_flows/
+data_research_flows/
+data_holdout_flows/
 
 # B1b.4 nightly-discovery per-run JSON records (syncable to the pod discovery_runs table)
 discovery_runs/
