@@ -302,6 +302,14 @@
           "tick_size": "0.05",
           "circuit_band_pct": "0.10"
         },
+        "NSE:NIFTY 50": {
+          "segment": "equity",
+          "asset_class": "EQUITY",
+          "quote_currency": "INR",
+          "lot_size": 1,
+          "tick_size": "0.05",
+          "circuit_band_pct": "0.20"
+        },
         "NFO:NIFTY-EXAMPLE-CE": {
           "segment": "index_option",
           "asset_class": "INDEX_OPTION",
@@ -859,6 +867,14 @@
           "market": "EQUITY",
           "window": "hdfcbank-1m",
           "symbol": "NSE:HDFCBANK",
+          "venue": "NSE",
+          "interval_seconds": 60,
+          "starting_cash": "1000000"
+        },
+        {
+          "market": "EQUITY",
+          "window": "nifty50-1m",
+          "symbol": "NSE:NIFTY 50",
           "venue": "NSE",
           "interval_seconds": 60,
           "starting_cash": "1000000"

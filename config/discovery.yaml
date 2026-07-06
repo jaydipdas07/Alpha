@@ -323,6 +323,15 @@ cells:
     venue: NSE
     interval_seconds: 60
     starting_cash: "1000000"   # INR
+  # F1 (the intraday-mandate headline family): the NIFTY 50 INDEX minute cell — swept
+  # ONLY by scripts/f1_intraday_review.py over its own F1_TEMPLATES registry (the
+  # nightly's default templates never propose into it; cell_ready guards the data).
+  - market: EQUITY
+    window: "nifty50-1m"
+    symbol: "NSE:NIFTY 50"
+    venue: NSE
+    interval_seconds: 60
+    starting_cash: "1000000"   # INR
 
 # --- cross-sectional panels (M3.0) -------------------------------------------------
 # A panel names a whole universe of symbols sharing a (market, venue, interval), to be

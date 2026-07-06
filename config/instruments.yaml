@@ -49,6 +49,17 @@ instruments:
     lot_size: 1
     tick_size: "0.05"
     circuit_band_pct: "0.10"
+  # The NIFTY 50 INDEX (the F1 research cell): not directly tradable — the deployable
+  # is the near-month future (segments.index_future in costs.yaml; the F1 fold reprices
+  # the equity segment at that stack). EQUITY asset class keeps the engine mapping;
+  # tick 0.05 matches the futures contract; the index itself has no scrip circuit.
+  "NSE:NIFTY 50":
+    segment: equity
+    asset_class: EQUITY
+    quote_currency: INR
+    lot_size: 1
+    tick_size: "0.05"
+    circuit_band_pct: "0.20"
   # Index-option example (G11). Real contract symbols/expiries/lots come from the
   # Kite instrument master at go-live; this is a representative entry so the
   # registry quantizes F&O orders (lot 75 = NIFTY) and the cost model has a tick.

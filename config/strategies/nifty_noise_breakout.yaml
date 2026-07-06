@@ -1,0 +1,9 @@
+# F1 NIFTY intraday noise-area breakout (survey §5) — deployment defaults.
+# The DISCOVERY ranges live in research/f1_templates.py (the pre-registration);
+# this file configures a deployed/paper instance (strategy/registry.py builder).
+strategy_id: nifty_noise_breakout
+lookback_days: 14        # trailing days in the per-time-of-day noise boundary
+conditioning: 0          # 0 = none, 1 = first-half-hour sign gate (Gao)
+fhh_end: "09:45"         # IST close instant defining the first half hour
+flat_time: "15:05"       # IST EOD-flat instant (before the 15:10 no-new-entry gate)
+quantity: "20"           # fixed units (string -> Decimal, B5)

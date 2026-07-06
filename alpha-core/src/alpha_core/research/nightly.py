@@ -50,7 +50,8 @@ from alpha_core.research.strategist import (
     StrategyProposal,
     StrategyTemplate,
 )
-from alpha_core.risk.limits import RiskConfig, load_risk_config
+from alpha_core.risk.limits import RiskConfig
+from alpha_core.scheduler.clock import MarketSchedule, load_risk_config
 
 # Every registered strategy family, sorted for a deterministic run order. A cell with no explicit
 # ``templates`` searches all of them (the rigor gate culls the families that don't fit the cell).
@@ -206,12 +207,16 @@ def engine_backtester_for(
     cost_config: dict[str, object],
     stress: bool = False,
     templates: Mapping[str, StrategyTemplate] | None = None,
+    schedule: MarketSchedule | None = None,
+    intraday_square_off: bool = False,
 ) -> BacktesterFor:
     """Build a per-cell :class:`EngineBacktester` factory over ``bars_for``. Each cell's backtester
     gets instruments from the market (``asset_class`` only — equity/crypto slippage is bps,
     no tick needed), the cell venue and ``starting_cash``, and a risk config whose ``base_capital``
     is **aligned to that ``starting_cash``** so the limits scale with the cell (a $-crypto cell and
-    an INR-equity cell never share one base)."""
+    an INR-equity cell never share one base). ``schedule``/``intraday_square_off`` (SF4, TEST-1)
+    thread the live session gate into every cell's fold — an Indian-market family passes
+    ``schedule_for({EQUITY})``; the ``None`` default keeps every crypto family bit-identical."""
 
     def _make(cell: DiscoveryCellConfig) -> Backtester:
         return EngineBacktester(
@@ -223,6 +228,8 @@ def engine_backtester_for(
             starting_cash=cell.starting_cash,
             stress=stress,
             templates=templates,
+            schedule=schedule,
+            intraday_square_off=intraday_square_off,
         )
 
     return _make

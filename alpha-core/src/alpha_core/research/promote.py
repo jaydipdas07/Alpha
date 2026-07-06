@@ -63,6 +63,7 @@ from alpha_core.research.strategist import (
     proposal_fingerprint,
 )
 from alpha_core.risk.limits import RiskConfig
+from alpha_core.scheduler.clock import MarketSchedule
 
 
 def make_proposal(
@@ -88,6 +89,8 @@ def build_survivor_backtesters(
     risk_config: RiskConfig,
     cost_config: dict[str, object],
     templates: Mapping[str, StrategyTemplate] | None = None,
+    schedule: MarketSchedule | None = None,
+    intraday_square_off: bool = False,
 ) -> tuple[Backtester, Backtester]:
     """Wire the production (in-sample, holdout) backtester pair for ``cell``.
 
@@ -97,12 +100,16 @@ def build_survivor_backtesters(
     risk config's ``base_capital`` to the cell's ``starting_cash`` so limits scale with the cell.
     ``templates`` (default: the nightly registry) must be the SAME registry the family's
     Strategist proposes from — both sides of the pair resolve a proposal identically.
+    ``schedule``/``intraday_square_off`` (SF4, TEST-1) apply the live session gate to BOTH
+    sides — gating in-sample but not holdout (or vice versa) would be a rigor asymmetry.
     """
     in_sample = engine_backtester_for(
         ColdStoreBarsFor.from_config(research_store),
         risk_config=risk_config,
         cost_config=cost_config,
         templates=templates,
+        schedule=schedule,
+        intraday_square_off=intraday_square_off,
     )(cell)
     holdout = EngineBacktester(
         bars_for=HoldoutBarsFor.from_config(holdout_store),
@@ -112,6 +119,8 @@ def build_survivor_backtesters(
         venue=cell.venue,
         starting_cash=cell.starting_cash,
         templates=templates,
+        schedule=schedule,
+        intraday_square_off=intraday_square_off,
     )
     return in_sample, holdout
 
