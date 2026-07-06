@@ -40,8 +40,8 @@ from pydantic import BaseModel, ConfigDict
 from alpha_core.core.enums import Venue
 from alpha_core.data.holdout import assert_disjoint_roots
 from alpha_core.data.tick_store import TickStore
+from alpha_core.research.cost_scenarios import cost_per_side
 from alpha_core.research.discovery import Backtester
-from alpha_core.research.funding_window_backtester import taker_cost_per_side
 from alpha_core.research.strategist import DecimalRange, StrategyProposal, StrategyTemplate
 
 # The pre-registered universe: BTC is the leader (signal only, never a cell); ETH is excluded
@@ -162,11 +162,16 @@ def rolling_sigma(
 
 
 class LeadLagBacktester:
-    """A ``discovery.Backtester`` running the lead-lag fold on one tick-store side."""
+    """A ``discovery.Backtester`` running the lead-lag fold on one tick-store side.
 
-    def __init__(self, store: TickStore) -> None:
+    ``cost_scenario`` (``cost_scenarios.cost_per_side``): ``"taker"`` — the deployable-today
+    default (trading_fee + crossing slippage); ``"maker"`` — post-only fees ONLY, fill risk
+    unmodelled ⇒ IN-SAMPLE-ONLY evidence about a Phase-4+ maker deployment (the driver must
+    freeze survivors under maker; a holdout read must match deployable execution)."""
+
+    def __init__(self, store: TickStore, *, cost_scenario: str = "taker") -> None:
         self._store = store
-        self._cost_side = taker_cost_per_side()
+        self._cost_side = cost_per_side(cost_scenario)
         self._cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
 
     def _cached(self, symbol: str) -> tuple[np.ndarray, np.ndarray]:
@@ -227,10 +232,13 @@ class LeadLagBacktester:
 
 
 def build_leadlag_backtesters(
-    *, research_ticks: TickStore, holdout_ticks: TickStore
+    *, research_ticks: TickStore, holdout_ticks: TickStore, cost_scenario: str = "taker"
 ) -> tuple[Backtester, Backtester]:
     """The TEST-3-critical pair: each side reads ONLY its own tick store (leader included).
     Disjoint roots are enforced here — one mispointed env var must never make the "holdout"
-    read in-sample."""
+    read in-sample. ``cost_scenario`` prices BOTH sides identically (rigor symmetry)."""
     assert_disjoint_roots(research_ticks.root, holdout_ticks.root)
-    return LeadLagBacktester(research_ticks), LeadLagBacktester(holdout_ticks)
+    return (
+        LeadLagBacktester(research_ticks, cost_scenario=cost_scenario),
+        LeadLagBacktester(holdout_ticks, cost_scenario=cost_scenario),
+    )

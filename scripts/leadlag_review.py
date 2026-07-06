@@ -45,7 +45,7 @@ def _sweep_one(
     ledger: ProposalLedger,
     qa: QuantAnalyst,
     in_sample: Backtester,
-    holdout_gate: HoldoutGate,
+    holdout_gate: HoldoutGate | None,
 ) -> tuple[int, int]:
     proposals: list[StrategyProposal] = []
     returns: list[Sequence[float]] = []
@@ -83,6 +83,13 @@ def _sweep_one(
         f"n_trials={n_trials}, {len(survivors)} survivor(s); DSR variance={variance:.3e}"
     )
     passes = 0
+    if holdout_gate is None:
+        for p, a in survivors:
+            print(
+                f"  survivor {dict(p.params)}: in-sample OOS={a.oos_sharpe:+.4f} -> "
+                "FROZEN (holdout read deliberately skipped)"
+            )
+        return len(survivors), 0
     for p, a in survivors:  # THE ONE-SHOT HOLDOUT READ (TEST-3)
         result = holdout_gate.evaluate(p, n_trials=n_trials, trial_sharpe_variance=variance)
         passes += result.passed
@@ -100,6 +107,15 @@ def main() -> None:
     ap.add_argument("--cells", default=",".join(sorted(LEADLAG_CELLS)))
     ap.add_argument("--seed", type=int, default=10)
     ap.add_argument("--n", type=int, default=50)
+    ap.add_argument(
+        "--cost-scenario",
+        choices=("taker", "maker"),
+        default="taker",
+        help="execution assumption (cost_scenarios.cost_per_side): 'maker' = post-only fees "
+        "only (2bps/side vs taker 8) — IN-SAMPLE-ONLY evidence about a Phase-4+ maker "
+        "deployment; maker FORCES frozen survivors (the holdout is never read under an "
+        "undeployable assumption).",
+    )
     args = ap.parse_args()
 
     windows = [w.strip() for w in args.cells.split(",")]
@@ -110,10 +126,16 @@ def main() -> None:
     research = TickStore(Path(os.environ["ALPHA_TICK_RESEARCH_ROOT"]))
     holdout = TickStore(Path(os.environ["ALPHA_TICK_HOLDOUT_ROOT"]))
     in_sample, holdout_bt = build_leadlag_backtesters(
-        research_ticks=research, holdout_ticks=holdout
+        research_ticks=research, holdout_ticks=holdout, cost_scenario=args.cost_scenario
     )
     qa = QuantAnalyst()
-    gate = HoldoutGate(backtester=holdout_bt, quant_analyst=qa)
+    read_holdout = args.cost_scenario == "taker"
+    if not read_holdout:
+        print(
+            "=== MAKER SCENARIO: fees-only post-only pricing; fill risk unmodelled — "
+            "IN-SAMPLE-ONLY evidence; survivors are FROZEN, the holdout is never read ==="
+        )
+    gate = HoldoutGate(backtester=holdout_bt, quant_analyst=qa) if read_holdout else None
 
     total_survivors = total_passes = 0
     with ProposalLedger() as ledger:
@@ -137,8 +159,8 @@ def main() -> None:
             total_survivors += survivors
             total_passes += passes
     print(
-        f"=== F3 verdict: {total_passes}/{total_survivors} survivor(s) PASS the holdout across "
-        f"{len(windows)} cell(s) ==="
+        f"=== F3[{args.cost_scenario}] verdict: {total_passes}/{total_survivors} survivor(s) "
+        f"PASS the holdout across {len(windows)} cell(s) ==="
     )
 
 

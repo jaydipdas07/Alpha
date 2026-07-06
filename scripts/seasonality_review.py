@@ -32,6 +32,7 @@ from pathlib import Path
 from alpha_core.data.holdout import HoldoutStore
 from alpha_core.data.store import BarStore
 from alpha_core.helpers.config import DiscoveryCellConfig, load_discovery_config, load_yaml
+from alpha_core.research.cost_scenarios import scenario_cost_config
 from alpha_core.research.discovery import Backtester
 from alpha_core.research.holdout_gate import HoldoutGate
 from alpha_core.research.promote import build_survivor_backtesters
@@ -67,10 +68,11 @@ def _sweep_one(
     ledger: ProposalLedger,
     qa: QuantAnalyst,
     in_sample: Backtester,
-    holdout_gate: HoldoutGate,
+    holdout_gate: HoldoutGate | None,
 ) -> tuple[int, int]:
-    """Seeded in-sample sweep for one (template, cell), then ONE holdout read per survivor.
-    Returns ``(survivors, passes)``."""
+    """Seeded in-sample sweep for one (template, cell), then ONE holdout read per survivor
+    — or, with ``holdout_gate=None`` (the maker scenario / an unpowered window), a frozen
+    no-read close. Returns ``(survivors, passes)``."""
     proposals: list[StrategyProposal] = []
     returns: list[Sequence[float]] = []
     for _ in range(n):
@@ -110,6 +112,13 @@ def _sweep_one(
         f"DSR variance={variance:.3e}"
     )
     passes = 0
+    if holdout_gate is None:
+        for proposal, assessment in survivors:
+            print(
+                f"  survivor {dict(proposal.params)}: in-sample OOS="
+                f"{assessment.oos_sharpe:+.4f} -> FROZEN (holdout read deliberately skipped)"
+            )
+        return len(survivors), 0
     # THE ONE-SHOT HOLDOUT READ (TEST-3) — each frozen survivor, once, on the gate-only store.
     for proposal, assessment in survivors:
         result = holdout_gate.evaluate(proposal, n_trials=n_trials, trial_sharpe_variance=variance)
@@ -140,6 +149,15 @@ def main() -> None:
         default=50,
         help="in-sample candidates per (template, cell) — the tiny spaces saturate well below it",
     )
+    ap.add_argument(
+        "--cost-scenario",
+        choices=("taker", "maker"),
+        default="taker",
+        help="execution assumption (cost_scenarios): 'maker' reprices the engine at the "
+        "post-only maker fee with no crossing slippage — IN-SAMPLE-ONLY evidence about a "
+        "Phase-4+ maker deployment (no post-only fill model exists yet), so maker FORCES "
+        "frozen survivors: the holdout is never read under an undeployable assumption.",
+    )
     args = ap.parse_args()
 
     templates = (
@@ -156,7 +174,13 @@ def main() -> None:
     research = BarStore(Path(os.environ["ALPHA_RESEARCH_ROOT"]))
     holdout = HoldoutStore(Path(os.environ["ALPHA_HOLDOUT_ROOT"]))
     risk_config = load_risk_config()
-    cost_config = load_yaml("costs.yaml")
+    cost_config = scenario_cost_config(load_yaml("costs.yaml"), args.cost_scenario)
+    read_holdout = args.cost_scenario == "taker"
+    if not read_holdout:
+        print(
+            "=== MAKER SCENARIO: fees-only post-only pricing; fill risk unmodelled — "
+            "IN-SAMPLE-ONLY evidence; survivors are FROZEN, the holdout is never read ==="
+        )
 
     qa = QuantAnalyst()
     total_survivors = total_passes = 0
@@ -181,7 +205,11 @@ def main() -> None:
                 # the SAME registry the Strategist proposes from — resolver parity
                 templates=SEASONAL_TEMPLATES,
             )
-            gate = HoldoutGate(backtester=holdout_backtester, quant_analyst=qa)
+            gate = (
+                HoldoutGate(backtester=holdout_backtester, quant_analyst=qa)
+                if read_holdout
+                else None
+            )
             for template in templates:
                 survivors, passes = _sweep_one(
                     template,
@@ -196,8 +224,8 @@ def main() -> None:
                 total_survivors += survivors
                 total_passes += passes
     print(
-        f"=== F2 verdict: {total_passes}/{total_survivors} survivor(s) PASS the holdout across "
-        f"{len(templates)} template(s) x {len(cells)} cell(s) ==="
+        f"=== F2[{args.cost_scenario}] verdict: {total_passes}/{total_survivors} survivor(s) "
+        f"PASS the holdout across {len(templates)} template(s) x {len(cells)} cell(s) ==="
     )
 
 
