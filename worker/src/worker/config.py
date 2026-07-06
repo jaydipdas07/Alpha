@@ -120,7 +120,7 @@ class EnvConfig(BaseModel):
     # The simulated account's starting cash under execution=paper (string -> Decimal, B5).
     paper_starting_cash: Decimal = Field(default=Decimal("1000000"), gt=0)
     # Where the factory caches the Kite instrument master (symbol -> instrument_token);
-    # refreshed automatically when absent. Gitignored var/ by convention.
+    # refetched automatically when absent or stale (the mtime bound below). Gitignored var/.
     kite_instruments_cache: str = "var/kite_instruments.json"
     # #160(d): refetch the cached master when older than this (Zerodha republishes the
     # dump daily; F&O contracts churn weekly, so an unbounded cache eventually serves

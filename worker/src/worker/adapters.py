@@ -87,7 +87,8 @@ def build_kite_ticker_feed(venue: VenueConfig, env: EnvConfig) -> KiteTickerFeed
     environment (the daily token ``scripts/ingest_kite.py``'s 2FA flow stages; a
     stale one is warned loudly here and then fails at connect with Kite's own
     error). Instrument tokens come from the Kite instrument master — the gitignored
-    cache when present, else fetched once and cached (network at the edge)."""
+    cache when present AND fresh (the mtime bound, #160d), else refetched and re-cached
+    (network at the edge)."""
     import json
     from datetime import UTC, datetime, timedelta
     from pathlib import Path
@@ -129,7 +130,8 @@ def build_kite_ticker_feed(venue: VenueConfig, env: EnvConfig) -> KiteTickerFeed
     fresh = False
     if cache.is_file():
         age = datetime.now(UTC) - datetime.fromtimestamp(cache.stat().st_mtime, tz=UTC)
-        fresh = age <= timedelta(hours=env.kite_instruments_cache_max_age_hours)
+        # a FUTURE mtime (clock step-back, copied-in file) must read stale, not eternally fresh
+        fresh = timedelta(0) <= age <= timedelta(hours=env.kite_instruments_cache_max_age_hours)
     if fresh:
         registry = InstrumentRegistry.from_kite_json(cache)
         log.info("kite_instruments_cached", path=str(cache))
