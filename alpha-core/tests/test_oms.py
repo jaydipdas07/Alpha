@@ -853,3 +853,76 @@ async def test_restore_daily_state_seats_the_window_date() -> None:
     oms3.accrue_funding(Decimal("-1500"))
     oms3.mark({})
     assert risk3.is_halted is False
+
+
+async def test_halt_latches_across_the_rollover() -> None:
+    # TEST-4: the daily WINDOW resets at the date boundary; the HALT never does.
+    risk = _risk()
+    clk = FakeClock(T0)
+    oms, _broker, _store = _setup(risk=risk, clock=clk)
+    oms.accrue_funding(Decimal("-2100"))  # breaches 2% of 100k
+    oms.mark({})
+    assert risk.is_halted is True
+    clk.advance(timedelta(days=1))
+    oms.accrue_funding(Decimal("1"))  # benign day-2 flow through the rolled window
+    oms.mark({})
+    assert risk.is_halted is True  # latched — a fresh window never re-arms
+    assert risk.halt_trigger is KillTrigger.DAILY_LOSS
+
+
+async def test_stale_fill_ts_never_rolls_the_window_backward() -> None:
+    # Review #180 MAJOR: a venue fill stamped just before midnight, processed after
+    # the clock rolled, must NOT wipe today's counter or re-key yesterday's row —
+    # the roll is forward-only; the stale delta lands in the CURRENT window.
+    risk = _risk()
+    clk = FakeClock(T0)
+    oms, broker, store = _setup(risk=risk, clock=clk)
+    # Day 1: open a position (its close will realize a loss later).
+    await oms.submit_signal(_signal(qty="100"), reference_price=Decimal("100"))
+    await oms.drain_events()
+    day1 = OMS._trading_date(T0)
+    # Day 2: the clock rolls; funding seats the new window with a small loss.
+    clk.advance(timedelta(days=1))
+    oms.accrue_funding(Decimal("-1900"))
+    oms.mark({})
+    assert risk.is_halted is False  # -1900 > -2000: inside the day-2 window
+    # A STALE fill closes the position at a loss, venue-stamped YESTERDAY: the tick
+    # drives the PaperBroker with a day-1 timestamp while the window is on day 2.
+    broker.on_tick(
+        Tick(
+            symbol=SYMBOL,
+            venue=Venue.NSE,
+            asset_class=AssetClass.EQUITY,
+            ts=T0 + timedelta(hours=1),  # yesterday
+            bid=Decimal("98"),
+            ask=Decimal("98.1"),
+            last_price=Decimal("98"),
+        )
+    )
+    await oms.submit_signal(_sell_signal(qty="100"), reference_price=Decimal("98"))
+    await oms.drain_events()
+    oms.mark({})
+    # The realized loss (~-200 plus fees) joined the DAY-2 window on top of -1900:
+    # the kill fires — under the backward-roll defect the counter was wiped instead.
+    assert risk.is_halted is True
+    # ... and yesterday's persisted row was NOT re-keyed/clobbered by the stale ts.
+    with store.transaction() as s:
+        day1_row = store.load_daily_pnl(s, day1)
+        day2_row = store.load_daily_pnl(s, OMS._trading_date(clk.now()))
+    assert day2_row is not None and day2_row.realized_pnl < Decimal("-2000")
+    assert day1_row is None or day1_row.realized_pnl >= Decimal("-100")
+
+
+async def test_day2_first_event_as_a_bare_mark_rolls_the_window() -> None:
+    # The mark call site alone must roll the window (no fill/funding preceding it).
+    risk = _risk()
+    clk = FakeClock(T0)
+    oms, _broker, _store = _setup(risk=risk, clock=clk)
+    oms.accrue_funding(Decimal("-1900"))
+    oms.mark({})
+    assert risk.is_halted is False
+    clk.advance(timedelta(days=1))
+    oms.mark({})  # bare mark on day 2: rolls the window; -1900 belongs to yesterday
+    oms.accrue_funding(Decimal("-1900"))
+    oms.mark({})
+    assert risk.is_halted is False  # day-2 window holds only its own -1900

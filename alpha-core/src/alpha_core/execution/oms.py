@@ -152,7 +152,12 @@ class OMS:
         ~-2% of accumulated round-trip costs, review #179 aftermath). The halt
         itself still LATCHES across days — resetting the counter never re-arms."""
         date = self._trading_date(ts)
-        if self._day_date != date:
+        # FORWARD-only (ISO dates order lexicographically): a stale venue fill.ts from
+        # just before midnight must never roll the window BACKWARD — that would wipe
+        # today's accumulation (a fail-OPEN kill) and re-key rows onto yesterday
+        # (review #180 MAJOR, reproduced). A stale delta lands in the CURRENT window
+        # instead — conservative in the only direction a kill may err.
+        if self._day_date is None or date > self._day_date:
             self._day_date = date
             self._day_realized = Decimal(0)
 
@@ -575,10 +580,19 @@ class OMS:
             unrealized = self.total_unrealized_pnl()
             self._risk.update_pnl(realized=self._day_realized, unrealized=unrealized)
             trigger = self._risk.halt_trigger
+            assert self._day_date is not None  # rolled above
+            day_date = self._day_date  # the row must key the WINDOW's date, never a stale ts
             # In-memory book is updated above; the DB write runs OFF the event loop
             # (G21 / P17.3) so a slow disk/Postgres never stalls the feed/kill timing.
             await asyncio.to_thread(
-                self._persist_fill, order, fill, self._positions[key], delta, unrealized, trigger
+                self._persist_fill,
+                order,
+                fill,
+                self._positions[key],
+                delta,
+                unrealized,
+                trigger,
+                day_date,
             )
         else:
             await asyncio.to_thread(self._persist_order, order, event=f"ORDER_{event.kind.value}")
@@ -591,6 +605,7 @@ class OMS:
         delta: Decimal,
         unrealized: Decimal,
         trigger: KillTrigger | None,
+        trading_date: str,
     ) -> None:
         """One atomic fill write (order + fill + position + P&L + audit). Sync — run
         via ``asyncio.to_thread`` so the event loop never blocks on it (G21)."""
@@ -609,7 +624,7 @@ class OMS:
                 )
             self._store.upsert_daily_pnl(
                 s,
-                trading_date=self._trading_date(fill.ts),
+                trading_date=trading_date,
                 day_start_equity=self._risk.base_capital,
                 realized=self._day_realized,
                 unrealized=unrealized,
