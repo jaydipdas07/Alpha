@@ -14,6 +14,8 @@ from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from alpha_core.backtest.runner import BacktestResult, run_backtest
 from alpha_core.core.enums import AssetClass, OrderType, Side, Venue
 from alpha_core.core.interfaces import Strategy
@@ -209,6 +211,101 @@ async def test_24x7_schedule_is_bit_identical_to_none() -> None:
     always_open = await run(MarketSchedule(is_24x7=True))
     assert base.equity_curve == always_open.equity_curve
     assert base.stats == always_open.stats
+
+
+class OneLowballLimit(Strategy):
+    """Rests ONE far-below-market limit buy on the first bar, then goes quiet — the
+    review #176 probe-C shape: without the Worker's cancel-working leg, this order
+    survives the square-off and fills in the blocked window when prices drop."""
+
+    def __init__(self) -> None:
+        self._done = False
+
+    def on_bar(self, bar: Bar) -> Sequence[Signal]:
+        if self._done:
+            return []
+        self._done = True
+        return [
+            Signal(
+                strategy_id="lowball",
+                symbol=bar.symbol,
+                asset_class=bar.asset_class,
+                side=Side.BUY,
+                quantity=Decimal("1"),
+                order_type=OrderType.LIMIT,
+                limit_price=Decimal("150"),  # far below the 200s tape — rests
+                created_at=bar.start + bar.interval,
+                reason="test: resting lowball",
+            )
+        ]
+
+    def on_tick(self, tick: Tick) -> Sequence[Signal]:
+        return []
+
+
+async def test_square_off_cancels_resting_orders_before_the_blocked_window() -> None:
+    # Tape: 200s until the 15:20 cutoff, then a post-cutoff crash through the limit.
+    closes = ["200"] * 10 + ["140"] * 4  # crash bars close 15:21..15:24 (blocked window)
+    bars = _bars(_wed(15, 10), closes)
+    result = await _run(
+        bars, OneLowballLimit(), schedule=_nse_schedule(), intraday_square_off=True
+    )
+    # The square-off cancels the resting limit (the Worker's cancel_all_working leg) —
+    # the post-cutoff crash must NOT fill it. Zero fills, flat book, zero P&L.
+    assert result.stats.num_fills == 0
+    assert result.stats.final_pnl == 0
+
+
+async def test_rollover_flattens_a_position_the_thin_tape_stranded() -> None:
+    from alpha_core.strategy.examples.placeholder import PlaceholderStrategy
+
+    # Day 1: tape STOPS at a 15:19 close — before the 15:20 square-off instant, so no
+    # bar can trigger the cutoff (live's wall-clock periodic would have flattened).
+    day1 = _bars(_wed(15, 10), ["100"] * 9)  # closes 15:11..15:19, entry fills at 100
+    # Day 2 (Thursday): the first bar must flatten the stranded book at ITS close.
+    day2_start = datetime(2026, 6, 18, 9, 15, tzinfo=IST)
+    day2 = _bars(day2_start, ["110"] * 5)
+    strat = PlaceholderStrategy(quantity=Decimal("2"))
+    mis = await _run(day1 + day2, strat, schedule=_nse_schedule(), intraday_square_off=True)
+    # entry (1 fill at 100) + the rollover flatten (1 fill at 110); the overnight gap
+    # lands in the fold — honest about what an offline tape can know.
+    assert mis.stats.num_fills == 2
+    assert mis.stats.final_pnl == (Decimal("110") - Decimal("100")) * 2
+
+
+async def test_daily_bars_with_a_schedule_raise() -> None:
+    daily = Bar(
+        symbol=SYMBOL,
+        venue=Venue.NSE,
+        asset_class=AssetClass.EQUITY,
+        start=_wed(9, 15).astimezone(UTC),
+        interval=timedelta(days=1),
+        open=Decimal("100"),
+        high=Decimal("101"),
+        low=Decimal("99"),
+        close=Decimal("100"),
+        volume=Decimal("1"),
+    )
+    with pytest.raises(ValueError, match="daily"):
+        await _run([daily], EveryBarBuyer(), schedule=_nse_schedule())
+
+
+def test_degenerate_schedules_are_rejected_at_construction() -> None:
+    with pytest.raises(ValueError, match="square_off must not precede"):
+        MarketSchedule(
+            tz="Asia/Kolkata",
+            open_time=time(9, 15),
+            close_time=time(15, 30),
+            no_new_entry=time(15, 15),
+            square_off=time(15, 10),  # before no_new_entry — nonsensical interleave
+        )
+    with pytest.raises(ValueError, match="within"):
+        MarketSchedule(
+            tz="Asia/Kolkata",
+            open_time=time(9, 15),
+            close_time=time(15, 30),
+            no_new_entry=time(16, 0),  # outside the session
+        )
 
 
 async def test_square_off_flattens_once_at_the_cutoff_not_at_close() -> None:
