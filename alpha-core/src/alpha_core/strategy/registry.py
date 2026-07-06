@@ -18,7 +18,6 @@ from alpha_core.strategy.examples.idle import IdleStrategy
 from alpha_core.strategy.examples.ma_crossover import MaCrossover
 from alpha_core.strategy.examples.macd import Macd
 from alpha_core.strategy.examples.momentum_roc import MomentumRoc
-from alpha_core.strategy.examples.nifty_lhh import NiftyLhhMomentum
 from alpha_core.strategy.examples.nifty_noise import NiftyNoiseBreakout
 from alpha_core.strategy.examples.opening_range_breakout import OpeningRangeBreakout
 from alpha_core.strategy.examples.placeholder import PlaceholderStrategy
@@ -47,8 +46,6 @@ _BUILDERS: dict[str, Callable[[], Strategy]] = {
     "seasonal_sunday_trend": SeasonalSundayTrend.from_config,
     # F1 NIFTY noise-area breakout (the intraday-mandate headline family).
     "nifty_noise_breakout": NiftyNoiseBreakout.from_config,
-    # NGE-family last-half-hour momentum (unconditioned deployment form).
-    "nifty_lhh_momentum": NiftyLhhMomentum.from_config,
     "placeholder": PlaceholderStrategy,
     "idle": IdleStrategy,  # no-trade: infra soak / live smoke check
 }
