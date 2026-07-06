@@ -94,7 +94,7 @@
           },
           "gst": {
             "pct": 0.18,
-            "true": [
+            "on": [
               "brokerage",
               "exchange_txn",
               "sebi"
@@ -124,7 +124,7 @@
           },
           "gst": {
             "pct": 0.18,
-            "true": [
+            "on": [
               "brokerage",
               "exchange_txn",
               "sebi"
@@ -154,7 +154,7 @@
           },
           "gst": {
             "pct": 0.18,
-            "true": [
+            "on": [
               "brokerage",
               "exchange_txn",
               "sebi"
