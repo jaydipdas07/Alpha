@@ -50,6 +50,10 @@
           "type": "bps",
           "value": 5
         },
+        "index_future": {
+          "type": "bps",
+          "value": 1
+        },
         "crypto_perp": {
           "type": "bps",
           "value": 3
@@ -64,6 +68,7 @@
         },
         "default_spread": {
           "equity": 0.0005,
+          "index_future": 0.0001,
           "crypto_perp": 0.0003,
           "crypto_spot": 0.0008,
           "index_option_ticks": 1
@@ -106,7 +111,7 @@
             "mode": "flat"
           },
           "stt": {
-            "pct": 0.000625,
+            "pct": 0.0015,
             "side": "sell",
             "true": "premium"
           },
@@ -129,6 +134,35 @@
             "pct": 3e-05,
             "side": "buy",
             "true": "premium"
+          }
+        },
+        "index_future": {
+          "brokerage": {
+            "pct": 0.0003,
+            "flat": 20,
+            "mode": "min"
+          },
+          "stt": {
+            "pct": 0.0005,
+            "side": "sell"
+          },
+          "exchange_txn": {
+            "pct": 1.73e-05
+          },
+          "sebi": {
+            "pct": 1e-06
+          },
+          "gst": {
+            "pct": 0.18,
+            "true": [
+              "brokerage",
+              "exchange_txn",
+              "sebi"
+            ]
+          },
+          "stamp_duty": {
+            "pct": 2e-05,
+            "side": "buy"
           }
         },
         "crypto_perp": {
