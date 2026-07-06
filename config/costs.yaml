@@ -24,11 +24,11 @@ segments:
     stamp_duty:   { pct: 0.00003, side: buy }
   index_option:
     brokerage:    { flat: 20, mode: flat }               # ₹20/order
-    stt:          { pct: 0.0015, side: sell, on: premium }  # Budget-2026: 0.15% from 2026-04-01
-    exchange_txn: { pct: 0.0003503, on: premium }
+    stt:          { pct: 0.0015, side: sell, "on": premium }  # Budget-2026: 0.15% from 2026-04-01
+    exchange_txn: { pct: 0.0003503, "on": premium }
     sebi:         { pct: 0.000001 }
     gst:          { pct: 0.18, "on": [brokerage, exchange_txn, sebi] }  # "on" quoted: YAML 1.1 parses a bare on: as boolean True
-    stamp_duty:   { pct: 0.00003, side: buy, on: premium }
+    stamp_duty:   { pct: 0.00003, side: buy, "on": premium }
   # Index futures (NSE NIFTY/BANKNIFTY). NB: no AssetClass maps to this segment in the
   # engine yet — it is the single config home for the F1 research fold's futures cost
   # math (survey §India-2026: ~6 bps round trip) and for the Phase-5 futures leg; the
