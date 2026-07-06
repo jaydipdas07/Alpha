@@ -1,6 +1,8 @@
 # F1 NIFTY intraday noise-area breakout (survey §5) — deployment defaults.
 # The DISCOVERY ranges live in research/f1_templates.py (the pre-registration);
 # this file configures a deployed/paper instance (strategy/registry.py builder).
+# ⚠ MIS-REQUIRED: deploy only with intraday_square_off=true — on gap days the
+# engine's flatteners own the book (the strategy resets silently; see module doc).
 strategy_id: nifty_noise_breakout
 lookback_days: 14        # trailing days in the per-time-of-day noise boundary
 conditioning: 0          # 0 = none, 1 = first-half-hour sign gate (Gao)

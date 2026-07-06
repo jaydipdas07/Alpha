@@ -136,14 +136,36 @@ def test_fhh_conditioning_blocks_checks_before_the_first_half_hour_ends() -> Non
     assert _only(plain.on_bar(_bar(17, 9, 30, open_="101.6", close="101.6"))).side is Side.BUY
 
 
-def test_gap_day_flatten_on_rollover() -> None:
+def test_gap_day_rollover_resets_silently_never_emitting_an_inverse() -> None:
+    # MIS contract (review #179 F2): the ENGINE's square-off/rollover flattener owns a
+    # gap day's book. The strategy must reset its tracked side WITHOUT emitting — its
+    # own exit would land on the already-flat book and open the INVERSE position.
     strat = NiftyNoiseBreakout(_cfg())
     _warmup_days(strat, 15, 16)
     strat.on_bar(_bar(17, 9, 16, open_="100", close="100"))
     assert _only(strat.on_bar(_bar(17, 10, 0, open_="101.6", close="101.6"))).side is Side.BUY
-    # The tape dies before 15:05 (no EOD-flat bar). The NEXT day's first bar flattens.
-    sig = _only(strat.on_bar(_bar(18, 9, 16, open_="100", close="100")))
-    assert sig.side is Side.SELL and "gap-day flatten" in (sig.reason or "")
+    # The tape dies before 15:05 (no EOD-flat bar). The NEXT day's first bar: NO signal.
+    assert strat.on_bar(_bar(18, 9, 16, open_="100", close="100")) == []
+    # ... and the new day proceeds normally: a fresh break can enter again (boundary at
+    # 10:00 is now mean(2%, 1.6%) = 1.8% from days 16-17).
+    sig = _only(strat.on_bar(_bar(18, 10, 0, open_="98.1", close="98.1")))  # -1.9% < -1.8%
+    assert sig.side is Side.SELL
+
+
+def test_check_instants_tolerate_2015_era_second_offsets() -> None:
+    # 2015-era Kite stamps carry :01 offsets (review #179 F3); the check matches on the
+    # close MINUTE — an exact second==0 match would silently void those slots.
+    strat = NiftyNoiseBreakout(_cfg())
+    for day, close in zip((15, 16), ("101", "102"), strict=True):
+        strat.on_bar(_bar(day, 9, 16, open_="100", close="100"))
+        # the 10:00 check bar arrives stamped :01 late (closes 10:00:01)
+        shifted = _bar(day, 10, 0, open_=close, close=close)
+        shifted = shifted.model_copy(update={"start": shifted.start + timedelta(seconds=1)})
+        assert strat.on_bar(shifted) == []
+    strat.on_bar(_bar(17, 9, 16, open_="100", close="100"))
+    late = _bar(17, 10, 0, open_="101.6", close="101.6")
+    late = late.model_copy(update={"start": late.start + timedelta(seconds=1)})
+    assert _only(strat.on_bar(late)).side is Side.BUY  # boundary built AND checked at :01
 
 
 def test_config_validation_fails_fast() -> None:

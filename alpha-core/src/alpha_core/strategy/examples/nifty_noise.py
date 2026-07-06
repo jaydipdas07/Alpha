@@ -19,10 +19,16 @@ a FUTURE pre-registration with its own trials ledger, deliberately not a knob he
 Time discipline: decisions at ``bar.start + bar.interval`` only (bar-time, TEST-1); IST is a
 fixed +05:30 offset (no tzdata in the kernel — the ``data.ingest.kite`` precedent). The noise
 history for a check instant is updated AFTER today's decision at that instant, so a day's own
-move never sits inside the boundary that judges it (no self-reference). Day state resets on
-the IST date rollover; a position still open at rollover (a tape gap swallowed the EOD-flat
-bar AND the engine square-off) is flattened on the new day's first processed bar — never a
-silent overnight ride.
+move never sits inside the boundary that judges it (no self-reference).
+
+**MIS-required contract:** this family deploys ONLY with ``intraday_square_off`` (offline:
+the SF4 fold flag; live: the Worker's daily flatten). On a gap day whose tape dies before
+the 15:05 flat bar, the ENGINE's flatteners own the book; at the IST rollover the strategy
+resets its tracked side silently — it must never emit its own gap-day exit, which would
+land on the already-flat book and open the inverse (review #179). Under a CNC deployment a
+gap-day position would be orphaned — hence the contract. Declared registration nits: a
+late-first-bar day (rare tape starts mid-session) deflates that day's appended |moves|
+slightly; 2015-era stamps carry :01-second offsets, so check matching is second-tolerant.
 
 Session-tail honesty: ``flat_time`` (default 15:05 IST) sits BEFORE the segment's
 ``no_new_entry_time`` (15:10, ``instruments.yaml``), so the exit lands on a bar the SF4
@@ -102,11 +108,14 @@ class NiftyNoiseBreakout(Strategy):
         now = bar.start + bar.interval  # the decision instant (bar close), tz-aware UTC
         now_ist = now.astimezone(_IST)
 
-        # --- IST day rollover: reset day state; flatten a gap-orphaned position loudly ----
+        # --- IST day rollover: reset day state. A position still tracked here means the
+        # tape died before the 15:05 flat bar — on an MIS deployment (this family's
+        # REQUIRED shape) the ENGINE's square-off/rollover flattener already closed the
+        # book, so the strategy resets its side SILENTLY: emitting an exit here would
+        # land on a flat book and open the INVERSE position (review #179 F2 — reproduced).
         if st.day is None or st.day.ist_date != now_ist.date():
             st.day = _DayState(ist_date=now_ist.date())
-            if st.side is not None:
-                return [self._exit(bar, st, "gap-day flatten (EOD bar was missing)")]
+            st.side = None
         if st.day.day_open is None:
             st.day.day_open = bar.open  # first-seen bar of the IST day
 
@@ -121,8 +130,10 @@ class NiftyNoiseBreakout(Strategy):
                 return [self._exit(bar, st, "EOD flat")]
             return []
 
-        # --- check instants: each HH:00 / HH:30 IST close ----------------------------------
-        if now_ist.minute not in (0, 30) or now_ist.second != 0:
+        # --- check instants: each HH:00 / HH:30 IST close (second-TOLERANT: 2015-era Kite
+        # stamps carry :01 offsets — an exact second==0 match would silently void ~341
+        # check slots, review #179 F3; 60s bars mean at most one close per minute) -------
+        if now_ist.minute not in (0, 30):
             return []
         key = (now_ist.hour, now_ist.minute)
         history = st.noise.setdefault(key, deque(maxlen=self._cfg.lookback_days))

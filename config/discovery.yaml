@@ -324,14 +324,19 @@ cells:
     interval_seconds: 60
     starting_cash: "1000000"   # INR
   # F1 (the intraday-mandate headline family): the NIFTY 50 INDEX minute cell — swept
-  # ONLY by scripts/f1_intraday_review.py over its own F1_TEMPLATES registry (the
-  # nightly's default templates never propose into it; cell_ready guards the data).
+  # by scripts/f1_intraday_review.py over its own F1_TEMPLATES registry. NB a re-enabled
+  # nightly WOULD sweep its default families here too (on their own ledgers) — the
+  # separate-registry guarantee protects F1's trial budget, not the cell (#179 review).
+  # starting_cash 10M: the family's fixed quantity (20) x the 2026 index level (~26k =
+  # ~520k notional) must clear the per-instrument (20%) and fat-finger caps across the
+  # WHOLE 2015-2026 window — at 1M the caps silently forbade entry from mid-2020 (#179
+  # CRITICAL). Sizing is not a searched axis; the statistics plane is scale-invariant.
   - market: EQUITY
     window: "nifty50-1m"
     symbol: "NSE:NIFTY 50"
     venue: NSE
     interval_seconds: 60
-    starting_cash: "1000000"   # INR
+    starting_cash: "10000000"  # INR (see note above)
 
 # --- cross-sectional panels (M3.0) -------------------------------------------------
 # A panel names a whole universe of symbols sharing a (market, venue, interval), to be
