@@ -97,6 +97,7 @@ class OMS:
         self._positions: dict[tuple[Venue, str], Position] = {}
         self._seen_fills: set[str] = set()
         self._day_realized: Decimal = Decimal(0)
+        self._day_date: str | None = None  # the trading date _day_realized accumulates for
         self._funding: Decimal = Decimal(0)  # cumulative perp funding cash flow (R13)
         # Reservation price per working order (for valuing market orders that have
         # no limit price) + the single lock that makes check→reserve→place→ack
@@ -141,12 +142,33 @@ class OMS:
     def _trading_date(ts: datetime) -> str:
         return ts.astimezone(UTC).date().isoformat()
 
+    def _roll_trading_date(self, ts: datetime) -> None:
+        """Reset the DAILY realized counter on a trading-date (UTC) rollover.
+
+        'Daily loss' is per trading DATE (ADR 0006). Without this reset a long-lived
+        process accumulates every prior day's realized (fees included) into today's
+        halt math — the kill fires on the cumulative bleed instead of a daily one
+        (found live by the F1 fold: all four 11-year tracks latched in Feb-2021 on
+        ~-2% of accumulated round-trip costs, review #179 aftermath). The halt
+        itself still LATCHES across days — resetting the counter never re-arms."""
+        date = self._trading_date(ts)
+        # FORWARD-only (ISO dates order lexicographically): a stale venue fill.ts from
+        # just before midnight must never roll the window BACKWARD — that would wipe
+        # today's accumulation (a fail-OPEN kill) and re-key rows onto yesterday
+        # (review #180 MAJOR, reproduced). A stale delta lands in the CURRENT window
+        # instead — conservative in the only direction a kill may err.
+        if self._day_date is None or date > self._day_date:
+            self._day_date = date
+            self._day_realized = Decimal(0)
+
     def restore_daily_state(self, trading_date: str) -> None:
         """Restore today's realized-P&L baseline + latched halt on restart (ADR 0006)."""
         with self._store.transaction() as s:
             row = self._store.load_daily_pnl(s, trading_date)
         if row is None:
+            self._day_date = trading_date  # seat the window even with no row yet
             return
+        self._day_date = trading_date
         self._day_realized = row.realized_pnl
         if row.halted:
             trigger = KillTrigger(row.halt_trigger) if row.halt_trigger else KillTrigger.MANUAL
@@ -282,8 +304,9 @@ class OMS:
         re-seats a funding-inclusive day total) and leave an audit row (CLAUDE.md —
         every decision audited); ``now`` is the injected clock (bar-time in backtest)."""
         self._funding += cash_flow
-        self._day_realized += cash_flow
         now = self._clock.now()
+        self._roll_trading_date(now)
+        self._day_realized += cash_flow
         trigger = self._risk.halt_trigger
         with self._store.transaction() as s:
             self._store.upsert_daily_pnl(
@@ -319,6 +342,7 @@ class OMS:
         """Update last-marks for open positions and re-check the daily-loss kill
         switch against realized + unrealized P&L (ADR 0006). Drawdown on an open
         position can trip the switch even with no new fill."""
+        self._roll_trading_date(self._clock.now())
         for (venue, symbol), pos in self._positions.items():
             price = prices.get(symbol)
             if price is not None and pos.quantity != 0:
@@ -551,14 +575,24 @@ class OMS:
             self._positions[key] = apply_fill(old, fill)
             delta = self._positions[key].realized_pnl - old_realized
             metrics.fills.labels(venue=fill.venue.value, side=fill.side.value).inc()
+            self._roll_trading_date(fill.ts)
             self._day_realized += delta
             unrealized = self.total_unrealized_pnl()
             self._risk.update_pnl(realized=self._day_realized, unrealized=unrealized)
             trigger = self._risk.halt_trigger
+            assert self._day_date is not None  # rolled above
+            day_date = self._day_date  # the row must key the WINDOW's date, never a stale ts
             # In-memory book is updated above; the DB write runs OFF the event loop
             # (G21 / P17.3) so a slow disk/Postgres never stalls the feed/kill timing.
             await asyncio.to_thread(
-                self._persist_fill, order, fill, self._positions[key], delta, unrealized, trigger
+                self._persist_fill,
+                order,
+                fill,
+                self._positions[key],
+                delta,
+                unrealized,
+                trigger,
+                day_date,
             )
         else:
             await asyncio.to_thread(self._persist_order, order, event=f"ORDER_{event.kind.value}")
@@ -571,6 +605,7 @@ class OMS:
         delta: Decimal,
         unrealized: Decimal,
         trigger: KillTrigger | None,
+        trading_date: str,
     ) -> None:
         """One atomic fill write (order + fill + position + P&L + audit). Sync — run
         via ``asyncio.to_thread`` so the event loop never blocks on it (G21)."""
@@ -589,7 +624,7 @@ class OMS:
                 )
             self._store.upsert_daily_pnl(
                 s,
-                trading_date=self._trading_date(fill.ts),
+                trading_date=trading_date,
                 day_start_equity=self._risk.base_capital,
                 realized=self._day_realized,
                 unrealized=unrealized,
