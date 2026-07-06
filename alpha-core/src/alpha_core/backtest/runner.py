@@ -12,7 +12,7 @@ from __future__ import annotations
 import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -32,8 +32,42 @@ from alpha_core.portfolio.risk_overlay import PortfolioRiskOverlay
 from alpha_core.portfolio.signal_book import SignalBook
 from alpha_core.risk.limits import RiskConfig
 from alpha_core.risk.manager import RiskManager
-from alpha_core.scheduler.clock import FakeClock
+from alpha_core.scheduler.clock import FakeClock, MarketSchedule
 from alpha_core.strategy.engine import StrategyEngine
+
+
+async def _square_off_book(oms: OMS) -> None:
+    """The Worker's square-off EXECUTION mirrored (``_maybe_square_off``): cancel working
+    orders, flatten via the risk-BYPASSING kill path (a flatten must never be refused by
+    the fat-finger gate the way per-position ``square_off`` signals can be), drain the
+    fills inline, and fail LOUD if the book still isn't flat — a silent not-flat backtest
+    book would quietly drop unrealized P&L from ``final_pnl`` (review #176 F1)."""
+    await oms.cancel_all_working()
+    await oms.flatten_all()
+    await oms.drain_events()
+    if any(p.quantity != 0 for p in oms.positions):
+        raise RuntimeError("backtest square-off left the book not flat")
+
+
+def _session_blocked(schedule: MarketSchedule | None, instant: datetime) -> bool:
+    """The backtest mirror of the Worker's ``_session_blocks_entry`` (SCHED-1, TEST-1).
+
+    ``True`` when the session rules block the strategy at ``instant`` (the bar-close
+    decision instant): outside the trading session (holiday / pre-open / post-close)
+    or past ``no_new_entry_time``. Exactly as live, the gate wraps ``process_bar``
+    itself — a blocked bar NEVER reaches the strategy, so its internal state cannot
+    desync from a live run's (live, the Worker drops those bars the same way; only
+    the halt and square-off flatteners still act in a blocked window). ``None`` (the
+    default everywhere) or a 24x7 schedule preserves today's behavior bit-for-bit —
+    every already-frozen crypto verdict re-runs unchanged.
+
+    Known inherent gap (review #176 F3): live gates at tick-ARRIVAL time (a bar only
+    emits when the next bucket's first tick lands), offline at the scheduled close —
+    identical on a punctual tape, divergent when the tape thins right at a cutoff.
+    Not closable offline without modeling arrival times; accepted and documented."""
+    if schedule is None or schedule.is_24x7:
+        return False
+    return not schedule.is_open(instant) or schedule.is_after_no_new_entry(instant)
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,10 +167,20 @@ async def run_backtest(
     starting_cash: Decimal = Decimal("1000000"),
     stress: bool = False,
     funding: FundingConfig | None = None,
+    schedule: MarketSchedule | None = None,
+    intraday_square_off: bool = False,
 ) -> BacktestResult:
     """Run ``strategy`` over historical ``bars`` and return stats. With ``funding``
     set, perp funding accrues on held crypto positions every funding interval (R13)
-    — into P&L and the daily-loss kill gate."""
+    — into P&L and the daily-loss kill gate.
+
+    ``schedule`` (SF4, TEST-1) applies the live Worker's session gate symmetrically:
+    bars whose close instant is outside the session or past ``no_new_entry_time``
+    never reach the strategy — required for any Indian-market fold (Kite historical
+    tapes carry the 15:15+ tail that live entries are blocked from). ``None`` keeps
+    the pre-SF4 behavior exactly. ``intraday_square_off`` mirrors the Worker's opt-in
+    MIS-style daily flatten at ``square_off_time`` — once per session date, not a
+    kill, the risk gate stays armed."""
     broker = PaperBroker(
         cost_model=CostModel(cost_config),
         instruments=instruments,
@@ -160,14 +204,58 @@ async def run_backtest(
         while next_funding <= bars[0].start:  # first funding is strictly after the start
             next_funding += funding_interval
 
+    # The session gate reasons at bar-close instants — sound for intraday bars only. A
+    # daily bar closes on the NEXT calendar day (or at an out-of-session instant), so
+    # every (or every pre-weekend) bar would be silently blocked (review #176 F4).
+    if (
+        schedule is not None
+        and not schedule.is_24x7
+        and any(b.interval >= timedelta(days=1) for b in bars)
+    ):
+        raise ValueError(
+            "a session schedule cannot gate daily(+) bars — their close instants fall "
+            "outside the session; run daily folds without a schedule"
+        )
+
     equity_curve: list[tuple[datetime, Decimal]] = []
+    squared_off_on: date | None = None  # the last session date squared off (UTC, as live)
+    prev_close_date: date | None = None
     for bar in bars:
         bar_close = bar.start + bar.interval
         clock.set(bar_close)  # decision instant = bar close
         broker.on_tick(quote_from_bar(bar))
-        for signal in engine.process_bar(bar):
-            await oms.submit_signal(signal, reference_price=bar.close)
+        # Thin-tape closure (review #176 F2): live, the square-off fires WALL-CLOCK at
+        # square_off_time even when no bar prints; offline the only clock is bar closes.
+        # A day whose tape stopped before the cutoff would ride overnight — flatten at
+        # the next session date's FIRST bar instead (the overnight gap lands in the fold:
+        # honest about what an offline tape can know, and strictly closer to live).
+        if (
+            intraday_square_off
+            and schedule is not None
+            and not schedule.is_24x7  # a 24x7 book NEVER squares off (review #176 R1)
+            and not risk.is_halted
+            and prev_close_date is not None
+            and bar_close.astimezone(UTC).date() != prev_close_date
+            and any(p.quantity != 0 for p in oms.positions)
+        ):
+            await _square_off_book(oms)
+        prev_close_date = bar_close.astimezone(UTC).date()
+        if not _session_blocked(schedule, bar_close):
+            for signal in engine.process_bar(bar):
+                await oms.submit_signal(signal, reference_price=bar.close)
         await oms.drain_events()
+        # Opt-in daily square-off (SF4): the Worker's ``_maybe_square_off`` mirrored —
+        # once per (UTC) session date, skipped while halted (a halt owns the book via
+        # handle_kill), the Worker's cancel->flatten->drain->verify sequence.
+        if (
+            intraday_square_off
+            and schedule is not None
+            and not risk.is_halted
+            and schedule.is_at_or_after_square_off(bar_close)
+            and squared_off_on != bar_close.astimezone(UTC).date()
+        ):
+            squared_off_on = bar_close.astimezone(UTC).date()
+            await _square_off_book(oms)
         # Accrue perp funding on held crypto positions at each boundary this bar crosses,
         # before the mark — so a funding-bleed feeds the daily-loss kill via mark() (R13).
         if funding and funding_interval and next_funding is not None:
@@ -230,6 +318,8 @@ async def run_portfolio_backtest(
     stress: bool = False,
     overlay: PortfolioRiskOverlay | None = None,
     funding: FundingConfig | None = None,
+    schedule: MarketSchedule | None = None,
+    intraday_square_off: bool = False,
 ) -> BacktestResult:
     """Multi-instrument, multi-strategy backtest through the pure allocator (R5).
 
@@ -244,6 +334,11 @@ async def run_portfolio_backtest(
     strategy ``run_backtest`` (booked into P&L AND the daily-loss kill gate), so
     portfolio rigor is correct for perps. ``funding=None`` leaves this path
     unchanged (``stats.funding_paid`` stays 0).
+
+    ``schedule`` / ``intraday_square_off`` (SF4): the same session gate and opt-in
+    daily flatten as ``run_backtest``, applied per cross-section at its close
+    instant — a blocked cross-section still ticks the broker, accrues funding and
+    marks, but never reaches the strategies (the live Worker's exact semantics).
     """
     broker = PaperBroker(
         cost_model=CostModel(cost_config),
@@ -273,6 +368,17 @@ async def run_portfolio_backtest(
     asset_class: dict[str, AssetClass] = {}
     equity_curve: list[tuple[datetime, Decimal]] = []
 
+    # Same guard as run_backtest (review #176 F4): the gate is intraday-only.
+    if (
+        schedule is not None
+        and not schedule.is_24x7
+        and any(b.interval >= timedelta(days=1) for b in bars)
+    ):
+        raise ValueError(
+            "a session schedule cannot gate daily(+) bars — their close instants fall "
+            "outside the session; run daily folds without a schedule"
+        )
+
     # Sorted offline bars through the barrier reproduce the live cross-sections.
     barrier = BarBarrier()
     sections: list[list[Bar]] = []
@@ -284,25 +390,55 @@ async def run_portfolio_backtest(
     if final:
         sections.append(final)
 
+    squared_off_on: date | None = None  # the last session date squared off (UTC, as live)
+    prev_close_date: date | None = None
     for cross_section in sections:
         close_ts = cross_section[0].start + cross_section[0].interval
         clock.set(close_ts)
         for bar in cross_section:
             broker.on_tick(quote_from_bar(bar))
-        await rebalance_pass(
-            oms=oms,
-            engines=engines,
-            book=book,
-            allocator=allocator,
-            portfolio_config=portfolio_config,
-            cross_section=cross_section,
-            prices=prices,
-            asset_class=asset_class,
-            capital=starting_cash,
-            now=close_ts,
-            overlay=overlay,
-        )
+        # Thin-tape closure — same rule as run_backtest (review #176 F2).
+        if (
+            intraday_square_off
+            and schedule is not None
+            and not schedule.is_24x7  # a 24x7 book NEVER squares off (review #176 R1)
+            and not risk.is_halted
+            and prev_close_date is not None
+            and close_ts.astimezone(UTC).date() != prev_close_date
+            and any(p.quantity != 0 for p in oms.positions)
+        ):
+            await _square_off_book(oms)
+        prev_close_date = close_ts.astimezone(UTC).date()
+        if not _session_blocked(schedule, close_ts):
+            await rebalance_pass(
+                oms=oms,
+                engines=engines,
+                book=book,
+                allocator=allocator,
+                portfolio_config=portfolio_config,
+                cross_section=cross_section,
+                prices=prices,
+                asset_class=asset_class,
+                capital=starting_cash,
+                now=close_ts,
+                overlay=overlay,
+            )
+        else:
+            # Market data still flows while the strategy plane is gated (as live):
+            # the mark below must price off THIS section's closes, never stale ones.
+            for bar in cross_section:
+                prices[bar.symbol] = bar.close
+                asset_class[bar.symbol] = bar.asset_class
         await oms.drain_events()
+        if (
+            intraday_square_off
+            and schedule is not None
+            and not risk.is_halted
+            and schedule.is_at_or_after_square_off(close_ts)
+            and squared_off_on != close_ts.astimezone(UTC).date()
+        ):
+            squared_off_on = close_ts.astimezone(UTC).date()
+            await _square_off_book(oms)
         # Accrue perp funding on held crypto positions at each boundary this cross-section
         # crosses, before the mark — so a funding-bleed feeds the daily-loss kill via mark() (R13).
         if funding and funding_interval and next_funding is not None:

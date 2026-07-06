@@ -77,6 +77,16 @@ class MarketSchedule:
         self._is_24x7 = is_24x7
         if not is_24x7 and (open_time is None or close_time is None):
             raise ValueError("a session segment requires open_time and close_time")
+        if not is_24x7:
+            # Degenerate orderings (square-off before no-new-entry, cutoffs outside the
+            # session) make the gates interleave nonsensically — fail at construction.
+            assert open_time is not None and close_time is not None
+            marks = [t for t in (no_new_entry, square_off) if t is not None]
+            if no_new_entry is not None and square_off is not None and square_off < no_new_entry:
+                raise ValueError("square_off must not precede no_new_entry")
+            for mark in marks:
+                if not open_time <= mark <= close_time:
+                    raise ValueError("session cutoffs must lie within [open, close]")
 
     @property
     def is_24x7(self) -> bool:
