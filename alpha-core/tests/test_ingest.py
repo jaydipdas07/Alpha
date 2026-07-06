@@ -199,6 +199,26 @@ def test_kite_candles_skips_incomplete_rows() -> None:
     assert len(bars) == 1
 
 
+def test_kite_candles_skips_zero_price_glitch_rows() -> None:
+    # Kite's old minute archives contain all-zero glitch rows (seen live: TCS 2015-era);
+    # they carry no price and are skipped — an honest gap, never a fabricated bar.
+    zero = _kite_candle(16, open=0.0, high=0.0, low=0.0, close=0.0, volume=0)
+    bars = candles_to_bars(
+        [_kite_candle(15), zero, _kite_candle(17)],
+        symbol="NSE:TCS",
+        interval_seconds=60,
+    )
+    assert [b.start.minute for b in bars] == [45, 47]  # 09:15/09:17 IST -> 03:45/03:47 UTC
+
+
+def test_kite_candles_all_garbage_batch_raises() -> None:
+    # A non-empty batch yielding ZERO bars is a dead token / feed failure — fail loud,
+    # never a silent "no data" that surfaces as too-few-bars far downstream.
+    zeros = [_kite_candle(15, open=0.0, high=0.0, low=0.0, close=0.0)]
+    with pytest.raises(ValueError, match="unusable"):
+        candles_to_bars(zeros, symbol="NSE:TCS", interval_seconds=60)
+
+
 def test_kite_candles_rejects_naive_date() -> None:
     naive = {
         "date": datetime(2024, 6, 26, 9, 15),

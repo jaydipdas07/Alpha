@@ -29,8 +29,13 @@ def candles_to_bars(
     """``KiteConnect.historical_data()`` rows -> ``Bar``s for ``symbol`` (NSE equity).
 
     Each row is a mapping ``{date, open, high, low, close, volume}`` — ``date`` a tz-aware datetime
-    (the SDK returns IST). Rows with a missing OHLCV field are skipped (defensive; Kite is normally
-    clean). ``interval_seconds`` sets ``Bar.interval`` (e.g. 60 for ``minute``, 86400 for ``day``).
+    (the SDK returns IST). Rows with a missing OHLCV field **or a non-positive price** are skipped:
+    Kite's old minute archives occasionally contain all-zero glitch rows (seen live: TCS, 2015-era),
+    which carry no price information and which ``Bar`` (money > 0) rightly refuses — skipping leaves
+    an honest gap, never a fabricated price. A **non-empty input yielding zero bars raises**: an
+    all-garbage batch is a dead instrument token or feed failure, and silently returning "no data"
+    would surface as a confusing too-few-bars error far downstream (the fail-loud ingest norm).
+    ``interval_seconds`` sets ``Bar.interval`` (e.g. 60 for ``minute``, 86400 for ``day``).
     """
     interval = timedelta(seconds=interval_seconds)
     bars: list[Bar] = []
@@ -43,12 +48,14 @@ def candles_to_bars(
             c.get("close"),
             c.get("volume"),
         )
-        if ts is None or None in (o, h, low, close, v):
-            continue
+        if ts is None or o is None or h is None or low is None or close is None or v is None:
+            continue  # missing OHLCV field (also narrows each field for the price guard below)
         if not isinstance(ts, datetime):
             raise TypeError(f"Kite candle 'date' must be a datetime, got {type(ts).__name__}")
         if ts.tzinfo is None:
             raise ValueError(f"Kite candle 'date' must be tz-aware (IST); got naive {ts!r}")
+        if o <= 0 or h <= 0 or low <= 0 or close <= 0:
+            continue  # zero-price glitch row — no price information, skip (see docstring)
         bars.append(
             Bar(
                 symbol=symbol,
@@ -62,6 +69,11 @@ def candles_to_bars(
                 close=Decimal(str(close)),
                 volume=Decimal(str(v)),  # NSE volume is whole shares (Kite gives an int)
             )
+        )
+    if candles and not bars:
+        raise ValueError(
+            f"kite ingest: all {len(candles)} candle rows for {symbol} were unusable "
+            "(missing fields or non-positive prices) — dead instrument token or feed garbage"
         )
     return bars
 
