@@ -800,3 +800,56 @@ def test_rebuild_state_seeds_dedup_with_fsm_fill_key() -> None:
     fresh = OMS(adapter=broker, risk=_risk(), store=store, venue=Venue.NSE)
     fresh.rebuild_state()
     assert "VF1" in fresh._seen_fills  # the FSM dedup key (venue_fill_id), not "F1"
+
+
+# --- the daily-loss WINDOW is per trading date, not since-boot (ADR 0006) --------
+
+
+async def test_daily_loss_window_resets_on_the_trading_date_rollover() -> None:
+    # base 100000, halt at 2% = 2000/day. Two consecutive days each bleeding 1500:
+    # neither day breaches alone; only a never-resetting counter (the F1-fold defect)
+    # would see -3000 and trip. The window must reset at the UTC date rollover.
+    risk = _risk()
+    clk = FakeClock(T0)
+    oms, _broker, _store = _setup(risk=risk, clock=clk)
+    oms.accrue_funding(Decimal("-1500"))
+    oms.mark({})
+    assert risk.is_halted is False
+    clk.advance(timedelta(days=1))  # the next trading date
+    oms.accrue_funding(Decimal("-1500"))
+    oms.mark({})
+    assert risk.is_halted is False  # fresh window: -1500 < 2000
+    # ... and the SAME day still accumulates: another -600 crosses 2000 -> halt.
+    oms.accrue_funding(Decimal("-600"))
+    oms.mark({})
+    assert risk.is_halted is True
+    assert risk.halt_trigger is KillTrigger.DAILY_LOSS
+
+
+async def test_restore_daily_state_seats_the_window_date() -> None:
+    # A restart mid-day restores today's baseline AND its date: later same-day flow
+    # accumulates on top (no spurious reset), the next day's flow starts fresh.
+    risk = _risk()
+    clk = FakeClock(T0)
+    oms, _broker, store = _setup(risk=risk, clock=clk)
+    oms.accrue_funding(Decimal("-1500"))  # persists a daily row for T0's date
+
+    risk2 = _risk()
+    broker2 = PaperBroker(
+        cost_model=CostModel(COST_CONFIG),
+        instruments={SYMBOL: InstrumentMeta(asset_class=AssetClass.EQUITY)},
+        starting_cash=Decimal("1000000"),
+    )
+    oms2 = OMS(adapter=broker2, risk=risk2, store=store, venue=Venue.NSE, clock=clk)
+    oms2.restore_daily_state(OMS._trading_date(T0))
+    oms2.accrue_funding(Decimal("-600"))  # same day: -1500 restored + -600 = -2100
+    oms2.mark({})
+    assert risk2.is_halted is True  # the restored baseline still counts today
+    # a third boot restoring the NEXT date starts a fresh window
+    risk3 = _risk()
+    oms3 = OMS(adapter=broker2, risk=risk3, store=store, venue=Venue.NSE, clock=clk)
+    clk.advance(timedelta(days=1))
+    oms3.restore_daily_state(OMS._trading_date(clk.now()))  # no row -> window seated at 0
+    oms3.accrue_funding(Decimal("-1500"))
+    oms3.mark({})
+    assert risk3.is_halted is False

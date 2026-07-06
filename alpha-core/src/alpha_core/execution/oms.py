@@ -97,6 +97,7 @@ class OMS:
         self._positions: dict[tuple[Venue, str], Position] = {}
         self._seen_fills: set[str] = set()
         self._day_realized: Decimal = Decimal(0)
+        self._day_date: str | None = None  # the trading date _day_realized accumulates for
         self._funding: Decimal = Decimal(0)  # cumulative perp funding cash flow (R13)
         # Reservation price per working order (for valuing market orders that have
         # no limit price) + the single lock that makes check→reserve→place→ack
@@ -141,12 +142,28 @@ class OMS:
     def _trading_date(ts: datetime) -> str:
         return ts.astimezone(UTC).date().isoformat()
 
+    def _roll_trading_date(self, ts: datetime) -> None:
+        """Reset the DAILY realized counter on a trading-date (UTC) rollover.
+
+        'Daily loss' is per trading DATE (ADR 0006). Without this reset a long-lived
+        process accumulates every prior day's realized (fees included) into today's
+        halt math — the kill fires on the cumulative bleed instead of a daily one
+        (found live by the F1 fold: all four 11-year tracks latched in Feb-2021 on
+        ~-2% of accumulated round-trip costs, review #179 aftermath). The halt
+        itself still LATCHES across days — resetting the counter never re-arms."""
+        date = self._trading_date(ts)
+        if self._day_date != date:
+            self._day_date = date
+            self._day_realized = Decimal(0)
+
     def restore_daily_state(self, trading_date: str) -> None:
         """Restore today's realized-P&L baseline + latched halt on restart (ADR 0006)."""
         with self._store.transaction() as s:
             row = self._store.load_daily_pnl(s, trading_date)
         if row is None:
+            self._day_date = trading_date  # seat the window even with no row yet
             return
+        self._day_date = trading_date
         self._day_realized = row.realized_pnl
         if row.halted:
             trigger = KillTrigger(row.halt_trigger) if row.halt_trigger else KillTrigger.MANUAL
@@ -282,8 +299,9 @@ class OMS:
         re-seats a funding-inclusive day total) and leave an audit row (CLAUDE.md —
         every decision audited); ``now`` is the injected clock (bar-time in backtest)."""
         self._funding += cash_flow
-        self._day_realized += cash_flow
         now = self._clock.now()
+        self._roll_trading_date(now)
+        self._day_realized += cash_flow
         trigger = self._risk.halt_trigger
         with self._store.transaction() as s:
             self._store.upsert_daily_pnl(
@@ -319,6 +337,7 @@ class OMS:
         """Update last-marks for open positions and re-check the daily-loss kill
         switch against realized + unrealized P&L (ADR 0006). Drawdown on an open
         position can trip the switch even with no new fill."""
+        self._roll_trading_date(self._clock.now())
         for (venue, symbol), pos in self._positions.items():
             price = prices.get(symbol)
             if price is not None and pos.quantity != 0:
@@ -551,6 +570,7 @@ class OMS:
             self._positions[key] = apply_fill(old, fill)
             delta = self._positions[key].realized_pnl - old_realized
             metrics.fills.labels(venue=fill.venue.value, side=fill.side.value).inc()
+            self._roll_trading_date(fill.ts)
             self._day_realized += delta
             unrealized = self.total_unrealized_pnl()
             self._risk.update_pnl(realized=self._day_realized, unrealized=unrealized)
