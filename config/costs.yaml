@@ -2,11 +2,13 @@
 # Illustrative rates — VERIFY against current statute at go-live (config edit only).
 slippage:
   equity:       { type: bps,   value: 5 }      # large-cap 5 bps/side
+  index_future: { type: bps,   value: 1 }      # NIFTY near-month: ~0.2-0.8 bp spread at retail size
   crypto_perp:  { type: bps,   value: 3 }      # top-liquidity USDT/USD perps at small size
   crypto_spot:  { type: bps,   value: 8 }      # spot majors 5-10 bps/side
   index_option: { type: ticks, value: 2 }      # ATM ~1-2 ticks; scale for far strikes
   default_spread:                               # used only when LTP-only (no quote)
     equity: 0.0005
+    index_future: 0.0001
     crypto_perp: 0.0003
     crypto_spot: 0.0008
     index_option_ticks: 1
@@ -22,11 +24,22 @@ segments:
     stamp_duty:   { pct: 0.00003, side: buy }
   index_option:
     brokerage:    { flat: 20, mode: flat }               # ₹20/order
-    stt:          { pct: 0.000625, side: sell, on: premium }
+    stt:          { pct: 0.0015, side: sell, on: premium }  # Budget-2026: 0.15% from 2026-04-01
     exchange_txn: { pct: 0.0003503, on: premium }
     sebi:         { pct: 0.000001 }
     gst:          { pct: 0.18, on: [brokerage, exchange_txn, sebi] }
     stamp_duty:   { pct: 0.00003, side: buy, on: premium }
+  # Index futures (NSE NIFTY/BANKNIFTY). NB: no AssetClass maps to this segment in the
+  # engine yet — it is the single config home for the F1 research fold's futures cost
+  # math (survey §India-2026: ~6 bps round trip) and for the Phase-5 futures leg; the
+  # CostModel mapping lands with the futures instrument model.
+  index_future:
+    brokerage:    { pct: 0.0003, flat: 20, mode: min }   # min(0.03%, ₹20)/order
+    stt:          { pct: 0.0005, side: sell }            # Budget-2026: 0.05% from 2026-04-01
+    exchange_txn: { pct: 0.0000173 }
+    sebi:         { pct: 0.000001 }
+    gst:          { pct: 0.18, on: [brokerage, exchange_txn, sebi] }
+    stamp_duty:   { pct: 0.00002, side: buy }
   # Perp vs spot are DIFFERENT cost regimes (the old single `crypto` segment charged the
   # 10 bps SPOT taker fee + spot TDS on perp trades — ~2.5x real perp costs). Live crypto
   # today is Delta/Binance perps -> the cost model maps AssetClass.CRYPTO to crypto_perp.
