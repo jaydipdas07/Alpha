@@ -5,8 +5,8 @@ The worker's kite factory and the ``InstrumentRegistry`` read the cached JSON du
 (``from_kite_json``); this script (re)writes it from the live Kite API. Run it
 after the daily 2FA token is staged (scripts/ingest_kite.py) whenever the universe
 may have moved — new listings, F&O expiry rollovers (weekly, once options trade
-live), symbol changes. The worker auto-fetches when the cache is ABSENT; this
-script exists to refresh a PRESENT-but-stale one (delete-and-restart's ops-friendly
+live), symbol changes. The worker auto-fetches when the cache is ABSENT or STALE (the
+mtime bound); this script force-refreshes a PRESENT one (delete-and-restart's ops-friendly
 sibling). Network glue — the pure parsing lives in ``InstrumentRegistry.from_kite_dump``
 (CI-tested); this file is not.
 

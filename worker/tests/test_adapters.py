@@ -223,3 +223,63 @@ def test_kite_feed_factory_fails_fast_on_an_unknown_symbol(_kite_sdk, tmp_path) 
 
     with pytest.raises(RuntimeError, match="NSE:NOSUCH"):
         build_kite_ticker_feed(_kite_venue(), _kite_env(tmp_path, symbols=["NSE:NOSUCH"]))
+
+
+def _backdate(path: str, *, hours: float) -> None:
+    """Set a file's mtime ``hours`` into the past (the staleness clock is mtime)."""
+    import os
+    import time
+
+    stamp = time.time() - hours * 3600
+    os.utime(path, (stamp, stamp))
+
+
+def test_kite_instrument_cache_refetches_past_the_mtime_bound(_kite_sdk, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from worker.adapters import build_kite_ticker_feed
+
+    env = _kite_env(tmp_path)
+    build_kite_ticker_feed(_kite_venue(), env)
+    assert _FakeKiteConnect.dumps == 1
+    # 25h-old cache vs the 24h default bound (#160d) -> the next boot refetches.
+    _backdate(env.kite_instruments_cache, hours=25)
+    build_kite_ticker_feed(_kite_venue(), env)
+    assert _FakeKiteConnect.dumps == 2
+    # ... and the rewrite reset the clock: a third boot serves the fresh cache.
+    build_kite_ticker_feed(_kite_venue(), env)
+    assert _FakeKiteConnect.dumps == 2
+
+
+def test_kite_instrument_cache_zero_bound_refetches_every_boot(_kite_sdk, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from worker.adapters import build_kite_ticker_feed
+
+    env = _kite_env(tmp_path, kite_instruments_cache_max_age_hours=0)
+    build_kite_ticker_feed(_kite_venue(), env)
+    build_kite_ticker_feed(_kite_venue(), env)
+    assert _FakeKiteConnect.dumps == 2
+
+
+def test_kite_cache_stale_fallback_on_refetch_failure(_kite_sdk, tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from worker.adapters import build_kite_ticker_feed
+
+    env = _kite_env(tmp_path)
+    feed = build_kite_ticker_feed(_kite_venue(), env)  # seed the cache
+    _backdate(env.kite_instruments_cache, hours=25)
+
+    def _boom(self, exchange):  # type: ignore[no-untyped-def]
+        raise ConnectionError("kite is down")
+
+    monkeypatch.setattr(_FakeKiteConnect, "instruments", _boom)
+    # Stale cache + refetch failure -> boot proceeds on the stale copy (loud warning).
+    fallback = build_kite_ticker_feed(_kite_venue(), env)
+    assert fallback._token_by_symbol == feed._token_by_symbol
+
+
+def test_kite_cache_absent_and_fetch_failure_raises(_kite_sdk, tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from worker.adapters import build_kite_ticker_feed
+
+    def _boom(self, exchange):  # type: ignore[no-untyped-def]
+        raise ConnectionError("kite is down")
+
+    monkeypatch.setattr(_FakeKiteConnect, "instruments", _boom)
+    with pytest.raises(ConnectionError, match="kite is down"):
+        build_kite_ticker_feed(_kite_venue(), _kite_env(tmp_path))
