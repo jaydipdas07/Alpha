@@ -12,7 +12,7 @@ from __future__ import annotations
 import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -32,8 +32,24 @@ from alpha_core.portfolio.risk_overlay import PortfolioRiskOverlay
 from alpha_core.portfolio.signal_book import SignalBook
 from alpha_core.risk.limits import RiskConfig
 from alpha_core.risk.manager import RiskManager
-from alpha_core.scheduler.clock import FakeClock
+from alpha_core.scheduler.clock import FakeClock, MarketSchedule
 from alpha_core.strategy.engine import StrategyEngine
+
+
+def _session_blocked(schedule: MarketSchedule | None, instant: datetime) -> bool:
+    """The backtest mirror of the Worker's ``_session_blocks_entry`` (SCHED-1, TEST-1).
+
+    ``True`` when the session rules block the strategy at ``instant`` (the bar-close
+    decision instant): outside the trading session (holiday / pre-open / post-close)
+    or past ``no_new_entry_time``. Exactly as live, the gate wraps ``process_bar``
+    itself — a blocked bar NEVER reaches the strategy, so its internal state cannot
+    desync from a live run's (live, the Worker drops those bars the same way; only
+    the halt and square-off flatteners still act in a blocked window). ``None`` (the
+    default everywhere) or a 24x7 schedule preserves today's behavior bit-for-bit —
+    every already-frozen crypto verdict re-runs unchanged."""
+    if schedule is None or schedule.is_24x7:
+        return False
+    return not schedule.is_open(instant) or schedule.is_after_no_new_entry(instant)
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,10 +149,20 @@ async def run_backtest(
     starting_cash: Decimal = Decimal("1000000"),
     stress: bool = False,
     funding: FundingConfig | None = None,
+    schedule: MarketSchedule | None = None,
+    intraday_square_off: bool = False,
 ) -> BacktestResult:
     """Run ``strategy`` over historical ``bars`` and return stats. With ``funding``
     set, perp funding accrues on held crypto positions every funding interval (R13)
-    — into P&L and the daily-loss kill gate."""
+    — into P&L and the daily-loss kill gate.
+
+    ``schedule`` (SF4, TEST-1) applies the live Worker's session gate symmetrically:
+    bars whose close instant is outside the session or past ``no_new_entry_time``
+    never reach the strategy — required for any Indian-market fold (Kite historical
+    tapes carry the 15:15+ tail that live entries are blocked from). ``None`` keeps
+    the pre-SF4 behavior exactly. ``intraday_square_off`` mirrors the Worker's opt-in
+    MIS-style daily flatten at ``square_off_time`` — once per session date, not a
+    kill, the risk gate stays armed."""
     broker = PaperBroker(
         cost_model=CostModel(cost_config),
         instruments=instruments,
@@ -161,13 +187,27 @@ async def run_backtest(
             next_funding += funding_interval
 
     equity_curve: list[tuple[datetime, Decimal]] = []
+    squared_off_on: date | None = None  # the last session date squared off (UTC, as live)
     for bar in bars:
         bar_close = bar.start + bar.interval
         clock.set(bar_close)  # decision instant = bar close
         broker.on_tick(quote_from_bar(bar))
-        for signal in engine.process_bar(bar):
-            await oms.submit_signal(signal, reference_price=bar.close)
+        if not _session_blocked(schedule, bar_close):
+            for signal in engine.process_bar(bar):
+                await oms.submit_signal(signal, reference_price=bar.close)
         await oms.drain_events()
+        # Opt-in daily square-off (SF4): the Worker's ``_maybe_square_off`` mirrored —
+        # once per (UTC) session date, skipped while halted (a halt owns the book via
+        # handle_kill), fills booked inline so the following mark sees a flat book.
+        if (
+            intraday_square_off
+            and schedule is not None
+            and not risk.is_halted
+            and schedule.is_at_or_after_square_off(bar_close)
+            and squared_off_on != bar_close.astimezone(UTC).date()
+        ):
+            squared_off_on = bar_close.astimezone(UTC).date()
+            await square_off(oms)
         # Accrue perp funding on held crypto positions at each boundary this bar crosses,
         # before the mark — so a funding-bleed feeds the daily-loss kill via mark() (R13).
         if funding and funding_interval and next_funding is not None:
@@ -230,6 +270,8 @@ async def run_portfolio_backtest(
     stress: bool = False,
     overlay: PortfolioRiskOverlay | None = None,
     funding: FundingConfig | None = None,
+    schedule: MarketSchedule | None = None,
+    intraday_square_off: bool = False,
 ) -> BacktestResult:
     """Multi-instrument, multi-strategy backtest through the pure allocator (R5).
 
@@ -244,6 +286,11 @@ async def run_portfolio_backtest(
     strategy ``run_backtest`` (booked into P&L AND the daily-loss kill gate), so
     portfolio rigor is correct for perps. ``funding=None`` leaves this path
     unchanged (``stats.funding_paid`` stays 0).
+
+    ``schedule`` / ``intraday_square_off`` (SF4): the same session gate and opt-in
+    daily flatten as ``run_backtest``, applied per cross-section at its close
+    instant — a blocked cross-section still ticks the broker, accrues funding and
+    marks, but never reaches the strategies (the live Worker's exact semantics).
     """
     broker = PaperBroker(
         cost_model=CostModel(cost_config),
@@ -284,25 +331,42 @@ async def run_portfolio_backtest(
     if final:
         sections.append(final)
 
+    squared_off_on: date | None = None  # the last session date squared off (UTC, as live)
     for cross_section in sections:
         close_ts = cross_section[0].start + cross_section[0].interval
         clock.set(close_ts)
         for bar in cross_section:
             broker.on_tick(quote_from_bar(bar))
-        await rebalance_pass(
-            oms=oms,
-            engines=engines,
-            book=book,
-            allocator=allocator,
-            portfolio_config=portfolio_config,
-            cross_section=cross_section,
-            prices=prices,
-            asset_class=asset_class,
-            capital=starting_cash,
-            now=close_ts,
-            overlay=overlay,
-        )
+        if not _session_blocked(schedule, close_ts):
+            await rebalance_pass(
+                oms=oms,
+                engines=engines,
+                book=book,
+                allocator=allocator,
+                portfolio_config=portfolio_config,
+                cross_section=cross_section,
+                prices=prices,
+                asset_class=asset_class,
+                capital=starting_cash,
+                now=close_ts,
+                overlay=overlay,
+            )
+        else:
+            # Market data still flows while the strategy plane is gated (as live):
+            # the mark below must price off THIS section's closes, never stale ones.
+            for bar in cross_section:
+                prices[bar.symbol] = bar.close
+                asset_class[bar.symbol] = bar.asset_class
         await oms.drain_events()
+        if (
+            intraday_square_off
+            and schedule is not None
+            and not risk.is_halted
+            and schedule.is_at_or_after_square_off(close_ts)
+            and squared_off_on != close_ts.astimezone(UTC).date()
+        ):
+            squared_off_on = close_ts.astimezone(UTC).date()
+            await square_off(oms)
         # Accrue perp funding on held crypto positions at each boundary this cross-section
         # crosses, before the mark — so a funding-bleed feeds the daily-loss kill via mark() (R13).
         if funding and funding_interval and next_funding is not None:

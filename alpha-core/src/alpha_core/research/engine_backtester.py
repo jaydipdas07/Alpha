@@ -38,6 +38,7 @@ from alpha_core.execution.costs import InstrumentMeta
 from alpha_core.helpers.config import load_rigor_config
 from alpha_core.research.strategist import TEMPLATES, StrategyProposal, StrategyTemplate
 from alpha_core.risk.limits import RiskConfig
+from alpha_core.scheduler.clock import MarketSchedule
 
 # Source the cell's in-sample bars for ``(market, window)``. CONTRACT: must return in-sample-only
 # bars — holdout isolation (TEST-3/R6) is enforced at this boundary (the no-ACL cold store), not in
@@ -74,6 +75,8 @@ class EngineBacktester:
         starting_cash: Decimal = Decimal("1000000"),
         stress: bool = False,
         templates: Mapping[str, StrategyTemplate] | None = None,
+        schedule: MarketSchedule | None = None,
+        intraday_square_off: bool = False,
     ) -> None:
         self._bars_for = bars_for
         self._instruments = instruments
@@ -88,6 +91,11 @@ class EngineBacktester:
         self._templates: Mapping[str, StrategyTemplate] = (
             templates if templates is not None else TEMPLATES
         )
+        # SF4 (TEST-1): an Indian-market family injects its session schedule so the fold
+        # applies the live Worker's entry gate (and, opted in, the daily square-off) —
+        # None keeps every existing (crypto/24x7) family bit-identical.
+        self._schedule = schedule
+        self._intraday_square_off = intraday_square_off
         # the rigor gate needs >= 2*n_groups observations; one fewer return than bars, so require
         # that many bars and fail fast on a thin cell (rather than crash later in `assess`).
         self._min_bars = 2 * load_rigor_config().cpcv.n_groups
@@ -120,6 +128,8 @@ class EngineBacktester:
                 venue=self._venue,
                 starting_cash=self._starting_cash,
                 stress=self._stress,
+                schedule=self._schedule,
+                intraday_square_off=self._intraday_square_off,
             )
         )
         return _returns_from_equity(result.equity_curve, self._starting_cash)
