@@ -247,9 +247,7 @@ async def test_square_off_cancels_resting_orders_before_the_blocked_window() -> 
     # Tape: 200s until the 15:20 cutoff, then a post-cutoff crash through the limit.
     closes = ["200"] * 10 + ["140"] * 4  # crash bars close 15:21..15:24 (blocked window)
     bars = _bars(_wed(15, 10), closes)
-    result = await _run(
-        bars, OneLowballLimit(), schedule=_nse_schedule(), intraday_square_off=True
-    )
+    result = await _run(bars, OneLowballLimit(), schedule=_nse_schedule(), intraday_square_off=True)
     # The square-off cancels the resting limit (the Worker's cancel_all_working leg) —
     # the post-cutoff crash must NOT fill it. Zero fills, flat book, zero P&L.
     assert result.stats.num_fills == 0
