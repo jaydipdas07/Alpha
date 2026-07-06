@@ -199,6 +199,46 @@ def test_kite_candles_skips_incomplete_rows() -> None:
     assert len(bars) == 1
 
 
+def test_kite_candles_skips_zero_price_glitch_rows() -> None:
+    # Kite's old minute archives contain all-zero glitch rows (seen live: TCS 2015-era);
+    # they carry no price and are skipped — an honest gap, never a fabricated bar.
+    zero = _kite_candle(16, open=0.0, high=0.0, low=0.0, close=0.0, volume=0)
+    bars = candles_to_bars(
+        [_kite_candle(15), zero, _kite_candle(17)],
+        symbol="NSE:TCS",
+        interval_seconds=60,
+    )
+    assert [b.start.minute for b in bars] == [45, 47]  # 09:15/09:17 IST -> 03:45/03:47 UTC
+
+
+def test_kite_candles_skips_ohlc_incoherent_glitch_rows() -> None:
+    # The archive's second glitch shape (seen live: HDFCBANK): OHLC present and positive
+    # but incoherent — low above / high below the other prices. Which field is the glitch
+    # is unknowable, so the row is skipped (Bar's coherence validator, mirrored). A
+    # negative price rides the same batch to pin the < 0 side of the price guard.
+    bad_low = _kite_candle(16, low=3000.0)  # low > open/close/high (trips both clauses)
+    bad_high = _kite_candle(18, high=2800.0)  # high < open/close
+    negative = _kite_candle(19, open=-1.0)
+    # low above min(o, h, close) while high stays coherent — the low-clause ALONE must skip it
+    low_only = _kite_candle(20, low=2920.0, close=2910.0)
+    flat_tie = _kite_candle(21, open=2940.0, high=2940.0, low=2940.0, close=2940.0)  # ties are KEPT
+    bars = candles_to_bars(
+        [_kite_candle(15), bad_low, _kite_candle(17), bad_high, negative, low_only, flat_tie],
+        symbol="NSE:HDFCBANK",
+        interval_seconds=60,
+    )
+    # 09:15/09:17/09:21 IST survive (03:45/03:47/03:51 UTC) — gaps honest, the flat tie kept
+    assert [b.start.minute for b in bars] == [45, 47, 51]
+
+
+def test_kite_candles_all_garbage_batch_raises() -> None:
+    # A non-empty batch yielding ZERO bars is feed garbage / a wrong-instrument read —
+    # fail loud, never a silent "no data" that surfaces as too-few-bars far downstream.
+    zeros = [_kite_candle(15, open=0.0, high=0.0, low=0.0, close=0.0)]
+    with pytest.raises(ValueError, match="unusable"):
+        candles_to_bars(zeros, symbol="NSE:TCS", interval_seconds=60)
+
+
 def test_kite_candles_rejects_naive_date() -> None:
     naive = {
         "date": datetime(2024, 6, 26, 9, 15),
