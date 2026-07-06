@@ -184,6 +184,9 @@ class Order(_Mutable):
     quantity: PosQty
     limit_price: PosMoney | None = None
     stop_price: PosMoney | None = None
+    post_only: bool = False
+    reduce_only: bool = False
+    valid_until: UtcDatetime | None = None
     state: OrderState
     filled_quantity: NonNegQty = Decimal("0")
     average_fill_price: PosMoney | None = None
@@ -249,6 +252,11 @@ class Signal(_Frozen):
     order_type: OrderType
     limit_price: PosMoney | None = None
     stop_price: PosMoney | None = None
+    # Maker execution (Phase-4+ / the post-only fill model): post_only limits REST or are
+    # rejected — they never cross; reduce_only orders size to the live position (flat -> no
+    # order), so an exit intent can never open the inverse (#179's bug class, structural).
+    post_only: bool = False
+    reduce_only: bool = False
     created_at: UtcDatetime
     valid_until: UtcDatetime | None = None
     reason: str | None = None

@@ -405,6 +405,25 @@ class OMS:
                 return None
             limit_price = spec.round_price(limit_price) if limit_price is not None else None
             stop_price = spec.round_price(stop_price) if stop_price is not None else None
+        if signal.reduce_only:
+            # Size to the live book: a reduce-only intent can only CLOSE. Flat (or
+            # already the wrong side) -> no order at all — an exit signal can never
+            # open the inverse position (#179's bug class, closed structurally).
+            held = next(
+                (
+                    pos.quantity
+                    for pos in self.positions
+                    if pos.symbol == signal.symbol and pos.quantity != 0
+                ),
+                Decimal(0),
+            )
+            closeable = held if signal.side is Side.SELL else -held
+            if closeable <= 0:
+                self._log.info(
+                    "reduce_only_noop", client_order_id=cid, symbol=signal.symbol
+                )
+                return None
+            quantity = min(quantity, closeable)
         order = Order(
             client_order_id=cid,
             symbol=signal.symbol,
@@ -415,6 +434,9 @@ class OMS:
             quantity=quantity,
             limit_price=limit_price,
             stop_price=stop_price,
+            post_only=signal.post_only,
+            reduce_only=signal.reduce_only,
+            valid_until=signal.valid_until,
             state=OrderState.NEW,
             strategy_id=signal.strategy_id,
             created_at=now,
@@ -461,6 +483,13 @@ class OMS:
             await asyncio.to_thread(
                 self._persist_order, order, event="ORDER_REJECT", extra={"reason": str(exc)}
             )
+            if isinstance(exc, OrderRejected) and exc.reason == "post_only":
+                # A post-only order that would cross is a MISSED ENTRY — an expected
+                # business outcome of maker execution, never an error: it must not
+                # stride toward the consecutive-errors kill.
+                metrics.orders_rejected.labels(reason="post_only").inc()
+                self._log.info("post_only_missed", client_order_id=cid)
+                return order
             metrics.orders_rejected.labels(reason="broker").inc()
             self._risk.record_error()
             return order

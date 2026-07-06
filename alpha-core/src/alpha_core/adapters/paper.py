@@ -89,11 +89,22 @@ class PaperBroker(BrokerAdapter):
     # --- market data view ------------------------------------------------------
 
     def on_tick(self, tick: Tick) -> None:
-        """Update the simulated market and try to fill resting orders."""
+        """Update the simulated market and try to fill resting orders.
+
+        Expiry runs BEFORE fills (conservative): a tick that both passes an order's
+        ``valid_until`` and trades through its price does NOT fill — the order died
+        first. A post-only resting order fills only on a STRICT trade-through (queue
+        position at a touched level is unknowable — the maker fill model's rule)."""
         self._quotes[tick.symbol] = tick
-        for resting in list(self._resting.values()):
-            if resting.order.symbol == tick.symbol and self._marketable(resting.order):
-                self._fill(resting.order, resting.remaining)
+        for cid, resting in list(self._resting.items()):
+            if resting.order.symbol != tick.symbol:
+                continue
+            vu = resting.order.valid_until
+            if vu is not None and tick.ts > vu:
+                self._expire(cid)
+                continue
+            if self._marketable(resting.order, resting=True):
+                self._fill(resting.order, resting.remaining, at_limit=True)
 
     def _quote_prices(self, symbol: str) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
         q = self._quotes.get(symbol)
@@ -101,7 +112,7 @@ class PaperBroker(BrokerAdapter):
             return None, None, None
         return q.bid, q.ask, q.last_price
 
-    def _marketable(self, order: Order) -> bool:
+    def _marketable(self, order: Order, *, resting: bool = False) -> bool:
         bid, ask, ltp = self._quote_prices(order.symbol)
         if order.order_type is OrderType.MARKET:
             return bid is not None or ask is not None or ltp is not None
@@ -109,17 +120,48 @@ class PaperBroker(BrokerAdapter):
             return False
         ref_ask = ask if ask is not None else ltp
         ref_bid = bid if bid is not None else ltp
+        if resting and order.post_only:
+            # STRICT trade-through only: a touch at the level never fills a maker
+            # order here (queue position is unknowable — pessimistic by design).
+            if order.side is Side.BUY and ref_ask is not None:
+                return ref_ask < order.limit_price
+            if order.side is Side.SELL and ref_bid is not None:
+                return ref_bid > order.limit_price
+            return False
         if order.side is Side.BUY and ref_ask is not None:
             return ref_ask <= order.limit_price
         if order.side is Side.SELL and ref_bid is not None:
             return ref_bid >= order.limit_price
         return False
 
+    def _would_cross_on_arrival(self, order: Order) -> bool:
+        """Post-only arrival test. With a real book: normal crossing (ask <= L / bid >= L).
+        LTP-only (the bar-driven backtest): STRICT — placing AT the last print rests (the
+        bar-granularity convention: the book around the print is unknowable, and the
+        registered maker strategies place exactly at the decision close)."""
+        bid, ask, ltp = self._quote_prices(order.symbol)
+        if order.limit_price is None:
+            return False
+        if order.side is Side.BUY:
+            if ask is not None:
+                return ask <= order.limit_price
+            return ltp is not None and ltp < order.limit_price
+        if bid is not None:
+            return bid >= order.limit_price
+        return ltp is not None and ltp > order.limit_price
+
     # --- fills + bookkeeping ---------------------------------------------------
 
-    def _fill(self, order: Order, quantity: Decimal) -> None:
+    def _fill(self, order: Order, quantity: Decimal, *, at_limit: bool = False) -> None:
         bid, ask, ltp = self._quote_prices(order.symbol)
         meta = self._instruments[order.symbol]
+        if at_limit and order.limit_price is not None:
+            # A RESTED limit that the market traded through fills AT THE LIMIT — the
+            # maker fill price (the tick that crossed it is beyond the limit; filling
+            # there would flatter buys with the low / sells with the high). Costing is
+            # anchored at the limit (LTP-only): under the maker scenario config the
+            # spread/slippage legs are zeroed, so effective == limit + fees exactly.
+            bid, ask, ltp = None, None, order.limit_price
         breakdown = self._costs.estimate(
             side=order.side,
             quantity=quantity,
@@ -204,16 +246,39 @@ class PaperBroker(BrokerAdapter):
         # (``find_order_id``) would treat the rejected order as placed.
         if order.order_type is OrderType.MARKET and not self._marketable(order):
             raise OrderRejected("no market", reason="no quote to fill against")
+        if order.post_only and self._would_cross_on_arrival(order):
+            # A maker order that would take: rejected at the venue door (GTX semantics).
+            # The OMS treats this reason as a MISSED ENTRY, never an error strike.
+            raise OrderRejected("post-only would cross", reason="post_only")
         venue_order_id = f"P{next(self._ids)}"
         self._by_client[order.client_order_id] = venue_order_id
         self._session[order.client_order_id] = order.model_copy(
             update={"state": OrderState.OPEN, "venue_order_id": venue_order_id}
         )
-        if self._marketable(order):
+        if self._marketable(order) and not order.post_only:
             self._fill(order, order.quantity)
         else:
+            # A post-only order ALWAYS rests (the GTX arrival check above already
+            # rejected the crossing case) — it can only ever fill as a maker.
             self._resting[order.client_order_id] = _Resting(order, venue_order_id, order.quantity)
         return venue_order_id
+
+    def _expire(self, client_order_id: str) -> None:
+        """TTL expiry of a resting order (``valid_until`` passed): CANCELLED + event —
+        the venue-side GTD lapse; the OMS books it exactly like a cancel."""
+        resting = self._resting.pop(client_order_id, None)
+        if resting is None:
+            return
+        lapsed = self._session[client_order_id]
+        self._session[client_order_id] = lapsed.model_copy(update={"state": OrderState.CANCELLED})
+        self._emit(
+            BrokerOrderEvent(
+                kind=BrokerEventKind.CANCEL,
+                client_order_id=client_order_id,
+                venue_order_id=resting.venue_order_id,
+            )
+        )
+        self._log.info("paper_expired", client_order_id=client_order_id)
 
     async def cancel(self, client_order_id: str) -> None:
         resting = self._resting.pop(client_order_id, None)
