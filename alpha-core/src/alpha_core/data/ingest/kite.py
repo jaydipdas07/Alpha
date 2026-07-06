@@ -29,13 +29,16 @@ def candles_to_bars(
     """``KiteConnect.historical_data()`` rows -> ``Bar``s for ``symbol`` (NSE equity).
 
     Each row is a mapping ``{date, open, high, low, close, volume}`` — ``date`` a tz-aware datetime
-    (the SDK returns IST). Rows with a missing OHLCV field **or a non-positive price** are skipped:
-    Kite's old minute archives occasionally contain all-zero glitch rows (seen live: TCS, 2015-era),
-    which carry no price information and which ``Bar`` (money > 0) rightly refuses — skipping leaves
-    an honest gap, never a fabricated price. A **non-empty input yielding zero bars raises**: an
-    all-garbage batch is a dead instrument token or feed failure, and silently returning "no data"
-    would surface as a confusing too-few-bars error far downstream (the fail-loud ingest norm).
-    ``interval_seconds`` sets ``Bar.interval`` (e.g. 60 for ``minute``, 86400 for ``day``).
+    (the SDK returns IST). Rows that fail ``Bar``'s price contract are skipped: a missing OHLCV
+    field, a **non-positive price** (all-zero glitch rows — seen live: TCS, 2015-era), or
+    **incoherent OHLC** (``low`` above / ``high`` below the other prices — seen live: HDFCBANK,
+    same archive). Such rows carry no trustworthy price — which field is the glitch is unknowable —
+    so skipping leaves an honest gap, never a fabricated or "repaired" price. The skip predicate
+    mirrors ``Bar``'s own validators exactly, so no further *price-shaped* glitch can crash a
+    multi-hour pull, while anything outside that contract still fails loud. A **non-empty input
+    yielding zero bars raises**: an all-garbage batch is feed garbage (or a wrong-instrument read),
+    and silently returning "no data" would surface as a confusing too-few-bars error far downstream
+    (the fail-loud ingest norm). ``interval_seconds`` sets ``Bar.interval`` (60 for ``minute``).
     """
     interval = timedelta(seconds=interval_seconds)
     bars: list[Bar] = []
@@ -56,6 +59,8 @@ def candles_to_bars(
             raise ValueError(f"Kite candle 'date' must be tz-aware (IST); got naive {ts!r}")
         if o <= 0 or h <= 0 or low <= 0 or close <= 0:
             continue  # zero-price glitch row — no price information, skip (see docstring)
+        if h < max(o, low, close) or low > min(o, h, close):
+            continue  # OHLC-incoherent glitch row — mirrors Bar's coherence validator
         bars.append(
             Bar(
                 symbol=symbol,
@@ -73,7 +78,8 @@ def candles_to_bars(
     if candles and not bars:
         raise ValueError(
             f"kite ingest: all {len(candles)} candle rows for {symbol} were unusable "
-            "(missing fields or non-positive prices) — dead instrument token or feed garbage"
+            "(missing fields, non-positive prices, or incoherent OHLC) — feed garbage "
+            "or a wrong-instrument read"
         )
     return bars
 

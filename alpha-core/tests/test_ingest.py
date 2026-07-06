@@ -211,9 +211,25 @@ def test_kite_candles_skips_zero_price_glitch_rows() -> None:
     assert [b.start.minute for b in bars] == [45, 47]  # 09:15/09:17 IST -> 03:45/03:47 UTC
 
 
+def test_kite_candles_skips_ohlc_incoherent_glitch_rows() -> None:
+    # The archive's second glitch shape (seen live: HDFCBANK): OHLC present and positive
+    # but incoherent — low above / high below the other prices. Which field is the glitch
+    # is unknowable, so the row is skipped (Bar's coherence validator, mirrored). A
+    # negative price rides the same batch to pin the < 0 side of the price guard.
+    bad_low = _kite_candle(16, low=3000.0)  # low > open/close/high
+    bad_high = _kite_candle(18, high=2800.0)  # high < open/close
+    negative = _kite_candle(19, open=-1.0)
+    bars = candles_to_bars(
+        [_kite_candle(15), bad_low, _kite_candle(17), bad_high, negative],
+        symbol="NSE:HDFCBANK",
+        interval_seconds=60,
+    )
+    assert [b.start.minute for b in bars] == [45, 47]  # 09:15/09:17 IST survive, gaps honest
+
+
 def test_kite_candles_all_garbage_batch_raises() -> None:
-    # A non-empty batch yielding ZERO bars is a dead token / feed failure — fail loud,
-    # never a silent "no data" that surfaces as too-few-bars far downstream.
+    # A non-empty batch yielding ZERO bars is feed garbage / a wrong-instrument read —
+    # fail loud, never a silent "no data" that surfaces as too-few-bars far downstream.
     zeros = [_kite_candle(15, open=0.0, high=0.0, low=0.0, close=0.0)]
     with pytest.raises(ValueError, match="unusable"):
         candles_to_bars(zeros, symbol="NSE:TCS", interval_seconds=60)
