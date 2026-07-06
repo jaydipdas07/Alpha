@@ -233,3 +233,17 @@ def test_tick_seal_splits_at_boundary_and_floors(tmp_path: Path) -> None:
         raw.write_bars(chunk, month=month)
     windows2 = seal_tick_store(raw, research, holdout, fraction=0.2)
     assert windows2[key].start >= w.start  # floored: never backward
+
+
+def test_fold_prices_by_cost_scenario(tmp_path: Path) -> None:
+    # The scenario knob reprices the fold's per-side charge from the ONE config home;
+    # maker (post-only fees only) < taker (fee + crossing slippage); unknown raises.
+    from alpha_core.research.cost_scenarios import cost_per_side
+    from alpha_core.research.leadlag_backtester import LeadLagBacktester
+
+    taker = LeadLagBacktester(TickStore(tmp_path / "a"))
+    maker = LeadLagBacktester(TickStore(tmp_path / "b"), cost_scenario="maker")
+    assert taker._cost_side == cost_per_side("taker")
+    assert maker._cost_side == cost_per_side("maker") < taker._cost_side
+    with pytest.raises(ValueError, match="unknown cost scenario"):
+        LeadLagBacktester(TickStore(tmp_path / "c"), cost_scenario="iceberg")
