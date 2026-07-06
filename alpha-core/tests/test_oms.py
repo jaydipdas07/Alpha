@@ -923,6 +923,7 @@ async def test_day2_first_event_as_a_bare_mark_rolls_the_window() -> None:
     assert risk.is_halted is False
     clk.advance(timedelta(days=1))
     oms.mark({})  # bare mark on day 2: rolls the window; -1900 belongs to yesterday
+    assert oms._day_realized == 0  # the MARK site itself rolled (mutation-pinned, #180)
     oms.accrue_funding(Decimal("-1900"))
     oms.mark({})
     assert risk.is_halted is False  # day-2 window holds only its own -1900
