@@ -39,7 +39,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, time
-from decimal import Decimal
 from itertools import groupby, pairwise
 from zoneinfo import ZoneInfo
 
@@ -124,13 +123,12 @@ def shift_to_next_session(series: list[NgeDay]) -> dict[str, int]:
     richer bar calendar simply finds no key on days the options tape didn't cover (no
     signal = no trade). Sign 0 (exactly-zero NGE) is kept as 0 — a "no direction" day."""
     ordered = sorted(series, key=lambda r: r.day)
+    if any(a.day == b.day for a, b in pairwise(ordered)):
+        # duplicate days would key a day to its OWN sign — same-day look-ahead. The
+        # store's dedup makes this unreachable; the fence enforces itself anyway (#183).
+        raise ValueError("shift_to_next_session: duplicate trading days in the NGE series")
     out: dict[str, int] = {}
     for prev, cur in pairwise(ordered):
         sign = 0 if prev.nge == 0 else (1 if prev.nge > 0 else -1)
         out[cur.day.date().isoformat()] = sign
     return out
-
-
-def nge_decimal_settle(quote: OptionQuote) -> Decimal:
-    """Test seam: the settle the pipeline prices IV from (the official daily mark)."""
-    return quote.settle
