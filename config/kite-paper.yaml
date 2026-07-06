@@ -21,7 +21,8 @@ heartbeat_path: var/run/kite-paper-worker.heartbeat
 command_poll_seconds: 5.0
 reconcile_interval_seconds: 30
 paper_starting_cash: "1000000"   # INR, string -> Decimal (B5)
-kite_instruments_cache: var/kite_instruments.json  # auto-refreshed when absent
+kite_instruments_cache: var/kite_instruments.json  # auto-refreshed when absent or stale
+kite_instruments_cache_max_age_hours: 24  # refetch bound (#160d; F&O churns weekly)
 
 # Pod telemetry (heartbeat + commands + trade tables). Trade sync needs a
 # deployments row: create it pod-side, then set deployment_id (fresh state_db!).

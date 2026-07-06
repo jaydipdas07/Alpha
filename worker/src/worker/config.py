@@ -122,6 +122,12 @@ class EnvConfig(BaseModel):
     # Where the factory caches the Kite instrument master (symbol -> instrument_token);
     # refreshed automatically when absent. Gitignored var/ by convention.
     kite_instruments_cache: str = "var/kite_instruments.json"
+    # #160(d): refetch the cached master when older than this (Zerodha republishes the
+    # dump daily; F&O contracts churn weekly, so an unbounded cache eventually serves
+    # dead tokens). 0 = refetch on every boot. On a refetch FAILURE with a stale cache
+    # present, the boot proceeds on the stale copy with a loud warning (equity tokens
+    # are years-stable; unknown symbols still fail fast at the token-map check).
+    kite_instruments_cache_max_age_hours: float = Field(default=24.0, ge=0)
     # Daily square-off at the segment's square_off_time (SCHED-1) — an INTRADAY-style
     # book (MIS). False = positions may hold overnight (CNC-style; the default).
     intraday_square_off: bool = False

@@ -89,7 +89,7 @@ def build_kite_ticker_feed(venue: VenueConfig, env: EnvConfig) -> KiteTickerFeed
     error). Instrument tokens come from the Kite instrument master — the gitignored
     cache when present, else fetched once and cached (network at the edge)."""
     import json
-    from datetime import UTC, datetime
+    from datetime import UTC, datetime, timedelta
     from pathlib import Path
 
     from kiteconnect import KiteConnect, KiteTicker  # worker dep — never the kernel's
@@ -123,16 +123,33 @@ def build_kite_ticker_feed(venue: VenueConfig, env: EnvConfig) -> KiteTickerFeed
             )
 
     cache = Path(env.kite_instruments_cache)
+    # #160(d): an mtime bound on the cached master — F&O contracts churn weekly, so a
+    # use-forever cache eventually serves dead tokens. Wall-clock is fine here: this is
+    # boot-time network glue at the edge, never the engine.
+    fresh = False
     if cache.is_file():
+        age = datetime.now(UTC) - datetime.fromtimestamp(cache.stat().st_mtime, tz=UTC)
+        fresh = age <= timedelta(hours=env.kite_instruments_cache_max_age_hours)
+    if fresh:
         registry = InstrumentRegistry.from_kite_json(cache)
         log.info("kite_instruments_cached", path=str(cache))
     else:
-        rows = KiteConnect(api_key=api_key, access_token=access_token).instruments("NSE")
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        # Kite rows carry date objects — stringify; the registry parses them back.
-        cache.write_text(json.dumps(rows, default=str), encoding="utf-8")
-        registry = InstrumentRegistry.from_kite_dump(rows)
-        log.info("kite_instruments_fetched", rows=len(rows), cached=str(cache))
+        try:
+            rows = KiteConnect(api_key=api_key, access_token=access_token).instruments("NSE")
+        except Exception as exc:
+            if not cache.is_file():
+                raise
+            # A refetch blip must not brick a boot when a (stale) master exists — proceed
+            # on it, LOUDLY. Equity tokens are years-stable; a symbol the stale master
+            # doesn't know still fails fast at the token-map check below.
+            log.warning("kite_instruments_stale_fallback", path=str(cache), error=repr(exc))
+            registry = InstrumentRegistry.from_kite_json(cache)
+        else:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            # Kite rows carry date objects — stringify; the registry parses them back.
+            cache.write_text(json.dumps(rows, default=str), encoding="utf-8")
+            registry = InstrumentRegistry.from_kite_dump(rows)
+            log.info("kite_instruments_fetched", rows=len(rows), cached=str(cache))
 
     tokens = registry.token_map()
     missing = [s for s in env.symbols if s not in tokens]
