@@ -22,8 +22,10 @@ block; the block's trial-Sharpe variance from the run log) — the frozen five c
 original multiplicity, not a flattering n=1.
 
 ``--holdout-reads`` defaults to **skip** (in-sample-under-fills first — the fill model's
-damage report); ``auto`` spends the five one-shot reads on the gate-only 1h holdout
-(2026-04-16 floor) under IDENTICAL execution — the read [You] asked this instrument for.
+damage report); ``auto`` spends a one-shot read on the gate-only 1h holdout (2026-04-16
+floor) under IDENTICAL execution for each config that PROMOTES under fills (the driver
+norm: only a promote earns its read; a config that failed the deployable in-sample bar
+keeps its read while the window rolls forward).
 
     ALPHA_RESEARCH_ROOT=data_research ALPHA_HOLDOUT_ROOT=data_holdout \\
         uv run python scripts/maker_fill_review.py [--holdout-reads auto]
@@ -45,7 +47,7 @@ from alpha_core.research.cold_store_bars import ColdStoreBarsFor
 from alpha_core.research.cost_scenarios import scenario_cost_config
 from alpha_core.research.engine_backtester import EngineBacktester
 from alpha_core.research.holdout_gate import HoldoutBarsFor, HoldoutGate
-from alpha_core.research.quant_analyst import QuantAnalyst
+from alpha_core.research.quant_analyst import QuantAnalyst, Verdict
 from alpha_core.research.seasonal_templates import SEASONAL_TEMPLATES
 from alpha_core.research.strategist import StrategyProposal, StrategyTemplate
 from alpha_core.risk.limits import load_risk_config
@@ -174,6 +176,12 @@ def main() -> None:
             f"registration n_trials={n_trials})"
         )
         if args.holdout_reads == "auto":
+            if a.verdict is not Verdict.PROMOTE:
+                # The driver norm everywhere: only a PROMOTE earns its one-shot read.
+                # A config that failed the deployable in-sample bar keeps its read —
+                # the window rolls forward; a premature read is unrecoverable.
+                print("    -> read WITHHELD (not a PROMOTE under fills; the read is kept)")
+                continue
             gate = HoldoutGate(
                 backtester=_make(HoldoutBarsFor.from_config(holdout)), quant_analyst=qa
             )
