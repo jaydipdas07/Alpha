@@ -225,3 +225,28 @@ def test_real_costs_yaml_works(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert b.total > 0
     assert _consistent(b)
+
+
+def test_real_costs_yaml_charges_gst(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The YAML-1.1 boolean-key regression pin: a bare ``on:`` in costs.yaml parses as
+    the boolean ``True``, silently zeroing GST through the REAL config while string-keyed
+    test fixtures stay green (found by the #174 review). The committed yaml must always
+    yield a nonzero GST equal to pct x its named components, on every Indian segment."""
+    monkeypatch.delenv("ALPHA_CONFIG_DIR", raising=False)
+    model = CostModel(load_yaml("costs.yaml"))
+    equity = model.estimate(
+        side=Side.SELL,
+        quantity=Decimal("10"),
+        bid=Decimal("99"),
+        ask=Decimal("101"),
+        instrument=EQUITY,
+    )
+    option = model.estimate(
+        side=Side.SELL,
+        quantity=Decimal("75"),
+        ltp=Decimal("120"),
+        instrument=InstrumentMeta(asset_class=AssetClass.INDEX_OPTION, tick_size=Decimal("0.05")),
+    )
+    for b in (equity, option):
+        assert b.gst > 0
+        assert b.gst == Decimal("0.18") * (b.brokerage + b.exchange_txn + b.sebi)

@@ -94,7 +94,7 @@
           },
           "gst": {
             "pct": 0.18,
-            "true": [
+            "on": [
               "brokerage",
               "exchange_txn",
               "sebi"
@@ -113,18 +113,18 @@
           "stt": {
             "pct": 0.0015,
             "side": "sell",
-            "true": "premium"
+            "on": "premium"
           },
           "exchange_txn": {
             "pct": 0.0003503,
-            "true": "premium"
+            "on": "premium"
           },
           "sebi": {
             "pct": 1e-06
           },
           "gst": {
             "pct": 0.18,
-            "true": [
+            "on": [
               "brokerage",
               "exchange_txn",
               "sebi"
@@ -133,7 +133,7 @@
           "stamp_duty": {
             "pct": 3e-05,
             "side": "buy",
-            "true": "premium"
+            "on": "premium"
           }
         },
         "index_future": {
@@ -154,7 +154,7 @@
           },
           "gst": {
             "pct": 0.18,
-            "true": [
+            "on": [
               "brokerage",
               "exchange_txn",
               "sebi"
