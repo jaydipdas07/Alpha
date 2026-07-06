@@ -60,6 +60,39 @@ def cost_per_side(scenario: str = "taker") -> float:
     return float(cast(float, trading["pct"])) + float(cast(int, slippage["value"])) / 10_000.0
 
 
+def futures_costed_equity_config(cost_config: dict[str, Any]) -> dict[str, Any]:
+    """The parsed ``costs.yaml`` repriced so EQUITY-mapped instruments charge the
+    **index-futures** stack — the F1 overlay (survey §5: "NIFTY-futures cost overlay").
+
+    The F1 research cell is the NIFTY 50 *index* under ``AssetClass.EQUITY`` (the engine's
+    only cash-equity mapping), but the deployable instrument is the near-month future —
+    charging the cash-equity stack would UNDERSTATE the deployable STT (0.025% vs the
+    futures 0.05% sell-side, Budget-2026). Returns a DEEP COPY with, for the equity keys
+    only: ``segments.equity_intraday`` <- ``segments.index_future``,
+    ``slippage.equity`` <- ``slippage.index_future``, and
+    ``slippage.default_spread.equity`` <- ``default_spread.index_future``. Raises
+    ``ValueError`` when the ``index_future`` homes are absent (the overlay must never
+    silently price as cash equity).
+
+    **Honesty note:** the fold marks at INDEX levels; intraday index-vs-future basis
+    drift is unmodelled (small at minute scale, nonzero) — declared in the F1
+    pre-registration, revisited before any paper deployment.
+    """
+    out = copy.deepcopy(cost_config)
+    segments = out.get("segments", {})
+    if "index_future" not in segments:
+        raise ValueError("futures overlay needs segments.index_future in costs.yaml")
+    segments["equity_intraday"] = copy.deepcopy(segments["index_future"])
+    slip = out.get("slippage", {})
+    if "index_future" not in slip or "index_future" not in slip.get("default_spread", {}):
+        raise ValueError(
+            "futures overlay needs slippage.index_future + default_spread.index_future"
+        )
+    slip["equity"] = copy.deepcopy(slip["index_future"])
+    slip["default_spread"]["equity"] = slip["default_spread"]["index_future"]
+    return out
+
+
 def scenario_cost_config(cost_config: dict[str, Any], scenario: str = "taker") -> dict[str, Any]:
     """The parsed ``costs.yaml`` mapping repriced for ``scenario`` (engine path).
 

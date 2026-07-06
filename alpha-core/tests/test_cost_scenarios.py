@@ -17,6 +17,7 @@ from alpha_core.research.cost_scenarios import cost_per_side, scenario_cost_conf
 from alpha_core.research.funding_window_backtester import taker_cost_per_side
 
 CRYPTO = InstrumentMeta(asset_class=AssetClass.CRYPTO)
+EQUITY_META = InstrumentMeta(asset_class=AssetClass.EQUITY)
 
 # A controlled config for exact-math assertions (mirrors costs.yaml shape).
 CONFIG: dict[str, Any] = {
@@ -124,6 +125,44 @@ def test_cost_model_prices_a_maker_order_with_no_crossing_legs() -> None:
     assert maker.effective_fill_price == ltp
     assert maker.brokerage == ltp * qty * Decimal("0.0002")
     assert maker.total < taker.total
+
+
+def test_futures_overlay_reprices_equity_at_the_futures_stack() -> None:
+    from alpha_core.research.cost_scenarios import futures_costed_equity_config
+
+    cfg = load_yaml("costs.yaml")
+    out = futures_costed_equity_config(cfg)
+    assert cfg["segments"]["equity_intraday"] != cfg["segments"]["index_future"]  # sanity
+    assert out["segments"]["equity_intraday"] == cfg["segments"]["index_future"]
+    assert out["slippage"]["equity"] == cfg["slippage"]["index_future"]
+    assert (
+        out["slippage"]["default_spread"]["equity"]
+        == cfg["slippage"]["default_spread"]["index_future"]
+    )
+    # the input mapping is never touched; non-equity keys pass through
+    assert (
+        cfg["segments"]["equity_intraday"]["stt"]["pct"]
+        != out["segments"]["equity_intraday"]["stt"]["pct"]
+    )
+    assert out["segments"]["crypto_perp"] == cfg["segments"]["crypto_perp"]
+    # end-to-end: an EQUITY sell through the overlaid CostModel pays the FUTURES STT
+    b = CostModel(out).estimate(
+        side=Side.SELL, quantity=Decimal("10"), ltp=Decimal("25000"), instrument=EQUITY_META
+    )
+    assert b.stt == Decimal("0.0005") * Decimal("10") * b.effective_fill_price
+
+
+def test_futures_overlay_requires_the_index_future_homes() -> None:
+    from alpha_core.research.cost_scenarios import futures_costed_equity_config
+
+    for strip in ("segments", "slippage"):
+        cfg = copy.deepcopy(load_yaml("costs.yaml"))
+        if strip == "segments":
+            del cfg["segments"]["index_future"]
+        else:
+            del cfg["slippage"]["index_future"]
+        with pytest.raises(ValueError, match="futures overlay"):
+            futures_costed_equity_config(cfg)
 
 
 def test_real_costs_yaml_transforms_cleanly() -> None:
