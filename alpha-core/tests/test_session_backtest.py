@@ -308,6 +308,52 @@ def test_degenerate_schedules_are_rejected_at_construction() -> None:
         )
 
 
+async def test_24x7_book_never_squares_off_even_with_the_flag() -> None:
+    # Review #176 R1: a 24x7 schedule + intraday_square_off must NOT flatten at the
+    # UTC-midnight rollover — the Worker never squares off a 24x7 book.
+    bars = [
+        Bar(
+            symbol="BTCUSDT",
+            venue=Venue.BINANCE,
+            asset_class=AssetClass.CRYPTO,
+            start=datetime(2026, 6, 17, 23, 57, tzinfo=UTC) + i * ONE_MIN,
+            interval=ONE_MIN,
+            open=Decimal(str(100 + i)),
+            high=Decimal(str(101 + i)),
+            low=Decimal(str(99 + i)),
+            close=Decimal(str(100 + i)),
+            volume=Decimal("1"),
+        )
+        for i in range(6)  # closes 23:58 .. 00:03 — crosses UTC midnight
+    ]
+    crypto_costs: dict[str, object] = {
+        "slippage": {
+            "crypto_perp": {"type": "bps", "value": 0},
+            "default_spread": {"crypto_perp": 0},
+            "stress_multiplier": 2,
+        },
+        "segments": {"crypto_perp": {}},
+    }
+
+    async def run(flag: bool) -> BacktestResult:
+        return await run_backtest(
+            bars=bars,
+            strategy=EveryBarBuyer(),
+            instruments={"BTCUSDT": InstrumentMeta(asset_class=AssetClass.CRYPTO)},
+            risk_config=_risk(),
+            cost_config=crypto_costs,
+            venue=Venue.BINANCE,
+            starting_cash=Decimal("1000000"),
+            schedule=MarketSchedule(is_24x7=True),
+            intraday_square_off=flag,
+        )
+
+    with_flag = await run(True)
+    without = await run(False)
+    assert with_flag.equity_curve == without.equity_curve
+    assert with_flag.stats == without.stats
+
+
 async def test_square_off_flattens_once_at_the_cutoff_not_at_close() -> None:
     # Enter long before the cutoff; prices keep RISING after 15:20. MIS-style
     # square-off must realize at the 15:20 close (200), never ride to 209.

@@ -232,6 +232,7 @@ async def run_backtest(
         if (
             intraday_square_off
             and schedule is not None
+            and not schedule.is_24x7  # a 24x7 book NEVER squares off (review #176 R1)
             and not risk.is_halted
             and prev_close_date is not None
             and bar_close.astimezone(UTC).date() != prev_close_date
@@ -400,6 +401,7 @@ async def run_portfolio_backtest(
         if (
             intraday_square_off
             and schedule is not None
+            and not schedule.is_24x7  # a 24x7 book NEVER squares off (review #176 R1)
             and not risk.is_halted
             and prev_close_date is not None
             and close_ts.astimezone(UTC).date() != prev_close_date
