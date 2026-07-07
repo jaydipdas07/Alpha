@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -82,6 +83,11 @@ def main() -> int:
             )
         )
         for store, rows in ((research, res_rows), (holdout, hold_rows)):
+            # REBUILD, never merge (the tick-seal twin's rule): a rolled-forward
+            # boundary must not leave stale released-era rows on either side (#186 F2).
+            target = store.root / series_dir.name
+            if target.is_dir():
+                shutil.rmtree(target)
             by_month: dict[str, list[tuple[int, float, float]]] = {}
             for e, b, s in rows:
                 m = datetime.fromtimestamp(e, tz=UTC)

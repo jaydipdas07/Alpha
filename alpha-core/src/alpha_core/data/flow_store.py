@@ -46,10 +46,6 @@ class FlowMonth:
     sell: np.ndarray  # float64 taker-sell volume per bucket
 
 
-def month_of(ts: datetime) -> str:
-    return f"{ts.year:04d}-{ts.month:02d}"
-
-
 class FlowStore:
     """Columnar month-partitioned flow store (float statistics plane)."""
 
@@ -101,7 +97,9 @@ class FlowStore:
             },
             schema=_SCHEMA,
         )
-        fd, tmp = tempfile.mkstemp(dir=series, suffix=".tmp.parquet")
+        # tmp name must NOT match the *.parquet glob (a kill between write and replace
+        # would otherwise leave an orphan that read_span concatenates mid-sort, #186 F3)
+        fd, tmp = tempfile.mkstemp(dir=series, prefix=f"{month}.", suffix=".parquet.tmp")
         os.close(fd)
         try:
             pq.write_table(table, tmp)
@@ -139,11 +137,14 @@ class FlowStore:
                 np.array([], dtype=np.float64),
                 np.array([], dtype=np.float64),
             )
-        return FlowMonth(
+        out = FlowMonth(
             np.concatenate([p.epoch_s for p in parts]),
             np.concatenate([p.buy for p in parts]),
             np.concatenate([p.sell for p in parts]),
         )
+        if len(out.epoch_s) > 1 and not bool(np.all(np.diff(out.epoch_s) > 0)):
+            raise ValueError("flow span is not strictly ascending — corrupt partition?")
+        return out
 
     def months(self, *, venue: Venue, symbol: str, interval_seconds: int) -> list[str]:
         series = self._series_dir(venue, symbol, interval_seconds)

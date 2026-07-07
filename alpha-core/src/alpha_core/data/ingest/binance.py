@@ -147,7 +147,7 @@ def aggtrades_to_flows(
     for row in rows:
         try:
             ts_ms = int(row[5])
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, IndexError):
             continue  # header row
         qty = float(row[2])
         maker_flag = str(row[6]).strip().lower() == "true"

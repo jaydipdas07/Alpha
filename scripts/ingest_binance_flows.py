@@ -7,8 +7,12 @@ fold to per-second ``(taker_buy_volume, taker_sell_volume)`` via the CI-tested
 The price/tick store keeps volumes UNSIGNED — this tree exists because the G2 family
 needs the aggressor SIDE, which only the raw rows carry.
 
-**Resumable:** months already fully covered are skipped (partition presence + span);
-partial months merge idempotently (dedup by second). Mac-only by policy (1s scale).
+**Resumable (presence-based):** an interior month WITH a partition is trusted complete
+and skipped; the span's edge months always re-merge (idempotent), so an interrupted run
+self-heals on the next same-span pass. NB this is WEAKER than the tick twin's per-day
+coverage resume: a prior different-span invocation that left a partial interior month
+would be masked — keep invocations same-span, and read the per-month report below
+(coverage-based resume parity is a tracked follow-up, #186 F1). Mac-only (1s scale).
 
 Run (the G2 registered pair, matching the tick-store span)::
 
@@ -121,7 +125,15 @@ def main() -> int:
                 rows=rows,
             )
             print(f"[flows] {symbol} {current}: {n} seconds on disk", flush=True)
-        print(f"=== {symbol} flow ingest complete ===", flush=True)
+        report = []
+        for m in store.months(
+            venue=Venue.BINANCE, symbol=symbol, interval_seconds=_INTERVAL_SECONDS
+        ):
+            month_rows = store.read_month(
+                venue=Venue.BINANCE, symbol=symbol, interval_seconds=_INTERVAL_SECONDS, month=m
+            )
+            report.append(f"{m}:{len(month_rows.epoch_s)}s")
+        print(f"=== {symbol} flow ingest complete — coverage: {' '.join(report)} ===", flush=True)
     return 0
 
 

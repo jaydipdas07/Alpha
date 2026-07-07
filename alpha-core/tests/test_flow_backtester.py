@@ -68,8 +68,7 @@ def _write_quiet_tape(
     """
     step_at = None if burst_at is None else burst_at + 10
     bars = [
-        _bar(T0 + i, "100" if step_at is None or i < step_at else "101")
-        for i in range(seconds)
+        _bar(T0 + i, "100" if step_at is None or i < step_at else "101") for i in range(seconds)
     ]
     ticks.write_bars(bars, month="2026-01")
     rows = []
@@ -115,9 +114,7 @@ def test_maker_scenario_reprices_the_same_trade(tmp_path: Path) -> None:
     ticks, flows = _stores(tmp_path)
     _write_quiet_tape(ticks, flows, seconds=1200, burst_at=600)
     taker = np.asarray(FlowBacktester(ticks, flows).run(_proposal()))
-    maker = np.asarray(
-        FlowBacktester(ticks, flows, cost_scenario="maker").run(_proposal())
-    )
+    maker = np.asarray(FlowBacktester(ticks, flows, cost_scenario="maker").run(_proposal()))
     t_pnl = taker[taker != 0.0][0]
     m_pnl = maker[maker != 0.0][0]
     assert m_pnl - t_pnl == pytest.approx(

@@ -3,7 +3,8 @@ holdout read per survivor (`docs/research/intraday-edge-survey-2026-07-v2.md` §
 
 Protocol identical to ``scripts/funding_window_review.py`` (one in-memory ledger, exhaustive
 8-config space per cell via ``max_attempts=500``, holdout only through ``HoldoutGate`` over
-the pair built in one tested place — here over the research/holdout TICK stores). Run AFTER
+the pair built in one tested place — here over the research/holdout TICK stores). Run AFTER the
+flow ingest + flow seal (`ingest_binance_flows.py` / `seal_flow_store.py`) AND
 ``scripts/ingest_binance_ticks.py`` and ``scripts/seal_tick_store.py``::
 
     ALPHA_TICK_RESEARCH_ROOT=data_research_ticks ALPHA_TICK_HOLDOUT_ROOT=data_holdout_ticks \\
