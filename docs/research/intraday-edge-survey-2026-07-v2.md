@@ -83,3 +83,32 @@ magnet"); free to test; register narrow and expect modest.
 - Max-pain practitioner guides (NiftyTrader/Upstox/StockMojo) — https://www.niftytrader.in/markets/max-pain-in-options-expiry-trading-guide-india/
 - Bitcoin overnight/session effects — https://quantpedia.com/how-to-profitably-trade-bitcoins-overnight-sessions/
 - FOMC/crypto intraday event risk — https://www.sciencedirect.com/science/article/abs/pii/S1544612326006021
+
+
+---
+
+## Round-three addendum (2026-07-07, later the same morning)
+
+**G5 — OI / positioning families (Binance metrics archive) — a MAJOR data unlock.** The
+M3.0 ruling that open interest was unreachable (30-day API cap) is REVERSED: the bulk
+portal (`data.binance.vision /futures/um/daily/metrics/`) carries **5-minute snapshots
+back to at least 2021-06** of: open interest (contracts + USD), top-trader long/short
+ratio (accounts and positions), the global long/short account ratio, and the taker
+buy/sell volume ratio — verified by direct download (289 rows/day, trivial file sizes).
+Candidate registrations, each with documented priors: (a) **OI-flush reversion** — rapid
+OI contraction = forced deleveraging, mechanistically the same flow as F4's +3–13bps
+gross liquidation finding but visible WITHOUT the recorder era; (b) **OI-price
+quadrants** (rising-OI moves persist, falling-OI moves fade — the classic positioning
+doctrine); (c) **crowding fades** off the global-vs-top-trader ratio divergence. Ingest
+is trivial; families register separately after G2's verdicts.
+
+**Pre-open auction imbalance (NSE) — a forward-recorder family.** The 09:00–09:07/08
+call auction publishes indicative price + order imbalance live (and F&O gained a
+pre-open session 2025-12-08); the equilibrium becomes the day's open. No free HISTORICAL
+imbalance archive exists — but the worker's Kite feed already receives the pre-open
+snapshot ticks (observed in the M4.5 exercise), so a small recorder makes this a
+time-gated family exactly like recorder-era F4. Queued behind the recorder decision.
+
+**India VIX — a conditioning layer, not a family.** Free daily history from NSE; no
+rigorous standalone evidence surfaced. Wire as a vol-regime filter axis when a family
+needs one (a NEW registration each time, as with the NGE layer).
