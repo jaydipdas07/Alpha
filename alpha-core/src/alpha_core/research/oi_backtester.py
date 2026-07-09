@@ -24,8 +24,11 @@ Discipline (the ``leadlag_backtester`` / ``flow_backtester`` shape, review-harde
 - **costs both sides** from the one config home (``cost_scenarios.cost_per_side``):
   ``"taker"`` deployable-today, ``"maker"`` fees-only ⇒ the driver freezes survivors;
 - returns land on **exit-hour marks** over the cell's calendar (the OOS slicer sees time,
-  not cherry-picked trades). Entry at the decision bar's close — the F2/FW bar-close
-  convention on this same 1h plane.
+  not cherry-picked trades). Entry fills at the decision bar's close: every input is
+  printed at/before that instant (embargoed OI at ``t-300``, closes through ``t``) and
+  taker slippage is charged — but note this is a ZERO-deferral fill at the signal close,
+  unlike the FW fold, which defers entry one full bar past its signal instant. A
+  faster-frequency family must NOT inherit this convention without re-deriving it.
 
 TEST-3: ``build_oi_backtesters`` wires the (in-sample, holdout) pair over the research
 ``BarStore`` / gate-only ``HoldoutStore`` (prices) AND the research / holdout METRICS

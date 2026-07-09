@@ -5,9 +5,9 @@ Columnar 5-minute positioning snapshots from the bulk archive's ``metrics`` tree
 REVERSED the M3.0 open-interest ruling): open interest (contracts + USD value), the
 top-trader long/short ratios (by accounts and by positions), the global long/short
 account ratio, and the taker buy/sell volume ratio. **float64 by design** — positioning
-is the statistics plane (signal input, never money). The ratio columns are **NaN where
-the archive left them blank** (most of 2022 publishes OI only) — consumers of a ratio
-column must mask NaN explicitly; the OI columns are always present.
+is the statistics plane (signal input, never money). Every column except
+``open_interest`` is **NaN where the archive left it blank** (most of 2022 publishes OI
+only) — consumers must mask NaN explicitly; only ``open_interest`` is always present.
 
 The ``FlowStore`` patterns verbatim (review-hardened there, #186): month partitions,
 atomic glob-invisible tmp writes, idempotent last-wins merges by epoch second, arrow-

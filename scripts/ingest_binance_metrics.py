@@ -13,12 +13,12 @@ naming is confusing — the mapping is pinned here):
 - ``count_long_short_ratio``    global accounts ratio            -> global_ls_accounts
 - ``sum_taker_long_short_vol_ratio``    taker buy/sell vol ratio -> taker_buy_sell_ratio
 
-Presence is two-tier: ``create_time`` + both open-interest columns are REQUIRED (a row
-missing them is skipped); the four ratio columns are stored as **NaN when absent** — for
-most of 2022 the archive publishes OI only, with the ratio fields as empty strings, and
-dropping those rows would fabricate a year-long hole in a perfectly good OI series. NaN
-is the honest "not published", never interpolated. A day whose zip yields zero rows is
-reported. Idempotent per month (store merges last-wins). Run::
+Presence is two-tier: ``create_time`` + ``sum_open_interest`` (the fold's signal) are
+REQUIRED (a row missing them is skipped); every other column is stored as **NaN when
+absent** — for most of 2022 the archive publishes OI only, with the ratio fields as empty
+strings, and dropping those rows would fabricate a year-long hole in a perfectly good OI
+series. NaN is the honest "not published", never interpolated. A day whose zip yields
+zero rows is reported. Idempotent per month (store merges last-wins). Run::
 
     uv run python scripts/ingest_binance_metrics.py --symbols BTCUSDT,ETHUSDT
 """
@@ -44,7 +44,7 @@ STORE_ROOT = Path(os.environ.get("ALPHA_METRICS_ROOT") or (_ROOT / "data_cold_me
 
 
 def _ratio(rec: dict[str, str], key: str) -> float:
-    """Optional ratio field: NaN when the archive left it blank (the 2022 era)."""
+    """Optional field: NaN when the archive left it blank (the 2022 era)."""
     try:
         return float(rec[key])
     except (KeyError, ValueError, TypeError):
@@ -53,25 +53,30 @@ def _ratio(rec: dict[str, str], key: str) -> float:
 
 def _parse_zip(path: Path) -> list[MetricsRow]:
     rows: list[MetricsRow] = []
-    with zipfile.ZipFile(path) as zf, zf.open(zf.namelist()[0]) as fh:
-        for rec in csv.DictReader(io.TextIOWrapper(fh, encoding="utf-8")):
-            try:  # timestamp + both OI columns are REQUIRED; ratios degrade to NaN
-                ts = datetime.strptime(rec["create_time"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
-                oi = float(rec["sum_open_interest"])
-                oi_value = float(rec["sum_open_interest_value"])
-            except (KeyError, ValueError, TypeError):
-                continue  # malformed row — skip, never fabricate
-            rows.append(
-                (
-                    int(ts.timestamp()),
-                    oi,
-                    oi_value,
-                    _ratio(rec, "count_toptrader_long_short_ratio"),
-                    _ratio(rec, "sum_toptrader_long_short_ratio"),
-                    _ratio(rec, "count_long_short_ratio"),
-                    _ratio(rec, "sum_taker_long_short_vol_ratio"),
+    with zipfile.ZipFile(path) as zf:
+        names = zf.namelist()
+        if not names:
+            return []  # corrupt/empty zip: count the day as unparseable, don't abort
+        with zf.open(names[0]) as fh:
+            for rec in csv.DictReader(io.TextIOWrapper(fh, encoding="utf-8")):
+                try:  # timestamp + OI-contracts are REQUIRED; everything else degrades
+                    ts = datetime.strptime(rec["create_time"], "%Y-%m-%d %H:%M:%S").replace(
+                        tzinfo=UTC
+                    )
+                    oi = float(rec["sum_open_interest"])
+                except (KeyError, ValueError, TypeError):
+                    continue  # malformed row — skip, never fabricate
+                rows.append(
+                    (
+                        int(ts.timestamp()),
+                        oi,
+                        _ratio(rec, "sum_open_interest_value"),
+                        _ratio(rec, "count_toptrader_long_short_ratio"),
+                        _ratio(rec, "sum_toptrader_long_short_ratio"),
+                        _ratio(rec, "count_long_short_ratio"),
+                        _ratio(rec, "sum_taker_long_short_vol_ratio"),
+                    )
                 )
-            )
     return rows
 
 

@@ -7,7 +7,7 @@ built in one tested place — here over the research/holdout BAR stores + the re
 METRICS stores). Run AFTER the metrics ingest + metrics seal
 (`ingest_binance_metrics.py` / `seal_metrics_store.py`)::
 
-    ALPHA_RESEARCH_ROOT=data_cold ALPHA_HOLDOUT_ROOT=data_holdout \\
+    ALPHA_RESEARCH_ROOT=data_research ALPHA_HOLDOUT_ROOT=data_holdout \\
     ALPHA_METRICS_RESEARCH_ROOT=data_research_metrics \\
     ALPHA_METRICS_HOLDOUT_ROOT=data_holdout_metrics \\
         uv run python scripts/oi_review.py
