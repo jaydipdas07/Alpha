@@ -51,6 +51,9 @@ data_options/
 data_research_nge/
 data_cold_flows/
 data_cold_metrics/
+data_cold_metrics_store/
+data_research_metrics/
+data_holdout_metrics/
 data_research_flows/
 data_holdout_flows/
 
