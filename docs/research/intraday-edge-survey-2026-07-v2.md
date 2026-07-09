@@ -112,3 +112,53 @@ time-gated family exactly like recorder-era F4. Queued behind the recorder decis
 **India VIX — a conditioning layer, not a family.** Free daily history from NSE; no
 rigorous standalone evidence surfaced. Wire as a vol-regime filter axis when a family
 needs one (a NEW registration each time, as with the NGE layer).
+
+---
+
+## Round-four addendum (2026-07-10) — the unmined-archive probe
+
+Direct S3 listing of `data.binance.vision` (`/futures/um/`), BTCUSDT + ETHUSDT, run
+before any family design per the operator directive. Real coverage, era, and sizes:
+
+| tree | coverage (BTC) | files | total | file min/med/max | verdict |
+|---|---|---|---|---|---|
+| `daily/liquidationSnapshot` | **absent** — the um tree does not exist | 0 | — | — | archive-scale F4 **IMPOSSIBLE** |
+| `cm/daily/liquidationSnapshot` | 2023-06-25 → **2024-10-14 (ends)** | 472 | 1.2 MB | — | already mined (F4 exploratory, prior:REJECT) |
+| `daily/bookDepth` | 2023-01-01 → **current** (2026-07-08) | 1,282 | 0.59 GB (ETH 0.62) | 0/0.47/0.57 MB | **VIABLE → the maker-native imbalance family** |
+| `daily/bookTicker` | 2023-05-16 → **2024-03-30 (dead era)** | 320 | 52.6 GB (ETH 43.3) | 48/145/474 MB | **DECLINED** (below) |
+| `daily/premiumIndexKlines/1m` | 2019-12-24 → **current** | 2,382 (monthly: 78, 2020-01→2026-06) | 0.06 GB | trivial | **VIABLE → premium-tape families** |
+
+**Schemas pinned by sample download** (2026-07-01 + 2023-01-01 files, era-stable):
+
+- `bookDepth`: `timestamp` (naive UTC), `percentage`, `depth` (base asset, cumulative),
+  `notional` (USD). 12 levels per snapshot — **±0.2%, ±1..5% from mid** — at a ~30 s
+  cadence (2,880 snapshots/day in 2026; the 2023 era is slightly gappier, e.g.
+  2023-01-01 has 2,380). The ±0.2 % band is touch-adjacent depth: a genuine, if coarse,
+  order-book-imbalance input at minutes horizon.
+- `premiumIndexKlines` 1m: standard kline columns; **OHLC = the perp-vs-index premium
+  as a fraction** (e.g. −0.00023 = −2.3 bps); `count` = samples/min (12); the volume
+  columns are structurally zero (ignore).
+
+**Queue verdicts from the probe:**
+
+1. **Queue item (2) — the archive-scale liquidation-reversion family — CLOSED,
+   impossible.** um liquidations were never archived (no tree); the cm tree is exactly
+   the data the F4 exploratory already consumed (BTC 106,822 + ETH 56,186 events,
+   2023-06→2024-10; 16/16 prior:REJECT, +3–13 bps gross eaten by taker fees) and it
+   stops 2024-10-14. Nothing new exists to register on. The liquidation family stays
+   **recorder-gated** (box deploy of `liq-recorder.service`), as before.
+2. **`bookTicker` DECLINED deliberately**: the L1 tape ends 2024-03-30 — a family
+   certified there reads only against a holdout inside an era that ended 27 months ago,
+   the exact failure the maker-F2 reads exposed (2026-Q2 decay); it costs ~96 GB on the
+   Mac; and fill adjudication doesn't need it (the #184 tick-tape trade-through
+   convention covers maker fills). If a depth-family survivor ever needs L1
+   confirmation, that is a NEW registration on the recorder era.
+3. **The maker-native depth-imbalance family registers on `bookDepth`** (queue item 3),
+   with the depth store sealed by **inheriting the tick store's boundary** so the fill
+   tape and the signal tape share one holdout fence.
+4. **Premium-tape families register on `premiumIndexKlines` 1m** (queue item 4) — six
+   and a half years of the actual premium/funding-pressure tape; FW only ever tested
+   funding-clock effects on price bars, so this input is genuinely unmined.
+
+Raw zips land in `data_cold_depth/<SYMBOL>/` and `data_cold_premium/<SYMBOL>/1m/`
+(kept on disk, re-parseable — the `data_cold_metrics` convention).
