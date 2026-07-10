@@ -235,12 +235,30 @@ class TestSelection:
         bt = SipOrbBacktester(_panel_reader({"NSE:AAA": bars}), ["NSE:AAA"])
         assert np.asarray(bt.run(_proposal())).sum() == 0.0
 
-    def test_warmup_floor_blocks_early_sessions(self) -> None:
-        sessions = _sessions(11)
-        bars = _warmup_panel("NSE:AAA", sessions, 10)  # only 10 priors
-        bars += _breakout_day("NSE:AAA", sessions[10], spike_vol_per_bar="60")
+    def test_warmup_floor_blocks_at_exactly_thirteen_priors(self) -> None:
+        """13 priors — ONE session short of the 14-session floor — must not trade (the
+        #197-review MAJOR: the boundary itself is the pin, not a distant count)."""
+        sessions = _sessions(14)
+        bars = _warmup_panel("NSE:AAA", sessions, 13)
+        bars += _breakout_day("NSE:AAA", sessions[13], spike_vol_per_bar="60")
         bt = SipOrbBacktester(_panel_reader({"NSE:AAA": bars}), ["NSE:AAA"])
         assert np.asarray(bt.run(_proposal())).sum() == 0.0
+
+    def test_rvol_median_excludes_the_current_day(self) -> None:
+        """Heterogeneous history [100 x7, 300 x7] (median 200) + a 400 spike day: RVOL is
+        exactly 2.0 and MUST trade at threshold 2. A fold that appends the day's own
+        volume before its check sees median 300 (RVOL 1.33 -> blocked), and a shortened
+        median window sees 300 too — this fixture kills both mutants (#197 review)."""
+        sessions = _sessions(15)
+        d = sessions[14]
+        bars: list[Bar] = []
+        for i, s in enumerate(sessions[:14]):
+            bars.extend(_quiet_day("NSE:AAA", s, vol_per_bar="20" if i < 7 else "60"))
+        bars += _breakout_day("NSE:AAA", d, spike_vol_per_bar="80")  # first5 = 400
+        bt = SipOrbBacktester(_panel_reader({"NSE:AAA": bars}), ["NSE:AAA"])
+        marks = np.asarray(bt.run(_proposal()))
+        expected = ((105.0 / 102.5 - 1.0) - _COSTS) / 5
+        assert marks[14] == pytest.approx(expected)
 
     def test_top_k_takes_highest_rvol_only(self) -> None:
         """Three qualifying names, top_k=2: only the two highest-RVOL trade."""

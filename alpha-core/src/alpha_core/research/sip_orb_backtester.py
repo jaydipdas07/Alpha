@@ -68,16 +68,22 @@ from alpha_core.research.discovery import Backtester
 from alpha_core.research.strategist import DecimalRange, StrategyProposal, StrategyTemplate
 
 # The single pre-registered panel cell (per-stock cells would scatter multiplicity).
+# The value is a display LABEL only — the registered member list is the universe file
+# the driver loads (docs/research/nifty100-universe-2026-07.txt), passed to the builder.
 SIP_ORB_CELLS: dict[str, str] = {"nse-sip-orb": "NIFTY100-2026-07"}
 _INTERVAL_S = 60
 _IST = timedelta(hours=5, minutes=30)  # NSE wall clock; no DST
 _OPEN_MIN = 9 * 60 + 15  # 09:15 IST — the first ORB bar; earlier prints are pre-open
 _ORB_END_MIN = 9 * 60 + 20  # opening range = bars starting in [09:15, 09:20) IST
-_ENTRY_CUTOFF_MIN = 15 * 60  # no fresh entries at/after 15:00 IST
+_ENTRY_CUTOFF_MIN = 15 * 60  # no fresh SIGNALS at/after 15:00 IST (a deferred fill may
+# land later — on a gappy tape a late trigger can fill at the square-off bar itself, a
+# zero-duration round trip that only ever COSTS; conservative, never edge-inflating)
 _SQUARE_OFF_MIN = 15 * 60 + 25  # hard flat at the first bar at/after 15:25 IST
 _RVOL_LOOKBACK = 14  # sessions in the trailing first-5m volume median (all required)
 
 # A per-symbol bar reader — the injected store boundary (research or holdout side).
+# CONTRACT: bars must be TIME-ORDERED (both production stores sort on read; the fold's
+# first-trigger/searchsorted semantics assume it).
 BarReader = Callable[[str], Sequence[Bar]]
 
 
