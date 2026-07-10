@@ -29,8 +29,9 @@ exit. This IS the deployable execution, so survivors EARN their one-shot holdout
 Discipline (the sibling shape):
 
 - decisions fire only AT premium bar ends — the 1m close is printed at the decision
-  instant (live: the mark-price stream carries the premium in real time); the z-score
-  uses trailing samples only (cumsum window ending at the current bar);
+  instant (live: the premium-index kline feed carries it, forming bar included — NOT
+  the mark-price stream, whose mark/index fields are not the premium index); the
+  z-score uses trailing samples only (cumsum window ending at the current bar);
 - **warmup floor**: no signal until ``_Z_MIN_SAMPLES`` valid 1m samples sit inside the
   trailing window (the holdout fold warms up INSIDE its own window, TEST-3);
 - honest-NaN: a non-finite premium bar is no signal; sigma must be strictly positive;

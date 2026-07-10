@@ -130,7 +130,8 @@ def _tick_series(store: TickStore, symbol: str) -> _TickSeries:
         columns=("start", "low", "high", "close"),
     )
     if table.num_rows == 0:
-        raise ValueError(f"depth fold: no 1s bars for {symbol}")
+        # neutral wording: this helper is shared by every maker-native fold (G6/G7)
+        raise ValueError(f"no 1s bars for {symbol} — is the tick store root right?")
     ts = np.asarray(
         pc.cast(
             pc.floor(pc.divide(pc.cast(table.column("start"), "int64"), 1_000_000)), "int64"

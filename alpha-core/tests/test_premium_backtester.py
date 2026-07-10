@@ -181,6 +181,32 @@ class TestSignal:
         bt = PremiumDislocationBacktester(ticks, prem)
         assert np.asarray(bt.run(_proposal())).sum() == 0.0
 
+    def test_warmup_floor_is_exact_at_min_samples(self, tmp_path: Path) -> None:
+        """718 warmup samples + spike (nv=719 < 720) is blocked; 719 + spike (nv=720)
+        fires — the min-samples floor is exact in both directions."""
+        for warm, fires in ((718, False), (719, True)):
+            ticks, prem = _stores(tmp_path / f"w{warm}")
+            rows: list[PremiumRow] = []
+            for i in range(warm):
+                v = 0.0001 if i % 2 == 0 else -0.0001
+                rows.append((T0 + (i + 1) * 60, v, v, v, v))
+            spike_end = T0 + (warm + 1) * 60
+            rows.append((spike_end, 0.005, 0.005, 0.005, 0.005))
+            prem.write_month(venue=Venue.BINANCE, symbol="BTCUSDT", month="2026-01", rows=rows)
+            _write_tape(
+                ticks,
+                start=spike_end - 60,
+                seconds=2400,
+                move_at=100,
+                move=("100", "100.5", "100"),
+                exit_close="99",
+                exit_from=500,
+            )
+            bt = PremiumDislocationBacktester(ticks, prem)
+            marks = np.asarray(bt.run(_proposal()))
+            expected = (-1.0 * (99.0 / 100.0 - 1.0) - _COSTS) if fires else 0.0
+            assert marks.sum() == pytest.approx(expected), f"warm={warm}"
+
     def test_nan_premium_is_no_signal(self, tmp_path: Path) -> None:
         ticks, prem = _stores(tmp_path)
         dec = _write_premium(prem, spike_nan=True)
