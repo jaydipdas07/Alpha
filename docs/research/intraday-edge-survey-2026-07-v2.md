@@ -128,7 +128,8 @@ before any family design per the operator directive. Real coverage, era, and siz
 | `daily/bookTicker` | 2023-05-16 → **2024-03-30 (dead era)** | 320 | 52.6 GB (ETH 43.3) | 48/145/474 MB | **DECLINED** (below) |
 | `daily/premiumIndexKlines/1m` | 2019-12-24 → **current** | 2,382 (monthly: 78, 2020-01→2026-06) | 0.06 GB | trivial | **VIABLE → premium-tape families** |
 
-**Schemas pinned by sample download** (2026-07-01 + 2023-01-01 files, era-stable):
+**Schemas pinned by sample download** (2026-07-01 + 2023-01-01 files; COLUMN schemas
+are era-stable — band SETS are not, see the correction in the `bookDepth` bullet):
 
 - `bookDepth`: `timestamp` (naive UTC), `percentage`, `depth` (base asset, cumulative),
   `notional` (USD), at a ~30 s cadence (2,880 snapshots/day in 2026; the 2023 era is
