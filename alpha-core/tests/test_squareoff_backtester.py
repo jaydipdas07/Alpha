@@ -129,6 +129,90 @@ class TestFoldMechanics:
         bt = SquareoffBacktester(_reader({"NSE:AAA": day}), ["NSE:AAA"])
         assert np.asarray(bt.run(_proposal())).sum() == 0.0
 
+    def test_decision_bar_at_exactly_1515_is_stale(self) -> None:
+        """The first bar at/after 15:10 starts exactly at 15:15: OUTSIDE the half-open
+        decision window => no trade (pins the staleness boundary against widening)."""
+        day = [
+            _bar("NSE:AAA", D, 9, 15, "100", "100"),
+            _bar("NSE:AAA", D, 12, 0, "100", "102"),
+            _bar("NSE:AAA", D, 15, 15, "102", "102"),
+            _bar("NSE:AAA", D, 15, 16, "101.8", "101.8"),
+            _bar("NSE:AAA", D, 15, 25, "101", "101"),
+        ]
+        bt = SquareoffBacktester(_reader({"NSE:AAA": day}), ["NSE:AAA"])
+        assert np.asarray(bt.run(_proposal())).sum() == 0.0
+
+    def test_decision_bar_at_1514_trades(self) -> None:
+        """The boundary from the other side: a 15:14 decision bar IS inside the window."""
+        day = [
+            _bar("NSE:AAA", D, 9, 15, "100", "100"),
+            _bar("NSE:AAA", D, 12, 0, "100", "102"),
+            _bar("NSE:AAA", D, 15, 14, "102", "102"),
+            _bar("NSE:AAA", D, 15, 16, "101.8", "101.8"),
+            _bar("NSE:AAA", D, 15, 25, "101", "101"),
+        ]
+        bt = SquareoffBacktester(_reader({"NSE:AAA": day}), ["NSE:AAA"])
+        expected = (-1.0 * (101.0 / 101.8 - 1.0) - _COSTS) / 5
+        assert np.asarray(bt.run(_proposal())).sum() == pytest.approx(expected)
+
+    def test_threshold_boundary_is_inclusive_dyadic(self) -> None:
+        """r == threshold EXACTLY must trade (the registered >=). Dyadic fixture so the
+        equality is float-exact: open 64, decision 65 => r = 1/64 = 0.015625; threshold
+        1.5625% => theta = 0.015625 — a '>' mutant books nothing."""
+        day = [
+            _bar("NSE:AAA", D, 9, 15, "64", "64"),
+            _bar("NSE:AAA", D, 12, 0, "64", "65"),
+            _bar("NSE:AAA", D, 15, 10, "65", "65"),
+            _bar("NSE:AAA", D, 15, 11, "64.9", "64.9"),
+            _bar("NSE:AAA", D, 15, 25, "64.5", "64.5"),
+        ]
+        bt = SquareoffBacktester(_reader({"NSE:AAA": day}), ["NSE:AAA"])
+        expected = (-1.0 * (64.5 / 64.9 - 1.0) - _COSTS) / 5
+        assert np.asarray(bt.run(_proposal(threshold="1.5625"))).sum() == pytest.approx(expected)
+
+    def test_exit_uses_the_1525_bar_not_later_prints(self) -> None:
+        """The real NSE tape prints past 15:25: the exit is the FIRST bar at/after
+        15:25, never the session's last print."""
+        day = [
+            _bar("NSE:AAA", D, 9, 15, "100", "100"),
+            _bar("NSE:AAA", D, 12, 0, "100", "102"),
+            _bar("NSE:AAA", D, 15, 10, "102", "102"),
+            _bar("NSE:AAA", D, 15, 11, "101.8", "101.8"),
+            _bar("NSE:AAA", D, 15, 25, "101", "101"),
+            _bar("NSE:AAA", D, 15, 26, "99", "99"),
+            _bar("NSE:AAA", D, 15, 29, "98", "98"),
+        ]
+        bt = SquareoffBacktester(_reader({"NSE:AAA": day}), ["NSE:AAA"])
+        expected = (-1.0 * (101.0 / 101.8 - 1.0) - _COSTS) / 5  # vs 101, NOT 98
+        assert np.asarray(bt.run(_proposal())).sum() == pytest.approx(expected)
+
+    def test_day_move_anchors_on_the_session_open_price(self) -> None:
+        """The 09:15 bar opens 100 and closes 100.6: r must anchor on the OPEN
+        (101.6/100 = +1.6% >= 1.5% trades); a close-anchored mutant sees +0.994%
+        and books nothing."""
+        day = [
+            _bar("NSE:AAA", D, 9, 15, "100", "100.6"),
+            _bar("NSE:AAA", D, 12, 0, "100.6", "101.6"),
+            _bar("NSE:AAA", D, 15, 10, "101.6", "101.6"),
+            _bar("NSE:AAA", D, 15, 11, "101.5", "101.5"),
+            _bar("NSE:AAA", D, 15, 25, "101", "101"),
+        ]
+        bt = SquareoffBacktester(_reader({"NSE:AAA": day}), ["NSE:AAA"])
+        expected = (-1.0 * (101.0 / 101.5 - 1.0) - _COSTS) / 5
+        assert np.asarray(bt.run(_proposal(threshold="1.5"))).sum() == pytest.approx(expected)
+
+    def test_zero_duration_fill_on_square_off_bar_books_costs(self) -> None:
+        """A 15:14 decision whose next bar IS the square-off bar: the declared
+        zero-duration cost-only round trip (entry == exit) must book exactly -costs."""
+        day = [
+            _bar("NSE:AAA", D, 9, 15, "100", "100"),
+            _bar("NSE:AAA", D, 12, 0, "100", "102"),
+            _bar("NSE:AAA", D, 15, 14, "102", "102"),
+            _bar("NSE:AAA", D, 15, 25, "101", "101"),
+        ]
+        bt = SquareoffBacktester(_reader({"NSE:AAA": day}), ["NSE:AAA"])
+        assert np.asarray(bt.run(_proposal())).sum() == pytest.approx(-_COSTS / 5)
+
     def test_zero_session_marks_span_the_calendar(self) -> None:
         """Two sessions, only one trades: the marks series has one slot per session."""
         d2 = date(2026, 1, 6)

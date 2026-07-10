@@ -22,8 +22,10 @@ trade — staleness, not interpolation); **one-bar deferral** on entry (decide o
 the square-off bar itself books a zero-duration cost-only round trip, conservative);
 exit at the first bar at/after 15:25 IST (else the session's last bar — the terminal-
 flatten convention); session open = the first bar at/after 09:15 IST (pre-open prints
-excluded); IST = UTC+05:30 fixed. No trailing warmup — every session is eligible from
-the first.
+excluded — a symbol whose tape only BEGINS inside the decision window anchors ``r`` on
+that late first bar, a reopen-gap move rather than a day move: declared, rare, and not
+systematically edge-inflating); IST = UTC+05:30 fixed. No trailing warmup — every
+session is eligible from the first.
 
 Costs both sides from the one config home (``cost_scenarios.equity_intraday_cost_sides``,
 ≈20.6 bps RT — the full Indian MIS cash stack). Deployable-today execution; the driver
