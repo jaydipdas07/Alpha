@@ -13,7 +13,11 @@ import yaml
 from alpha_core.core.enums import AssetClass, Side
 from alpha_core.execution.costs import CostModel, InstrumentMeta
 from alpha_core.helpers.config import load_yaml
-from alpha_core.research.cost_scenarios import cost_per_side, scenario_cost_config
+from alpha_core.research.cost_scenarios import (
+    cost_per_side,
+    equity_intraday_cost_sides,
+    scenario_cost_config,
+)
 from alpha_core.research.funding_window_backtester import taker_cost_per_side
 
 CRYPTO = InstrumentMeta(asset_class=AssetClass.CRYPTO)
@@ -175,3 +179,40 @@ def test_real_costs_yaml_transforms_cleanly() -> None:
         out["segments"]["crypto_perp"]["trading_fee"]["pct"]
         == cfg["segments"]["crypto_perp"]["maker_fee"]["pct"]
     )
+
+
+def test_equity_intraday_sides_hand_arithmetic_from_real_config() -> None:
+    """The G1/G3 cash-MIS cost home, pinned by INDEPENDENT hand arithmetic against the
+    real costs.yaml (the #197-review MAJOR: the fold tests are self-referential, so the
+    helper needs its own pin — a mis-based GST or a dropped STT must fail HERE)."""
+    cfg = load_yaml("costs.yaml")
+    seg = cfg["segments"]["equity_intraday"]
+    slip = float(cfg["slippage"]["equity"]["value"]) / 10_000.0
+    gst_base = sum(float(seg[leg]["pct"]) for leg in seg["gst"]["on"])
+    common = (
+        float(seg["brokerage"]["pct"])
+        + float(seg["exchange_txn"]["pct"])
+        + float(seg["sebi"]["pct"])
+        + float(seg["gst"]["pct"]) * gst_base
+        + slip
+    )
+    buy, sell = equity_intraday_cost_sides()
+    assert buy == pytest.approx(common + float(seg["stamp_duty"]["pct"]), abs=1e-12)
+    assert sell == pytest.approx(common + float(seg["stt"]["pct"]), abs=1e-12)
+    # the current checked-in values, so a silent config regression is loud too
+    assert buy == pytest.approx(9.2023e-4, abs=1e-8)
+    assert sell == pytest.approx(11.4023e-4, abs=1e-8)
+    assert seg["gst"]["on"] == ["brokerage", "exchange_txn", "sebi"]
+
+
+def test_equity_intraday_sides_raises_on_non_bps_slippage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retuned slippage type must fail loud, never silently mis-divide."""
+    cfg = copy.deepcopy(load_yaml("costs.yaml"))
+    cfg["slippage"]["equity"] = {"type": "ticks", "value": 2}
+    path = tmp_path / "costs.yaml"
+    path.write_text(yaml.safe_dump(cfg))
+    monkeypatch.setenv("ALPHA_CONFIG_DIR", str(tmp_path))
+    with pytest.raises(ValueError, match="bps"):
+        equity_intraday_cost_sides()

@@ -126,3 +126,32 @@ def scenario_cost_config(cost_config: dict[str, Any], scenario: str = "taker") -
     if "default_spread" in slip and "crypto_perp" in slip["default_spread"]:
         slip["default_spread"]["crypto_perp"] = 0
     return out
+
+
+def equity_intraday_cost_sides() -> tuple[float, float]:
+    """(buy_side, sell_side) cost fractions for CASH-EQUITY MIS folds (the G1/G3 panel
+    families) from the one config home: ``segments.equity_intraday`` percentage legs +
+    ``slippage.equity`` (bps).
+
+    Percentage legs only — ``brokerage.flat`` (min(0.03 %, ₹20)/order) is size-dependent
+    and the pct leg is the CONSERVATIVE bound (the flat cap only lowers the rate above
+    ~₹67k/order), so signal-scale folds charge 0.03 %. GST applies to the ``"on"`` list
+    (the #177 quoting fix); STT is sell-side, stamp duty buy-side. Raises when a leg is
+    missing — a repriced costs.yaml must never silently undercharge.
+    """
+    cfg = load_yaml("costs.yaml")
+    seg = cast(dict[str, dict[str, Any]], cfg["segments"])["equity_intraday"]
+    slip = cast(dict[str, dict[str, Any]], cfg["slippage"])["equity"]
+    if slip.get("type") != "bps":
+        raise ValueError(f"slippage.equity.type must be 'bps', got {slip.get('type')!r}")
+    brokerage = float(cast(float, seg["brokerage"]["pct"]))
+    exchange = float(cast(float, seg["exchange_txn"]["pct"]))
+    sebi = float(cast(float, seg["sebi"]["pct"]))
+    gst_leg_names = cast(list[str], seg["gst"]["on"])
+    gst_base = sum(float(cast(float, seg[leg]["pct"])) for leg in gst_leg_names)
+    gst = float(cast(float, seg["gst"]["pct"])) * gst_base
+    slippage = float(cast(int, slip["value"])) / 10_000.0
+    common = brokerage + exchange + sebi + gst + slippage
+    buy = common + float(cast(float, seg["stamp_duty"]["pct"]))
+    sell = common + float(cast(float, seg["stt"]["pct"]))
+    return buy, sell
