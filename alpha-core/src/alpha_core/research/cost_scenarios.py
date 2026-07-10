@@ -128,10 +128,9 @@ def scenario_cost_config(cost_config: dict[str, Any], scenario: str = "taker") -
     return out
 
 
-def equity_intraday_cost_sides() -> tuple[float, float]:
-    """(buy_side, sell_side) cost fractions for CASH-EQUITY MIS folds (the G1/G3 panel
-    families) from the one config home: ``segments.equity_intraday`` percentage legs +
-    ``slippage.equity`` (bps).
+def _intraday_stack_sides(segment_key: str, slippage_key: str) -> tuple[float, float]:
+    """(buy_side, sell_side) cost fractions for one Indian intraday statute stack:
+    ``segments.<segment_key>`` percentage legs + ``slippage.<slippage_key>`` (bps).
 
     Percentage legs only — ``brokerage.flat`` (min(0.03 %, ₹20)/order) is size-dependent
     and the pct leg is the CONSERVATIVE bound (the flat cap only lowers the rate above
@@ -140,10 +139,10 @@ def equity_intraday_cost_sides() -> tuple[float, float]:
     missing — a repriced costs.yaml must never silently undercharge.
     """
     cfg = load_yaml("costs.yaml")
-    seg = cast(dict[str, dict[str, Any]], cfg["segments"])["equity_intraday"]
-    slip = cast(dict[str, dict[str, Any]], cfg["slippage"])["equity"]
+    seg = cast(dict[str, dict[str, Any]], cfg["segments"])[segment_key]
+    slip = cast(dict[str, dict[str, Any]], cfg["slippage"])[slippage_key]
     if slip.get("type") != "bps":
-        raise ValueError(f"slippage.equity.type must be 'bps', got {slip.get('type')!r}")
+        raise ValueError(f"slippage.{slippage_key}.type must be 'bps', got {slip.get('type')!r}")
     brokerage = float(cast(float, seg["brokerage"]["pct"]))
     exchange = float(cast(float, seg["exchange_txn"]["pct"]))
     sebi = float(cast(float, seg["sebi"]["pct"]))
@@ -155,3 +154,17 @@ def equity_intraday_cost_sides() -> tuple[float, float]:
     buy = common + float(cast(float, seg["stamp_duty"]["pct"]))
     sell = common + float(cast(float, seg["stt"]["pct"]))
     return buy, sell
+
+
+def equity_intraday_cost_sides() -> tuple[float, float]:
+    """The CASH-EQUITY MIS stack (the G1/G3 panel families): ``segments.equity_intraday``
+    + ``slippage.equity`` — see ``_intraday_stack_sides`` for the leg semantics."""
+    return _intraday_stack_sides("equity_intraday", "equity")
+
+
+def index_future_cost_sides() -> tuple[float, float]:
+    """The INDEX-FUTURES stack (the G4 max-pain family's deployable instrument, the F1
+    overlay precedent): ``segments.index_future`` + ``slippage.index_future`` — same leg
+    semantics. The fold marks at INDEX levels; intraday index-vs-future basis drift is
+    unmodelled (declared per registration, revisited before any paper deployment)."""
+    return _intraday_stack_sides("index_future", "index_future")
