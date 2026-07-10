@@ -26,8 +26,10 @@ declared here, revisited before any paper deployment.
 **Era declared, not silent:** the options stores are sealed at 2024-05-24 (the M5.5
 boundary) while the NSE minute-bar stores seal at ≈2026-06-10 (#144's floor). Each fold
 side uses only expiries whose prior-day chain lives in ITS OWN options store side, and
-its marks calendar is CLIPPED to the chain-covered era (first→last usable expiry): the
-research fold therefore runs ≈2016→2024-05 (~400+ weekly/monthly expiries) and the
+its marks calendar is CLIPPED to the chain-covered era (first→last usable expiry, where
+usable also requires a FRESH prior chain — ``_MAX_PRIOR_GAP_DAYS``, without which
+far-dated monthlies/quarterlies would defeat the clip, the #199-review MAJOR): the
+research fold therefore runs ≈2016→2024-05 (~315 in-era expiries) and the
 2024-05→2026-06 stretch is DEAD for this family (bar-research x options-holdout — a
 cross-fence read TEST-3 forbids); the holdout fold pairs the options holdout with the
 bar holdout (~a handful of expiries until the bar window fattens — the driver defaults
@@ -65,6 +67,12 @@ _UNDERLYING = "NIFTY"
 _INTERVAL_S = 60
 _ORB_END_MIN = 9 * 60 + 20  # decision spot = last bar starting inside [09:15, 09:20)
 _ENTRY_STALE_MIN = 9 * 60 + 30  # the entry bar must start before 09:30 IST
+# The prior chain must be FRESH: an expiry whose latest prior chain day sits more than
+# this many days back is untradeable (the registered hypothesis is "the PRIOR session's
+# EOD chain, knowable overnight"). In-era NSE holiday gaps are <= 5 days; the rule also
+# excises far-dated monthlies/quarterlies whose only "prior" chain is a seal-boundary
+# artifact months old (the #199-review MAJOR — without it the era clip is defeated).
+_MAX_PRIOR_GAP_DAYS = 5
 
 
 class MaxPainDriftConfig(BaseModel):
@@ -155,13 +163,17 @@ def _prior_day_max_pain(store: OptionsStore) -> dict[date, float]:
     among that expiry's own rows (holidays handled naturally). An expiry with no prior
     chain is absent (no trade)."""
     con = store.connect()
+    # TIMESTAMPTZ -> DATE casts convert in the SESSION timezone, which defaults to the
+    # HOST's — pin UTC so the labels match the store convention on any machine (the
+    # #199-review MAJOR: a negative-UTC-offset host would silently shift every key).
+    con.execute("SET TimeZone='UTC'")
     table = con.execute(
         "SELECT CAST(trade_date AS DATE) AS td, CAST(expiry AS DATE) AS ed, "
         "CAST(strike AS DOUBLE) AS k, \"right\" = 'CALL' AS is_call, "
         "CAST(open_interest AS DOUBLE) AS oi "
         "FROM option_quotes WHERE underlying = ? AND venue = ?",
         [_UNDERLYING, Venue.NSE.value],
-    ).fetch_arrow_table()
+    ).to_arrow_table()
     con.close()
     if table.num_rows == 0:
         return {}
@@ -179,7 +191,10 @@ def _prior_day_max_pain(store: OptionsStore) -> dict[date, float]:
         prior_days = [t for t in days if t < e]
         if not prior_days:
             continue  # no prior chain: the expiry is untradeable for this family
-        idx = np.array(days[max(prior_days)], dtype=np.int64)
+        prior = max(prior_days)
+        if (e - prior).days > _MAX_PRIOR_GAP_DAYS:
+            continue  # stale chain (seal artifact / far-dated series): off-hypothesis
+        idx = np.array(days[prior], dtype=np.int64)
         out[e] = max_pain_strike(k[idx], is_call[idx], oi[idx])
     return out
 
@@ -191,11 +206,11 @@ class MaxPainBacktester:
         self._reader = reader
         self._options = options
         self._buy_cost, self._sell_cost = index_future_cost_sides()
-        self._days_cache: dict[date, _Day] | None = None
+        self._days_cache: dict[str, dict[date, _Day]] = {}
         self._pain_cache: dict[date, float] | None = None
 
     def _days(self, symbol: str) -> dict[date, _Day]:
-        if self._days_cache is None:
+        if symbol not in self._days_cache:
             bars = self._reader(symbol)
             by_day: dict[date, list[Bar]] = {}
             for b in bars:
@@ -207,8 +222,8 @@ class MaxPainBacktester:
                     digests[d] = digest
             if not digests:
                 raise ValueError(f"max-pain fold: no minute bars for {symbol} (run the ingest)")
-            self._days_cache = digests
-        return self._days_cache
+            self._days_cache[symbol] = digests
+        return self._days_cache[symbol]
 
     def _pain(self) -> dict[date, float]:
         if self._pain_cache is None:
@@ -251,8 +266,6 @@ class MaxPainBacktester:
             if day.minutes[entry_idx] >= _ENTRY_STALE_MIN:
                 continue  # stale open tape: no trade
             exit_idx = min(int(np.searchsorted(day.minutes, exit_minute, side="left")), n - 1)
-            if entry_idx > exit_idx:
-                continue
             entry = day.close[entry_idx]
             if entry <= 0:
                 continue  # data artifact; never divide by it

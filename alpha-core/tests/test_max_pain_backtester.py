@@ -193,6 +193,65 @@ class TestFold:
         assert len(marks) == 1  # E is NOT a usable expiry: the era is [d2, d2]
         assert marks.sum() == 0.0
 
+    def test_far_dated_expiry_with_stale_chain_never_anchors_the_era(self, tmp_path: Path) -> None:
+        """NSE lists far-dated monthlies/quarterlies daily: an expiry 120 days out whose
+        only 'prior' chain is months stale must be untradeable AND must not extend the
+        calendar (the #199-review MAJOR — without the freshness rule the era clip is
+        defeated and dead sessions dilute the marks)."""
+        store = OptionsStore(tmp_path / "opt")
+        store.write(_chain_pinning_100(E_PRIOR, E))
+        far = date(2026, 5, 26)  # ~120 days out, chain only on E_PRIOR (stale by months)
+        store.write([_quote(E_PRIOR, far, "100", OptionRight.CALL, 1000)])
+        bars = _expiry_day_bars() + _expiry_day_bars(d=date(2026, 3, 2), spot="101")
+        bt = MaxPainBacktester(_reader(bars), store)
+        marks = np.asarray(bt.run(_proposal()))
+        assert len(marks) == 1  # the era is [E, E]; the March session is OUTSIDE it
+        expected = -1.0 * (100.1 / 100.8 - 1.0) - _COSTS
+        assert marks.sum() == pytest.approx(expected)
+
+    def test_stale_open_tape_no_trade(self, tmp_path: Path) -> None:
+        """The first post-window bar starts at 11:00 (>= 09:30): stale open tape — no
+        trade despite a clear dislocation (a registered protocol constant)."""
+        store = OptionsStore(tmp_path / "opt")
+        store.write(_chain_pinning_100(E_PRIOR, E))
+        bars = [
+            _bar(E, 9, 15, "100.5"),
+            _bar(E, 9, 19, "101"),
+            _bar(E, 11, 0, "100.8"),
+            _bar(E, 14, 30, "100.1"),
+            _bar(E, 15, 25, "100.2"),
+        ]
+        bt = MaxPainBacktester(_reader(bars), store)
+        assert np.asarray(bt.run(_proposal())).sum() == 0.0
+
+    def test_banknifty_chains_never_leak_into_the_pain(self, tmp_path: Path) -> None:
+        """The real options root holds BANKNIFTY beside NIFTY: a massive BANKNIFTY
+        chain pinning 110 must not move NIFTY's max pain (the underlying filter is
+        load-bearing — an unfiltered fold would see pain above spot and flip the side)."""
+        store = OptionsStore(tmp_path / "opt")
+        store.write(_chain_pinning_100(E_PRIOR, E))
+        poison = OptionQuote(
+            underlying="BANKNIFTY",
+            venue=Venue.NSE,
+            trade_date=datetime.combine(E_PRIOR, time(0, 0), tzinfo=UTC),
+            expiry=datetime.combine(E, time(0, 0), tzinfo=UTC),
+            strike=Decimal("110"),
+            right=OptionRight.PUT,
+            open=Decimal("1"),
+            high=Decimal("1"),
+            low=Decimal("1"),
+            close=Decimal("1"),
+            settle=Decimal("0"),
+            volume_contracts=1,
+            open_interest=1_000_000,
+            change_in_oi=0,
+        )
+        store.write([poison])
+        bt = MaxPainBacktester(_reader(_expiry_day_bars()), store)
+        marks = np.asarray(bt.run(_proposal()))
+        expected = -1.0 * (100.1 / 100.8 - 1.0) - _COSTS  # SHORT vs pain 100, unmoved
+        assert marks.sum() == pytest.approx(expected)
+
     def test_calendar_clipped_to_chain_era(self, tmp_path: Path) -> None:
         """Sessions outside [first usable expiry, last usable expiry] are NOT in the
         marks calendar — a fence gap must not dilute the marks with dead zeros."""
