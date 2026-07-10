@@ -37,9 +37,10 @@ import pyarrow.parquet as pq
 
 from alpha_core.core.enums import Venue
 
-# The archive's percentage bands, by |percentage| from the mark, ascending. Pinned by the
-# round-4 probe (both the 2023-01 and 2026-07 eras publish exactly these twelve rows per
-# snapshot: ±0.2, ±1..5). Negative percentage = the bid side (below), positive = asks.
+# The archive's percentage bands, by |percentage| from the mark, ascending. Era-probed
+# (corrected in #194's review): ±1..5 are published from 2023-01; the ±0.2 rows first
+# appear 2026-01-16 — the store holds all six bands, honest-NaN where an era doesn't
+# publish one. Negative percentage = the bid side (below), positive = asks.
 BANDS: tuple[float, ...] = (0.2, 1.0, 2.0, 3.0, 4.0, 5.0)
 
 _COLUMNS = tuple(

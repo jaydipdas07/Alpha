@@ -57,7 +57,9 @@ def main() -> int:
 
     sealed = 0
     for series_dir in sorted(raw.root.glob("*__*__depth")):
-        venue_s, symbol, _suffix = series_dir.name.split("__")
+        # rsplit for parity with tick_seal._series_coords (a symbol may never contain
+        # "__", but the two parsers must not be able to disagree)
+        venue_s, symbol, _suffix = series_dir.name.rsplit("__", 2)
         venue = Venue(venue_s)
         key = f"{venue_s}|{symbol}|{_TICK_INTERVAL_S}"
         window = manifest.get(key)
@@ -65,6 +67,9 @@ def main() -> int:
             print(f"[error] no tick window for {key} — the depth tree may not out-run ticks")
             return 1
         boundary = datetime.fromisoformat(window["start"]).astimezone(UTC)
+        # int() truncation of a fractional-second boundary is deliberately CONSERVATIVE:
+        # the straddling second's snapshot goes to holdout (research can only lose rows,
+        # never gain holdout-era ones)
         boundary_s = int(boundary.timestamp())
         span = raw.read_span(venue=venue, symbol=symbol)
         if not len(span.epoch_s):

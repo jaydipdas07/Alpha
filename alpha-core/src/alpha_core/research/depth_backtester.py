@@ -11,19 +11,28 @@ snapshots (same sign — the a-priori anti-noise persistence gate), enter WITH t
 side and hold ``hold_minutes``. Most of the grid is expected to die — the registration
 is tiny.
 
+Bands: the archive publishes ±1..5 % from 2023-01 but the ±0.2 % touch-adjacent rows
+only from **2026-01-16** (per-era probe, corrected in #194's review) — AFTER the tick
+holdout boundary, so a 0.2 % cell would have zero research-era signal by construction.
+The grid therefore registers the ±1 % and ±2 % bands; a 0.2 % family becomes
+registrable once its era fattens (a NEW registration).
+
 **MAKER-NATIVE execution — the registration IS the fill rule** (nothing intraday has
 survived 16 bps RT taker; #184 made modelled post-only fills the readable path):
 
-- decision at snapshot time ``t``; order arrives at ``t + _LATENCY_S`` (the F3/G2
-  pre-registered latency);
-- the limit ``L`` = the last 1s print at/before arrival (staleness ≤ ``_ENTRY_STALE_S``
-  else no order). GTX arrival semantics on an LTP tape are strict (#184): an order AT
-  the last print RESTS — by construction ``L`` never crosses on arrival;
+- the order is COMPOSED at snapshot time ``t``: the limit ``L`` = the last 1s print
+  at/before ``t`` (staleness ≤ ``_ENTRY_STALE_S`` else no order) — ``t``-measurable,
+  live-composable; nothing from the flight window may price the order (the #194-review
+  look-ahead fix);
+- the order arrives at ``t + _LATENCY_S`` (the F3/G2 pre-registered latency) and takes
+  the **GTX arrival check** (#184, LTP-strict): an arrival print STRICTLY through ``L``
+  ⇒ the venue rejects the post-only order — a missed entry, nothing rests; an at-limit
+  arrival print RESTS;
 - the resting order fills only on a **strict trade-through**: the first 1s bar strictly
-  after arrival, within ``_TTL_S``, whose extreme prints STRICTLY through ``L`` (BUY:
-  ``low < L``; SELL: ``high > L``) — a touch never fills (queue position unknowable,
-  #184 verbatim). Fill AT ``L``. Unfilled by TTL ⇒ missed entry, never chased; the
-  working-order window is busy time (one order at a time);
+  after arrival, within ``_TTL_S`` (inclusive), whose extreme prints STRICTLY through
+  ``L`` (BUY: ``low < L``; SELL: ``high > L``) — a touch never fills (queue position
+  unknowable, #184 verbatim). Fill AT ``L``. Unfilled by TTL ⇒ missed entry, never
+  chased; the working-order window is busy time (one order at a time);
 - the exit is **taker reduce-only** (the #179 contract: a missed entry can never invert
   into an opposite position; guaranteed flat): at the first 1s print at/after
   fill + hold, priced at that print;
@@ -86,7 +95,7 @@ class DepthImbalanceConfig(BaseModel):
     """Vetted ranges live in ``DEPTH_TEMPLATES`` — the registration."""
 
     model_config = ConfigDict(extra="forbid")
-    band_pct: Decimal = Decimal("0.2")
+    band_pct: Decimal = Decimal("1.0")
     threshold: Decimal = Decimal("0.3")
     hold_minutes: int = 15
 
@@ -103,17 +112,18 @@ class _DepthImbalanceSpec:
 
 
 DEPTH_TEMPLATES: dict[str, StrategyTemplate] = {
-    # {0.2, 1.0}% band x {0.3, 0.5} threshold x {15, 60}m hold = 8 configs per cell, 16
-    # across the 2-cell universe. Thresholds are ABSOLUTE (the ratio is already bounded
-    # and self-normalized; 0.3 = 2:1 depth, 0.5 = 3:1 — the literature's convention).
-    # Widening = a NEW pre-registration.
+    # {1.0, 2.0}% band x {0.3, 0.5} threshold x {15, 60}m hold = 8 configs per cell, 16
+    # across the 2-cell universe. The 0.2% band is NOT registrable (no research-era
+    # coverage — see the module docstring). Thresholds are ABSOLUTE (the ratio is
+    # already bounded and self-normalized; 0.3 = 2:1 depth, 0.5 = 3:1 — the
+    # literature's convention). Widening = a NEW pre-registration.
     "depth_imbalance": StrategyTemplate(
         "depth_imbalance",
         "depth_imbalance",
         DepthImbalanceConfig,
         _DepthImbalanceSpec,
         {
-            "band_pct": DecimalRange(Decimal("0.2"), Decimal("1.0"), Decimal("0.8")),
+            "band_pct": DecimalRange(Decimal("1.0"), Decimal("2.0"), Decimal("1.0")),
             "threshold": DecimalRange(Decimal("0.3"), Decimal("0.5"), Decimal("0.2")),
             "hold_minutes": DecimalRange(Decimal("15"), Decimal("60"), Decimal("45")),
         },
@@ -211,17 +221,30 @@ class DepthImbalanceBacktester:
             t = float(ts_d[i])
             if t < open_until:
                 continue
+            # the order is COMPOSED at decision time t: its limit is the last print
+            # at/before t — everything in the flight window is unknowable when the
+            # order is priced (the #194-review look-ahead fix)
+            j0 = int(np.searchsorted(ts_p, t, side="right")) - 1
+            if j0 < 0 or t - float(ts_p[j0]) > _ENTRY_STALE_S:
+                continue  # dead tape at decision: no order composed
+            limit = close[j0]
+            side = 1.0 if imb[i] > 0 else -1.0
             arrival = t + _LATENCY_S
+            # GTX arrival check (#184 _would_cross_on_arrival, LTP-strict): if the
+            # arrival-instant print has traded STRICTLY through the decision-priced
+            # limit, the venue rejects the post-only order — missed entry, nothing
+            # ever rests (busy only through arrival). An at-limit print RESTS.
             j = int(np.searchsorted(ts_p, arrival, side="right")) - 1
-            if j < 0 or arrival - float(ts_p[j]) > _ENTRY_STALE_S:
-                continue  # dead tape at arrival: no order
-            limit = close[j]
-            # rest over prints strictly after arrival, within TTL
+            arrival_ltp = close[j]  # j >= j0 >= 0: the decision print exists
+            if (side > 0 and arrival_ltp < limit) or (side < 0 and arrival_ltp > limit):
+                open_until = arrival
+                continue
+            # rest over prints strictly after arrival, within TTL (inclusive — the
+            # PaperBroker expires at the first tick PAST valid_until, fills before)
             j_end = int(np.searchsorted(ts_p, arrival + _TTL_S, side="right"))
             if j + 1 >= j_end:
                 open_until = arrival + _TTL_S  # no prints inside the window: missed
                 continue
-            side = 1.0 if imb[i] > 0 else -1.0
             window_ext = low[j + 1 : j_end] if side > 0 else high[j + 1 : j_end]
             through = (window_ext < limit) if side > 0 else (window_ext > limit)
             if not bool(through.any()):

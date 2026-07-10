@@ -1,10 +1,11 @@
 """Pure CSV→``DepthRow`` transform for the Binance futures ``bookDepth`` archive (G6).
 
 The archive publishes one CSV per day: ``timestamp, percentage, depth, notional`` —
-twelve rows per ~30-second snapshot (percentage ∈ ±{0.2, 1..5}; negative = the bid side
-below the mark, positive = asks above; ``depth``/``notional`` are CUMULATIVE within the
-band, pinned by the round-4 probe on both the 2023-01 and 2026-07 eras). Timestamps are
-naive **UTC** wall stamps.
+one row per band per ~30-second snapshot (percentage ∈ ±{0.2, 1..5}; negative = the bid
+side below the mark, positive = asks above; ``depth``/``notional`` are CUMULATIVE within
+the band). Era-probed, corrected in #194's review: the 2023-01 era publishes TEN rows
+per snapshot (±1..5 only); the ±0.2 rows first appear 2026-01-16 (twelve thereafter).
+Timestamps are naive **UTC** wall stamps.
 
 This module is the CI-tested pure transform; ``scripts/ingest_binance_depth.py`` is the
 zip-walking glue. Only ``notional`` (USD) is kept — the registration's pre-committed
@@ -58,7 +59,7 @@ def parse_book_depth_csv(fh: IO[str]) -> tuple[list[DepthRow], DepthParseStats]:
         if idx is None:
             stats.unknown_bands.add(band)
             continue
-        if not math.isfinite(notional):
+        if not math.isfinite(notional) or notional < 0:
             stats.bad_rows += 1
             continue
         epoch = int(ts.timestamp())

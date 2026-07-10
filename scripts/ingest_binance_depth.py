@@ -60,12 +60,14 @@ def main() -> int:
     args = ap.parse_args()
 
     store = DepthStore(STORE_ROOT)
+    missing: list[str] = []
     for symbol in [s.strip() for s in args.symbols.split(",")]:
         raw_dir = RAW_ROOT / symbol
         zips = sorted(raw_dir.glob("*.zip"))
         if not zips:
             print(f"[{symbol}] no zips under {raw_dir} — fetch first")
-            return 1
+            missing.append(symbol)
+            continue  # keep reporting the symbols that DO have data
         by_month: dict[str, list[DepthRow]] = {}
         reports: list[str] = []
         for z in zips:
@@ -87,7 +89,7 @@ def main() -> int:
             f"[{symbol}] {len(zips)} zips -> {total} snapshots across "
             f"{len(months)} months ({months[0]}..{months[-1]}); {len(reports)} day report(s)"
         )
-    return 0
+    return 1 if missing else 0
 
 
 if __name__ == "__main__":

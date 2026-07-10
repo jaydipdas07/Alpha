@@ -29,7 +29,7 @@ _N = len(BANDS)
 _COSTS = cost_per_side("maker") + cost_per_side("taker")
 
 
-def _proposal(band: str = "0.2", threshold: str = "0.3", hold: int = 15) -> StrategyProposal:
+def _proposal(band: str = "1.0", threshold: str = "0.3", hold: int = 15) -> StrategyProposal:
     return StrategyProposal(
         template="depth_imbalance",
         params={
@@ -59,10 +59,11 @@ def _bar(epoch: int, low: str, high: str, close: str) -> Bar:
     )
 
 
-def _snapshot(epoch: int, bid02: float, ask02: float) -> DepthRow:
+def _snapshot(epoch: int, bid1: float, ask1: float) -> DepthRow:
+    """A snapshot publishing only the ±1.0% band (index 1) — the registered tight band."""
     vals = [math.nan] * (2 * _N)
-    vals[0] = bid02
-    vals[_N] = ask02
+    vals[1] = bid1
+    vals[_N + 1] = ask1
     return (epoch, *vals)  # type: ignore[return-value]
 
 
@@ -80,8 +81,10 @@ def _write_tape(
     spike_high: str = "100.5",
     exit_close: str | None = None,
     exit_from: int | None = None,
+    overrides: dict[int, tuple[str, str, str]] | None = None,
 ) -> None:
-    """A flat $100 1s tape; optionally one dip/spike bar and a later close step."""
+    """A flat $100 1s tape; optional dip/spike bars, a later close step, and per-bar
+    (low, high, close) overrides (applied last — the flight-window manipulation knob)."""
     bars = []
     for i in range(seconds):
         low, high, close = "100", "100", "100"
@@ -91,6 +94,8 @@ def _write_tape(
             low = dip_low
         if spike_at is not None and i == spike_at:
             high = spike_high
+        if overrides is not None and i in overrides:
+            low, high, close = overrides[i]
         bars.append(_bar(T0 + i, low, high, close))
     ticks.write_bars(bars, month="2026-01")
 
@@ -160,6 +165,111 @@ class TestFillRule:
         assert np.asarray(bt.run(_proposal(hold=60))).sum() == 0.0
 
 
+class TestOrderComposition:
+    """The #194-review look-ahead fix: the limit is priced at DECISION time, and the
+    GTX arrival check runs against the decision-priced limit."""
+
+    def test_limit_is_decision_print_not_arrival_print(self, tmp_path: Path) -> None:
+        """The tape rises to 100.2 during the 2s flight window: the order must still
+        be priced at the decision print (100). The dip to 99.9 trades through 100 and
+        fills AT 100 — an arrival-priced order (100.2, the pre-fix bug) would have
+        filled at 100.2 off the touch bars and booked a different pnl."""
+        ticks, depth = _stores(tmp_path)
+        flight = ("100.2", "100.2", "100.2")
+        _write_tape(
+            ticks,
+            exit_close="101",
+            exit_from=500,
+            overrides={31: flight, 32: flight, 40: ("99.9", "100", "100")},
+        )
+        _write_bid_heavy_signal(depth)
+        bt = DepthImbalanceBacktester(ticks, depth)
+        marks = np.asarray(bt.run(_proposal()))
+        expected = (101.0 / 100.0 - 1.0) - _COSTS  # gross vs L=100, NOT vs 100.2
+        assert marks.sum() == pytest.approx(expected)
+
+    def test_flight_dip_through_decision_price_gtx_rejects(self, tmp_path: Path) -> None:
+        """The tape trades strictly through the decision-priced limit during the
+        flight window: at arrival the post-only order would cross — the venue rejects
+        it (#184 GTX) and NO trade books, even though a naively resting order would
+        have filled at 100 off the later dip and exited at 101 for a profit."""
+        ticks, depth = _stores(tmp_path)
+        dip = ("99.8", "99.8", "99.8")
+        _write_tape(
+            ticks,
+            exit_close="101",
+            exit_from=500,
+            overrides={31: dip, 32: dip, 40: ("99", "100", "100")},
+        )
+        _write_bid_heavy_signal(depth)
+        bt = DepthImbalanceBacktester(ticks, depth)
+        assert np.asarray(bt.run(_proposal())).sum() == 0.0
+
+    def test_gtx_reject_busy_only_through_arrival(self, tmp_path: Path) -> None:
+        """A GTX reject leaves NOTHING resting: the next trigger (t=60, before the
+        rejected order's would-be TTL horizon of 92) must be free to act and book the
+        one real trade."""
+        ticks, depth = _stores(tmp_path)
+        dip = ("99.8", "99.8", "99.8")
+        _write_tape(
+            ticks,
+            exit_close="101",
+            exit_from=500,
+            overrides={31: dip, 32: dip, 70: ("99.5", "100", "100")},
+        )
+        _write_bid_heavy_signal(depth, at=(0, 30, 60))
+        bt = DepthImbalanceBacktester(ticks, depth)
+        marks = np.asarray(bt.run(_proposal()))
+        expected = (101.0 / 100.0 - 1.0) - _COSTS  # the t=60 order fills at L=100
+        assert marks.sum() == pytest.approx(expected)
+        assert (marks != 0).sum() == 1
+
+
+class TestTtlBoundary:
+    def test_trade_through_at_exactly_ttl_fills(self, tmp_path: Path) -> None:
+        """TTL is inclusive (the PaperBroker expires at the first tick PAST
+        valid_until): a trade-through print at exactly arrival+TTL (T0+92) fills."""
+        ticks, depth = _stores(tmp_path)
+        _write_tape(ticks, dip_at=92, exit_close="101", exit_from=500)
+        _write_bid_heavy_signal(depth)
+        bt = DepthImbalanceBacktester(ticks, depth)
+        expected = (101.0 / 100.0 - 1.0) - _COSTS
+        assert np.asarray(bt.run(_proposal())).sum() == pytest.approx(expected)
+
+    def test_trade_through_one_past_ttl_misses(self, tmp_path: Path) -> None:
+        ticks, depth = _stores(tmp_path)
+        _write_tape(ticks, dip_at=93, exit_close="101", exit_from=500)
+        _write_bid_heavy_signal(depth)
+        bt = DepthImbalanceBacktester(ticks, depth)
+        assert np.asarray(bt.run(_proposal())).sum() == 0.0
+
+
+class TestMissedEntryBusyWindow:
+    def test_ttl_window_suppresses_new_orders(self, tmp_path: Path) -> None:
+        """A missed (rested, unfilled) order is busy time through arrival+TTL (92):
+        the t=60 and t=90 triggers must NOT compose orders — under a wrong busy rule
+        the t=60 order's window (62..122] would catch the dip at 100 and book a
+        trade. The t=120 trigger IS free, but its window (122..182] has no
+        trade-through: zero trades total."""
+        ticks, depth = _stores(tmp_path)
+        _write_tape(ticks, dip_at=100, exit_close="101", exit_from=500)
+        _write_bid_heavy_signal(depth, at=(0, 30, 60, 90, 120))
+        bt = DepthImbalanceBacktester(ticks, depth)
+        assert np.asarray(bt.run(_proposal())).sum() == 0.0
+
+    def test_trigger_after_ttl_window_fires(self, tmp_path: Path) -> None:
+        """After the missed order's TTL horizon (92), the next trigger (t=120, at the
+        90s persistence-gap limit inclusive) composes a fresh order and fills."""
+        ticks, depth = _stores(tmp_path)
+        _write_tape(ticks, dip_at=130, exit_close="101", exit_from=1000)
+        _write_bid_heavy_signal(depth, at=(0, 30, 120))
+        bt = DepthImbalanceBacktester(ticks, depth)
+        marks = np.asarray(bt.run(_proposal()))
+        expected = (101.0 / 100.0 - 1.0) - _COSTS
+        assert marks.sum() == pytest.approx(expected)
+        assert (marks != 0).sum() == 1
+
+
 class TestSignal:
     def test_single_snapshot_is_not_persistent(self, tmp_path: Path) -> None:
         ticks, depth = _stores(tmp_path)
@@ -203,7 +313,7 @@ class TestSignal:
         rows = []
         for s in (0, 30):
             vals = [math.nan] * (2 * _N)
-            vals[0] = 800.0  # bid published, ask side missing => honest-NaN => no signal
+            vals[1] = 800.0  # bid published, ask side missing => honest-NaN => no signal
             rows.append((T0 + s, *vals))
         depth.write_month(venue=Venue.BINANCE, symbol="BTCUSDT", month="2026-01", rows=rows)  # type: ignore[arg-type]
         bt = DepthImbalanceBacktester(ticks, depth)

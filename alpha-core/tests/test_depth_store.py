@@ -138,9 +138,10 @@ class TestParseBookDepthCsv:
             "not-a-date,-0.20,1.0,100.0\n"
             "2026-07-01 00:00:04,-0.20,1.0,not-a-number\n"
             "2026-07-01 00:00:04,-0.20,1.0,inf\n"
+            "2026-07-01 00:00:04,-1.00,1.0,-5.0\n"
             "2026-07-01 00:00:04,0.20,1.0,42.0\n"
         )
         rows, stats = parse_book_depth_csv(io.StringIO(csv_text))
-        assert stats.bad_rows == 3
+        assert stats.bad_rows == 4  # bad date, bad number, non-finite, negative notional
         assert len(rows) == 1
         assert rows[0][1 + _N] == 42.0
