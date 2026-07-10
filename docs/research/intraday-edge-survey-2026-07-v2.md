@@ -131,10 +131,14 @@ before any family design per the operator directive. Real coverage, era, and siz
 **Schemas pinned by sample download** (2026-07-01 + 2023-01-01 files, era-stable):
 
 - `bookDepth`: `timestamp` (naive UTC), `percentage`, `depth` (base asset, cumulative),
-  `notional` (USD). 12 levels per snapshot — **±0.2%, ±1..5% from mid** — at a ~30 s
-  cadence (2,880 snapshots/day in 2026; the 2023 era is slightly gappier, e.g.
-  2023-01-01 has 2,380). The ±0.2 % band is touch-adjacent depth: a genuine, if coarse,
-  order-book-imbalance input at minutes horizon.
+  `notional` (USD), at a ~30 s cadence (2,880 snapshots/day in 2026; the 2023 era is
+  slightly gappier). **Bands are era-dependent** (this addendum originally overclaimed
+  era-stability; corrected by #194's review, which probed per-era): **±1..5 % from
+  2023-01** (ten rows/snapshot); the **±0.2 % touch-adjacent rows first appear
+  2026-01-16** (twelve thereafter) — i.e. AFTER the 2025-11-22 tick holdout boundary,
+  so a 0.2 %-band cell has zero research-era signal and the G6 grid registers the
+  ±1/±2 % bands instead. A 0.2 % family becomes registrable once its era fattens (a
+  NEW registration).
 - `premiumIndexKlines` 1m: standard kline columns; **OHLC = the perp-vs-index premium
   as a fraction** (e.g. −0.00023 = −2.3 bps); `count` = samples/min (12); the volume
   columns are structurally zero (ignore).

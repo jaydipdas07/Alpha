@@ -59,6 +59,7 @@ data_holdout_flows/
 
 # round-four archive trees (fetched raw zips + sealed stores) — bookDepth / premiumIndexKlines
 data_cold_depth/
+data_cold_depth_store/
 data_research_depth/
 data_holdout_depth/
 data_cold_premium/
