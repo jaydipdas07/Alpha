@@ -16,6 +16,7 @@ from alpha_core.helpers.config import load_yaml
 from alpha_core.research.cost_scenarios import (
     cost_per_side,
     equity_intraday_cost_sides,
+    index_future_cost_sides,
     scenario_cost_config,
 )
 from alpha_core.research.funding_window_backtester import taker_cost_per_side
@@ -216,3 +217,26 @@ def test_equity_intraday_sides_raises_on_non_bps_slippage(
     monkeypatch.setenv("ALPHA_CONFIG_DIR", str(tmp_path))
     with pytest.raises(ValueError, match="bps"):
         equity_intraday_cost_sides()
+
+
+def test_index_future_sides_hand_arithmetic_from_real_config() -> None:
+    """The G4 futures cost home, pinned by INDEPENDENT hand arithmetic against the real
+    costs.yaml (the #199-review MINOR: the fold tests are self-referential through
+    _COSTS, so the helper needs its own pin — the equity precedent)."""
+    cfg = load_yaml("costs.yaml")
+    seg = cfg["segments"]["index_future"]
+    slip = float(cfg["slippage"]["index_future"]["value"]) / 10_000.0
+    gst_base = sum(float(seg[leg]["pct"]) for leg in seg["gst"]["on"])
+    common = (
+        float(seg["brokerage"]["pct"])
+        + float(seg["exchange_txn"]["pct"])
+        + float(seg["sebi"]["pct"])
+        + float(seg["gst"]["pct"]) * gst_base
+        + slip
+    )
+    buy, sell = index_future_cost_sides()
+    assert buy == pytest.approx(common + float(seg["stamp_duty"]["pct"]), abs=1e-12)
+    assert sell == pytest.approx(common + float(seg["stt"]["pct"]), abs=1e-12)
+    # the current checked-in values, so a silent config regression is loud too
+    assert buy == pytest.approx(4.95594e-4, abs=1e-8)
+    assert sell == pytest.approx(9.75594e-4, abs=1e-8)
