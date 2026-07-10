@@ -63,6 +63,7 @@ data_cold_depth_store/
 data_research_depth/
 data_holdout_depth/
 data_cold_premium/
+data_cold_premium_store/
 data_research_premium/
 data_holdout_premium/
 
