@@ -18,28 +18,15 @@ The grid therefore registers the ±1 % and ±2 % bands; a 0.2 % family becomes
 registrable once its era fattens (a NEW registration).
 
 **MAKER-NATIVE execution — the registration IS the fill rule** (nothing intraday has
-survived 16 bps RT taker; #184 made modelled post-only fills the readable path):
-
-- the order is COMPOSED at snapshot time ``t``: the limit ``L`` = the last 1s print
-  at/before ``t`` (staleness ≤ ``_ENTRY_STALE_S`` else no order) — ``t``-measurable,
-  live-composable; nothing from the flight window may price the order (the #194-review
-  look-ahead fix);
-- the order arrives at ``t + _LATENCY_S`` (the F3/G2 pre-registered latency) and takes
-  the **GTX arrival check** (#184, LTP-strict): an arrival print STRICTLY through ``L``
-  ⇒ the venue rejects the post-only order — a missed entry, nothing rests; an at-limit
-  arrival print RESTS;
-- the resting order fills only on a **strict trade-through**: the first 1s bar strictly
-  after arrival, within ``_TTL_S`` (inclusive), whose extreme prints STRICTLY through
-  ``L`` (BUY: ``low < L``; SELL: ``high > L``) — a touch never fills (queue position
-  unknowable, #184 verbatim). Fill AT ``L``. Unfilled by TTL ⇒ missed entry, never
-  chased; the working-order window is busy time (one order at a time);
-- the exit is **taker reduce-only** (the #179 contract: a missed entry can never invert
-  into an opposite position; guaranteed flat): at the first 1s print at/after
-  fill + hold, priced at that print;
-- costs both sides from the one config home (``cost_scenarios.cost_per_side``): maker
-  fee on the entry (filled at ``L`` — no spread/slippage leg), full taker cost on the
-  exit. This asymmetric pair IS the deployable execution, so — unlike fees-only maker
-  scenarios — survivors here EARN their one-shot holdout read.
+survived 16 bps RT taker; #184 made modelled post-only fills the readable path). The
+full rule — decision-priced limit (the #194-review look-ahead fix), GTX arrival check,
+strict trade-through within TTL, taker reduce-only exit, busy windows — lives in ONE
+tested place, ``maker_fill.run_post_only_fold``, incorporated into this registration by
+reference (its constants ``LATENCY_S``/``ENTRY_STALE_S``/``TTL_S`` included). Costs
+both sides from the one config home (``cost_scenarios.cost_per_side``): maker fee on
+the entry (filled at ``L`` — no spread/slippage leg), full taker cost on the exit. This
+asymmetric pair IS the deployable execution, so — unlike fees-only maker scenarios —
+survivors here EARN their one-shot holdout read.
 
 Discipline (the ``leadlag_backtester`` shape, review-hardened there):
 
@@ -75,6 +62,7 @@ from alpha_core.data.holdout import assert_disjoint_roots
 from alpha_core.data.tick_store import TickStore
 from alpha_core.research.cost_scenarios import cost_per_side
 from alpha_core.research.discovery import Backtester
+from alpha_core.research.maker_fill import run_post_only_fold
 from alpha_core.research.strategist import DecimalRange, StrategyProposal, StrategyTemplate
 
 # The pre-registered universe: the two depth-published majors (the archive's bookDepth
@@ -85,9 +73,8 @@ DEPTH_CELLS: dict[str, str] = {
 }
 _TICK_INTERVAL_S = 1
 _MINUTE = 60
-_LATENCY_S = 2  # pre-registered execution latency (decision -> order arrival)
-_ENTRY_STALE_S = 3  # max staleness of the arrival print that sets the limit L
-_TTL_S = 60  # post-only rest window (two snapshot periods); unfilled => missed, never chased
+# Execution constants (LATENCY_S / ENTRY_STALE_S / TTL_S) live in ``maker_fill`` — the
+# shared #184 post-only fold, incorporated into this registration by reference.
 _PERSIST_MAX_GAP_S = 90  # two consecutive snapshots only count within ~3 cadence periods
 
 
@@ -143,7 +130,8 @@ def _tick_series(store: TickStore, symbol: str) -> _TickSeries:
         columns=("start", "low", "high", "close"),
     )
     if table.num_rows == 0:
-        raise ValueError(f"depth fold: no 1s bars for {symbol}")
+        # neutral wording: this helper is shared by every maker-native fold (G6/G7)
+        raise ValueError(f"no 1s bars for {symbol} — is the tick store root right?")
     ts = np.asarray(
         pc.cast(
             pc.floor(pc.divide(pc.cast(table.column("start"), "int64"), 1_000_000)), "int64"
@@ -211,53 +199,21 @@ class DepthImbalanceBacktester:
         gap_ok = np.concatenate(([False], np.diff(ts_d) <= _PERSIST_MAX_GAP_S))
         trigger = armed & prev_armed & (np.sign(imb) == prev_sign) & gap_ok
 
-        # sequential non-overlap; post-only entry with strict trade-through fill (#184),
-        # taker reduce-only exit (the leadlag/flow shape plus a resting-order window)
-        n = len(ts_p)
-        minutes_lo = int(ts_p[0]) // _MINUTE
-        marks = np.zeros(int(ts_p[-1]) // _MINUTE - minutes_lo + 1, dtype=np.float64)
-        open_until = -np.inf
-        for i in np.flatnonzero(trigger):
-            t = float(ts_d[i])
-            if t < open_until:
-                continue
-            # the order is COMPOSED at decision time t: its limit is the last print
-            # at/before t — everything in the flight window is unknowable when the
-            # order is priced (the #194-review look-ahead fix)
-            j0 = int(np.searchsorted(ts_p, t, side="right")) - 1
-            if j0 < 0 or t - float(ts_p[j0]) > _ENTRY_STALE_S:
-                continue  # dead tape at decision: no order composed
-            limit = close[j0]
-            side = 1.0 if imb[i] > 0 else -1.0
-            arrival = t + _LATENCY_S
-            # GTX arrival check (#184 _would_cross_on_arrival, LTP-strict): if the
-            # arrival-instant print has traded STRICTLY through the decision-priced
-            # limit, the venue rejects the post-only order — missed entry, nothing
-            # ever rests (busy only through arrival). An at-limit print RESTS.
-            j = int(np.searchsorted(ts_p, arrival, side="right")) - 1
-            arrival_ltp = close[j]  # j >= j0 >= 0: the decision print exists
-            if (side > 0 and arrival_ltp < limit) or (side < 0 and arrival_ltp > limit):
-                open_until = arrival
-                continue
-            # rest over prints strictly after arrival, within TTL (inclusive — the
-            # PaperBroker expires at the first tick PAST valid_until, fills before)
-            j_end = int(np.searchsorted(ts_p, arrival + _TTL_S, side="right"))
-            if j + 1 >= j_end:
-                open_until = arrival + _TTL_S  # no prints inside the window: missed
-                continue
-            window_ext = low[j + 1 : j_end] if side > 0 else high[j + 1 : j_end]
-            through = (window_ext < limit) if side > 0 else (window_ext > limit)
-            if not bool(through.any()):
-                open_until = arrival + _TTL_S  # TTL expiry: missed entry, never chased
-                continue
-            m = j + 1 + int(np.argmax(through))
-            fill_t = float(ts_p[m])
-            exit_idx = int(np.searchsorted(ts_p, fill_t + hold, side="left"))
-            if exit_idx >= n:
-                break  # unfinished tail trade: drop, never fabricate
-            pnl = side * (close[exit_idx] / limit - 1.0) - self._entry_cost - self._exit_cost
-            marks[int(ts_p[exit_idx]) // _MINUTE - minutes_lo] += pnl
-            open_until = float(ts_p[exit_idx])
+        # the shared #184 post-only execution fold (maker_fill — ONE tested place):
+        # sequential non-overlap, decision-priced limit, GTX, strict trade-through,
+        # TTL, taker reduce-only exit, exit-minute marks
+        idx = np.flatnonzero(trigger)
+        marks = run_post_only_fold(
+            ts_p,
+            low,
+            high,
+            close,
+            ts_d[idx].astype(np.float64),
+            np.where(imb[idx] > 0, 1.0, -1.0),
+            hold_s=hold,
+            entry_cost=self._entry_cost,
+            exit_cost=self._exit_cost,
+        )
         return cast(Sequence[float], marks)
 
 
