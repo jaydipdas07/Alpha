@@ -1,7 +1,5 @@
 # Alpha
 
-[![CI](https://github.com/jaydipdas07/Alpha/actions/workflows/ci.yml/badge.svg)](https://github.com/jaydipdas07/Alpha/actions/workflows/ci.yml)
-
 AI-driven multi-asset algorithmic trading platform: an autonomous strategy-discovery and
 backtesting engine whose survivors are paper-traded and become eligible for live deployment —
 with **every go-live individually human-approved**. Markets: crypto derivatives (Delta as the
