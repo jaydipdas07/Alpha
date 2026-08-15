@@ -23,7 +23,7 @@ doc-map is in `README.md`.
 ## Where we are
 **This repo is the build, and the engine is decided.** The Phase-0 bake-off chose to **lift the
 operator's own proven Vega engine wholesale** (0.GATE, ADR 0001) — you own Vega outright
-(`/Users/jaydipdas/Code/Vega`), so much of the system is *lifted, not written*: treat Vega as a
+(`~/Code/Vega`), so much of the system is *lifted, not written*: treat Vega as a
 trustworthy machine to copy from, not a greenfield to re-derive. The build then proceeds
 phase-by-phase (rigor → discovery → cockpit → paper → live). **Where it stands — which phase is done,
 what's next — lives in `TASKS.md` (the Phase index + the ⏳ tracker) and the ADRs, never here.**

@@ -1,10 +1,10 @@
 # Alpha — Finalized Plan (v3, hardened)
 
 > This is the **refined/finalized** companion to the original plan at
-> `/Users/jaydipdas/.claude/plans/recursive-marinating-kurzweil.md`. It supersedes that doc
+> `~/.claude/plans/recursive-marinating-kurzweil.md`. It supersedes that doc
 > where they differ. It is self-contained so the cloud **Ultraplan** session can read it by
 > absolute path. **Build status lives in `TASKS.md`** (Phases 0–1 complete, Phase 2 next) — this doc is the hardened backbone it executes against, not a live tracker.
-> Reference repo: Vega at `/Users/jaydipdas/Code/Vega`. **You own Vega outright** (`Proprietary`,
+> Reference repo: Vega at `~/Code/Vega`. **You own Vega outright** (`Proprietary`,
 > authored by you) — verified this session, so code may be **lifted wholesale**, not just patterned.
 > **`docs/DESIGN_v4.md` E1 supersedes Q1 below**: the engine is decided by a Phase-0 co-equal A/B
 > bake-off (NautilusTrader-shell vs lift-Vega), not pre-locked to hand-rolled.

@@ -27,3 +27,15 @@ Read in this order; each has one job (single source of truth — don't duplicate
 | **[docs/adr/](docs/adr/)** | Architecture Decision Records — the durable "why" behind each gate (0001 engine bake-off → Vega lift, 0002 1a-gate calibration, 0003 Phase-1 completion). |
 | **[docs/](docs/) (operational)** | How-to guides: `nightly-discovery.md` (research-box cron + `/knowledge`), `research-host.md` (the AWS box), `knowledge/strategies.md` (the RAG corpus). |
 | **[docs/archive/](docs/archive/)** | Superseded / orphan docs kept for provenance (e.g. the Codex "Lemma-first" brief). |
+
+## Performance
+
+The event-driven backtester replays historical bars through the **same** signal → risk-gate →
+order-FSM → fill → Decimal-P&L path a live run takes (ADR 0001 parity): ~6,000 minute-bars/sec
+(165 µs/bar) sustained on a laptop, deterministic across runs. Reproduce with
+`uv run python scripts/bench_backtest.py`.
+
+## License
+
+[MIT](LICENSE). Live-trading configuration, credentials, market data, and the research holdout are
+deliberately not part of the repository.

@@ -9,17 +9,19 @@
 # so the cockpit keeps seeing the worker live. Pod-sync is best-effort (TEST-8): this never touches
 # trading or safety — at worst the cockpit heartbeat is briefly stale.
 #
-# The token VALUE is NEVER printed or logged (only its length). Tunables via env (with defaults):
+# The token VALUE is NEVER printed or logged (only its length). Config via env — the box address
+# and key are deliberately not defaulted here (public-repo hygiene; they live in the gitignored
+# .env, see docs/research-host.md):
 #   LEMMA_BIN          the Mac lemma CLI          (default: ~/.local/bin/lemma)
-#   ALPHA_WORKER_HOST  ssh target                 (default: ubuntu@3.6.176.133)
-#   ALPHA_WORKER_KEY   ssh key                    (default: ~/.ssh/vega-key.pem)
+#   ALPHA_WORKER_HOST  ssh target                 (required, e.g. ubuntu@<elastic-ip>)
+#   ALPHA_WORKER_KEY   ssh key                    (required, the .pem path)
 # The box .env path is fixed at ~/alpha/.env (the worker's WorkingDirectory).
 set -euo pipefail
 
 ts() { date -u +%FT%TZ; }
 LEMMA_BIN="${LEMMA_BIN:-$HOME/.local/bin/lemma}"
-BOX="${ALPHA_WORKER_HOST:-ubuntu@3.6.176.133}"
-KEY="${ALPHA_WORKER_KEY:-$HOME/.ssh/vega-key.pem}"
+BOX="${ALPHA_WORKER_HOST:?set ALPHA_WORKER_HOST (ubuntu@<elastic-ip>) — see docs/research-host.md}"
+KEY="${ALPHA_WORKER_KEY:?set ALPHA_WORKER_KEY (the ssh .pem path) — see docs/research-host.md}"
 
 token="$("$LEMMA_BIN" auth print-token 2>/dev/null | tr -d '\r\n' || true)"
 if [ "${#token}" -lt 100 ]; then
