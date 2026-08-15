@@ -36,8 +36,9 @@ what's next — lives in `TASKS.md` (the Phase index + the ⏳ tracker) and the 
 A new session starts cold with only what is **in the checkout**. Resume protocol:
 1. Read `CLAUDE.md` → `TASKS.md` (the ⏳-tracker at the end = live worklist) → `git log --oneline -8`
    and `gh pr list` → `git branch --show-current`. These exist in every checkout and are the source of truth.
-2. **Local accelerator (CLI only):** `~/.claude/projects/-Users-jaydipdas-Code-Alpha/memory/alpha-build-checkpoint.md`
-   (gitignored, auto-loaded) holds the exact next action. Refresh it at session end with `/checkpoint`.
+2. **Local accelerator (CLI only):** `alpha-build-checkpoint.md` in this project's Claude memory
+   directory (`~/.claude/projects/<project-slug>/memory/`, gitignored, auto-loaded) holds the exact
+   next action. Refresh it at session end with `/checkpoint`.
    A remote/web clone won't have it — fall back to step 1.
 3. **One session per checkout.** For parallel work use a `git worktree`; check `git branch --show-current` before acting.
 4. **Before you wrap up:** run `/session-wrap` (update the `TASKS.md` ⏳-tracker — the record *every*

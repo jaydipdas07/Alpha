@@ -37,9 +37,10 @@ launchctl load   ~/Library/LaunchAgents/com.alpha.lemma-token-relay.plist   # Ru
 ```
 
 The plist is a template — replace `USERNAME` with the operator's macOS user before installing. The
-box address and ssh key are NOT in the repo (public-repo hygiene): the script requires
-`ALPHA_WORKER_HOST` / `ALPHA_WORKER_KEY` in its environment (they live in the gitignored `.env`;
-see `docs/research-host.md`). The box `.env` path is fixed at `~/alpha/.env`.
+box address and ssh key are NOT in the repo (public-repo hygiene): the script needs
+`ALPHA_WORKER_HOST` / `ALPHA_WORKER_KEY` and, when they're absent from its environment (launchd
+never sources shell profiles), auto-loads them from the repo's gitignored `.env`; it fails loud if
+neither supplies them (see `docs/research-host.md`). The box `.env` path is fixed at `~/alpha/.env`.
 
 ## Verify
 

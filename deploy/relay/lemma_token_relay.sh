@@ -18,6 +18,16 @@
 # The box .env path is fixed at ~/alpha/.env (the worker's WorkingDirectory).
 set -euo pipefail
 
+# launchd/cron never source shell profiles — when the vars are absent, load them from the
+# repo's gitignored .env (where docs/research-host.md keeps the box address + key).
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+if [ -z "${ALPHA_WORKER_HOST:-}" ] && [ -f "$REPO_ROOT/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/.env"
+  set +a
+fi
+
 ts() { date -u +%FT%TZ; }
 LEMMA_BIN="${LEMMA_BIN:-$HOME/.local/bin/lemma}"
 BOX="${ALPHA_WORKER_HOST:?set ALPHA_WORKER_HOST (ubuntu@<elastic-ip>) — see docs/research-host.md}"

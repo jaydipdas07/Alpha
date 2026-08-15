@@ -21,7 +21,7 @@ A clean alpha-core tree, rsync'd from the Mac with **no `.env`/secrets — nothi
 
 Re-deploy (Mac → box, from the repo root):
 ```bash
-rsync -az --delete -e "ssh -i $ALPHA_WORKER_KEY" \
+rsync -az --delete -e "ssh -i '$ALPHA_WORKER_KEY'" \
   --exclude=.git --exclude=.venv --exclude=.env --exclude='.env.*' --exclude=secrets \
   --exclude='*.pem' --exclude='*.key' --exclude=.ruff_cache --exclude=.mypy_cache \
   --exclude=.pytest_cache --exclude=.hypothesis --exclude=__pycache__ --exclude=.coverage \
