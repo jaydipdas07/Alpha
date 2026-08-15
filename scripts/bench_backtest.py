@@ -120,6 +120,8 @@ def main() -> None:
     parser.add_argument("--repeat", type=int, default=3, help="runs (best is reported)")
     parser.add_argument("--seed", type=int, default=42, help="random-walk seed")
     args = parser.parse_args()
+    if args.bars < 1 or args.repeat < 1:
+        parser.error("--bars and --repeat must be >= 1")
 
     # Per-fill INFO logging is I/O inside the timed region — silence it so the
     # number measures the engine, not the terminal.
@@ -129,22 +131,25 @@ def main() -> None:
     span_days = args.bars / (24 * 60)
     print(f"tape: {args.bars:,} x 1m bars (~{span_days:.0f} days), seed {args.seed}")
 
-    best: float | None = None
+    walls: list[float] = []
     for i in range(args.repeat):
         wall, result = asyncio.run(run_once(bars))
+        # A risk halt breaks out of the bar loop early — bars/s over the full tape
+        # length would then be inflated. Fail loud rather than report a bad number.
+        if result.halted:
+            raise SystemExit("risk halt mid-replay — throughput number would be invalid")
         rate = len(bars) / wall
         print(
             f"run {i + 1}/{args.repeat}: {wall:.2f}s -> {rate:,.0f} bars/s "
-            f"({wall / len(bars) * 1e6:.0f} us/bar), fills={result.stats.num_fills}, "
-            f"halted={result.halted}"
+            f"({wall / len(bars) * 1e6:.0f} us/bar), fills={result.stats.num_fills}"
         )
-        best = wall if best is None else min(best, wall)
+        walls.append(wall)
 
-    assert best is not None
+    best = min(walls)
     rate = len(bars) / best
     print(
         f"\nbest: {rate:,.0f} bars/s through the full signal->risk->order->fill->P&L "
-        f"pipeline ({best / len(bars) * 1e6:.0f} us/bar mean decision-loop latency)"
+        f"pipeline ({best / len(bars) * 1e6:.0f} us/bar mean per-bar wall time)"
     )
 
 
