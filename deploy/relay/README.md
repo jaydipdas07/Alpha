@@ -36,9 +36,11 @@ cp deploy/relay/com.alpha.lemma-token-relay.plist ~/Library/LaunchAgents/
 launchctl load   ~/Library/LaunchAgents/com.alpha.lemma-token-relay.plist   # RunAtLoad fires once now
 ```
 
-The plist hard-codes this Mac's paths (repo at `/Users/jaydipdas/Code/Alpha`, lemma at
-`~/.local/bin/lemma`, ssh key `~/.ssh/vega-key.pem`, box `ubuntu@3.6.176.133`). Edit the script's
-env-var defaults or the plist if any move. The box `.env` path is fixed at `~/alpha/.env`.
+The plist is a template — replace `USERNAME` with the operator's macOS user before installing. The
+box address and ssh key are NOT in the repo (public-repo hygiene): the script needs
+`ALPHA_WORKER_HOST` / `ALPHA_WORKER_KEY` and, when they're absent from its environment (launchd
+never sources shell profiles), auto-loads them from the repo's gitignored `.env`; it fails loud if
+neither supplies them (see `docs/research-host.md`). The box `.env` path is fixed at `~/alpha/.env`.
 
 ## Verify
 
@@ -46,7 +48,7 @@ env-var defaults or the plist if any move. The box `.env` path is fixed at `~/al
 tail -f ~/Library/Logs/alpha-lemma-token-relay.log        # "ok: pushed a fresh token (NNNN chars)"
 bash deploy/relay/lemma_token_relay.sh                     # run once by hand; same line, no token value
 # on the box: the worker should log a swap when the token changes —
-ssh -i ~/.ssh/vega-key.pem ubuntu@3.6.176.133 'journalctl -u alpha-worker -n50 | grep pod_token_refreshed'
+ssh -i "$ALPHA_WORKER_KEY" "$ALPHA_WORKER_HOST" 'journalctl -u alpha-worker -n50 | grep pod_token_refreshed'
 ```
 
 A healthy steady state: the box `worker_status` heartbeat on the pod stays fresh (< ~1 min old) and

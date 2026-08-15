@@ -17,7 +17,8 @@ Run these and use the results (do not guess):
 
 ## Write the checkpoint
 
-Update `/Users/jaydipdas/.claude/projects/-Users-jaydipdas-Code-Alpha/memory/alpha-build-checkpoint.md`
+Update `alpha-build-checkpoint.md` in this project's Claude memory directory (the `memory/` path
+named in the session's system prompt)
 (create it if absent; keep any frontmatter; this file is a running log — prepend a new dated entry at
 the top of the body, above the previous `LATEST` note, and demote the old one).
 

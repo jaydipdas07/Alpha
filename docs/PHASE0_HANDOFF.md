@@ -80,7 +80,7 @@ process (R1/D1); capital-staging tolerance + session count; CA sign-off.
 3. **Phase-0 verification:** inspect Lemma numeric column types → lock B5; confirm `lemma` → Vault;
    verify table/RLS/FK primitives.
 4. **AWS prep:** SSH in, preserve `.env`, **then** wipe the AWS box's Vega deployment (B2). The Vega
-   **source repo** stays on the Mac (`/Users/jaydipdas/Code/Vega`) and is the Track-B lift source —
+   **source repo** stays on the Mac (`~/Code/Vega`) and is the Track-B lift source —
    don't delete it. Set up the research/backtest host.
 5. **Engine bake-off (decision gate, DESIGN_v4 E1):** stand up Track A (Nautilus-shell) and Track B
    (lift Vega wholesale) on Delta-testnet; run the portable `(bars,params)->signals` contract + an

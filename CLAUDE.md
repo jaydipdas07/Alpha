@@ -23,7 +23,7 @@ doc-map is in `README.md`.
 ## Where we are
 **This repo is the build, and the engine is decided.** The Phase-0 bake-off chose to **lift the
 operator's own proven Vega engine wholesale** (0.GATE, ADR 0001) — you own Vega outright
-(`/Users/jaydipdas/Code/Vega`), so much of the system is *lifted, not written*: treat Vega as a
+(`~/Code/Vega`), so much of the system is *lifted, not written*: treat Vega as a
 trustworthy machine to copy from, not a greenfield to re-derive. The build then proceeds
 phase-by-phase (rigor → discovery → cockpit → paper → live). **Where it stands — which phase is done,
 what's next — lives in `TASKS.md` (the Phase index + the ⏳ tracker) and the ADRs, never here.**
@@ -36,8 +36,9 @@ what's next — lives in `TASKS.md` (the Phase index + the ⏳ tracker) and the 
 A new session starts cold with only what is **in the checkout**. Resume protocol:
 1. Read `CLAUDE.md` → `TASKS.md` (the ⏳-tracker at the end = live worklist) → `git log --oneline -8`
    and `gh pr list` → `git branch --show-current`. These exist in every checkout and are the source of truth.
-2. **Local accelerator (CLI only):** `~/.claude/projects/-Users-jaydipdas-Code-Alpha/memory/alpha-build-checkpoint.md`
-   (gitignored, auto-loaded) holds the exact next action. Refresh it at session end with `/checkpoint`.
+2. **Local accelerator (CLI only):** `alpha-build-checkpoint.md` in this project's Claude memory
+   directory (`~/.claude/projects/<project-slug>/memory/`, gitignored, auto-loaded) holds the exact
+   next action. Refresh it at session end with `/checkpoint`.
    A remote/web clone won't have it — fall back to step 1.
 3. **One session per checkout.** For parallel work use a `git worktree`; check `git branch --show-current` before acting.
 4. **Before you wrap up:** run `/session-wrap` (update the `TASKS.md` ⏳-tracker — the record *every*
