@@ -3,9 +3,10 @@
 [![CI](https://github.com/jaydipdas07/Alpha/actions/workflows/ci.yml/badge.svg)](https://github.com/jaydipdas07/Alpha/actions/workflows/ci.yml)
 
 AI-driven multi-asset algorithmic trading platform: an autonomous strategy-discovery and
-backtesting engine whose survivors are paper-traded and then deployed live — with **every go-live
-individually human-approved**. Markets: crypto derivatives (Delta live / Binance data) and Indian
-equities, F&O & currency derivatives (Zerodha Kite, with Dhan/Upstox adapters planned).
+backtesting engine whose survivors are paper-traded and become eligible for live deployment —
+with **every go-live individually human-approved**. Markets: crypto derivatives (Delta as the
+designated live venue, Binance for data) and Indian equities, F&O & currency derivatives
+(Zerodha Kite, with Dhan/Upstox adapters planned).
 
 The system is split into a **mission-control pod** (strategy-discovery agents, dashboard, human
 approval gate) and an always-on **execution worker** — the sole component that ever touches a
@@ -42,7 +43,7 @@ sustained on a laptop, deterministic across runs. Reproduce with
 |---|---|
 | **[docs/DESIGN_v4.md](docs/DESIGN_v4.md)** | **Canonical design doc** — architecture, locked decisions, roadmap. |
 | **[docs/adr/](docs/adr/)** | Architecture Decision Records — the durable "why" behind each phase gate (engine bake-off, rigor calibration, paper-safety gate, …). |
-| **[BUILD_PLAN.md](BUILD_PLAN.md)** | The hardened build backbone (R1–R14 adversarial hardening); the substrate DESIGN_v4 amends. |
+| **[BUILD_PLAN.md](BUILD_PLAN.md)** | The hardened build backbone (R1–R14: fourteen adversarially-derived failure-mode fixes); the substrate DESIGN_v4 amends. |
 | **[docs/PHASE0_HANDOFF.md](docs/PHASE0_HANDOFF.md)** | Build-environment & readiness handoff. |
 | **[docs/](docs/) (operational)** | How-to guides: nightly discovery, the research host, the strategy-knowledge corpus. |
 | **[docs/archive/](docs/archive/)** | Superseded docs kept for provenance. |
@@ -52,7 +53,7 @@ Build status is tracked in `TASKS.md`, not here.
 ## Development process
 
 This project is built with agentic tooling (Claude Code) that I direct: every change lands as a
-reviewed pull request, every architectural decision is recorded in an ADR, and the safety-critical
+reviewed pull request, every phase-gate decision is recorded in an ADR, and the safety-critical
 gates — live trading, credentials, capital, and the agent's own guardrails — are human-only by
 explicit contract. Two files formalize that process: **[CLAUDE.md](CLAUDE.md)** is the agent
 operating contract (the engineering invariants and the never-do list the tooling is bound by), and
@@ -63,4 +64,4 @@ history is the audit trail of how the process runs in practice.
 
 [MIT](LICENSE). Live-trading configuration, credentials, market data, and the research-holdout
 data are deliberately not part of the repository — in the working tree or anywhere in its history
-(verified with gitleaks over all commits).
+(credentials verified with gitleaks over every commit; data files confirmed never committed).

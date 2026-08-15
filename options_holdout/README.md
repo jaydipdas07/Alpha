@@ -4,7 +4,7 @@ This directory is the **options holdout root**: the sealed, gate-only partition 
 research data (TEST-3, holdout isolation).
 
 **Tracked in git: `_windows.json` only** — the seal-boundary manifest (window start/end instants +
-a content-version hash per series). It must be versioned: the seal protocol pins each holdout
+a deterministic window-version id, a hash of the boundary instants). It must be versioned: the seal protocol pins each holdout
 boundary monotonically against the previously recorded window, so the manifest is the tamper
 evidence that a boundary never moved backward.
 
